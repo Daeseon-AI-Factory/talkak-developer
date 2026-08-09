@@ -9,6 +9,8 @@ interface SidebarProps {
   mode: SidebarMode;
   onSelectProject: (projectId: string) => void;
   onSelectSection: (section: AppSection) => void;
+  onAddProject: () => void;
+  onEditProject: (projectId: string) => void;
   settingsShortcut: string;
 }
 
@@ -19,6 +21,8 @@ export function Sidebar({
   mode,
   onSelectProject,
   onSelectSection,
+  onAddProject,
+  onEditProject,
   settingsShortcut,
 }: SidebarProps) {
   const { t } = useI18n();
@@ -65,14 +69,27 @@ export function Sidebar({
 
       <div className="sidebar__section-heading">
         <span>{t("sidebar.projects")}</span>
-        <button
-          type="button"
-          aria-label={t("sidebar.addProject")}
-          title={t("common.comingSoon")}
-          disabled
-        >
-          <Icon name="plus" size={15} />
-        </button>
+        <span className="sidebar__section-actions">
+          <button
+            type="button"
+            aria-label={t("sidebar.editProject")}
+            title={t("sidebar.editProject")}
+            disabled={
+              projects.find((project) => project.id === activeProjectId)?.source !== "local"
+            }
+            onClick={() => onEditProject(activeProjectId)}
+          >
+            <Icon name="settings" size={14} />
+          </button>
+          <button
+            type="button"
+            aria-label={t("sidebar.addProject")}
+            title={t("sidebar.addProject")}
+            onClick={onAddProject}
+          >
+            <Icon name="plus" size={15} />
+          </button>
+        </span>
       </div>
 
       <div className="project-list">
@@ -92,7 +109,11 @@ export function Sidebar({
             </span>
             <span className="project-item__copy">
               <strong>{project.name}</strong>
-              <small>{t("sidebar.sessionCount", { count: project.sessions.length })}</small>
+              <small>
+                {project.source === "preview"
+                  ? t("sidebar.previewProject")
+                  : t("sidebar.sessionCount", { count: project.sessions.length })}
+              </small>
             </span>
             <Icon name="chevron" size={14} />
           </button>

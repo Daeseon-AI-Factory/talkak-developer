@@ -1,4 +1,4 @@
-import type { DevSession, Project } from "../domain";
+import type { DevSession, LaunchProfile, Project } from "../domain";
 import { type Locale, useI18n } from "../i18n";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
@@ -126,12 +126,18 @@ function CollectionHeader({ eyebrow, title, description }: CollectionHeaderProps
   );
 }
 
-export function createPreviewSession(index: number, locale: Locale): DevSession {
+export function createPreviewSession(
+  index: number,
+  locale: Locale,
+  launchProfile: LaunchProfile,
+): DevSession {
   const korean = locale === "ko";
+  const storedLaunchProfile = { ...launchProfile, args: [...launchProfile.args] };
   return {
     id: `preview-session-${index}`,
     title: korean ? `새 세션 ${index}` : `New session ${index}`,
-    profile: korean ? "에이전트 미선택" : "Agent not selected",
+    profile: launchProfile.label || (korean ? "기본 터미널" : "Default terminal"),
+    launchProfile: storedLaunchProfile,
     state: "idle",
     runtime: { kind: "unconfigured", label: "Runtime 미선택", shell: "—" },
     branch: "main",

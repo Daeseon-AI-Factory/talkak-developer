@@ -12,6 +12,7 @@ import "./styles/responsive.css";
 import "./styles/shell-layout.css";
 import "./styles/attention-settings.css";
 import "./styles/adaptive.css";
+import "./styles/project-dialog.css";
 
 const root = document.getElementById("root");
 

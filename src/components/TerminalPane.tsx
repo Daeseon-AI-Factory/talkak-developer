@@ -37,7 +37,7 @@ export function TerminalPane({
   const { statusLabel, t } = useI18n();
   const [runtimeAttached, setRuntimeAttached] = useState(false);
   const runtime = runtimeAttached
-    ? t("terminal.localShell")
+    ? session.launchProfile.label || t("terminal.localShell")
     : session.runtime.kind === "unconfigured"
       ? t("runtime.unconfigured")
       : runtimeLabel(session);

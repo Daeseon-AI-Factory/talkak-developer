@@ -14,6 +14,14 @@ export type AttentionRisk = "low" | "medium" | "high";
 
 export type AttentionStatus = "open" | "resolved";
 
+export type ProjectSource = "preview" | "local";
+
+export interface LaunchProfile {
+  label: string;
+  command: string | null;
+  args: string[];
+}
+
 export interface AttentionChoice {
   id: string;
   label: string;
@@ -85,6 +93,7 @@ export interface DevSession {
   id: string;
   title: string;
   profile: string;
+  launchProfile: LaunchProfile;
   state: SessionState;
   runtime: RuntimeTarget;
   branch: string;
@@ -97,11 +106,13 @@ export interface DevSession {
 
 export interface Project {
   id: string;
+  source: ProjectSource;
   name: string;
   monogram: string;
   color: string;
   path: string;
   branch: string;
   description: string;
+  launchProfile: LaunchProfile;
   sessions: DevSession[];
 }

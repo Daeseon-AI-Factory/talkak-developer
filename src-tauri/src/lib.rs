@@ -1,11 +1,15 @@
 use serde::Serialize;
 
+mod project_commands;
 mod session_commands;
 mod session_runtime;
 
 #[cfg(test)]
+mod project_commands_tests;
+#[cfg(test)]
 mod session_runtime_tests;
 
+use project_commands::project_validate_path;
 use session_commands::{
     session_kill, session_read, session_resize, session_snapshot, session_spawn, session_write,
 };
@@ -31,9 +35,11 @@ fn host_info() -> HostInfo {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(SessionRuntime::default())
         .invoke_handler(tauri::generate_handler![
             host_info,
+            project_validate_path,
             session_spawn,
             session_snapshot,
             session_read,

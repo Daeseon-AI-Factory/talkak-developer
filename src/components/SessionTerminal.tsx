@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import type { DevSession } from "../domain";
 import { useI18n } from "../i18n";
 import { errorMessage, sessionClient } from "../runtime/sessionClient";
+import { createSessionSpawnInput } from "../runtime/sessionLaunch";
 
 type TerminalPhase =
   | "checking"
@@ -14,9 +15,6 @@ type TerminalPhase =
   | "error"
   | "unavailable";
 
-// Exact implementation values for the first runtime slice, not product guarantees.
-const INITIAL_COLS = 80;
-const INITIAL_ROWS = 24;
 const POLL_INTERVAL_MS = 75;
 
 interface SessionTerminalProps {
@@ -27,6 +25,8 @@ interface SessionTerminalProps {
 
 export function SessionTerminal({ session, projectPath, onRuntimeAttached }: SessionTerminalProps) {
   const { t } = useI18n();
+  const launchCommand = session.launchProfile.command?.trim() || null;
+  const launchLabel = session.launchProfile.label || t("terminal.defaultShell");
   const [phase, setPhase] = useState<TerminalPhase>("checking");
   const [cwd, setCwd] = useState(projectPath);
   const [error, setError] = useState<string | null>(null);
@@ -204,14 +204,7 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
         setPhase(existing.running || !existing.readClosed ? "running" : "exited");
         return;
       }
-      await sessionClient.spawn({
-        sessionId: session.id,
-        cwd: cwd.trim() || null,
-        command: null,
-        args: [],
-        cols: INITIAL_COLS,
-        rows: INITIAL_ROWS,
-      });
+      await sessionClient.spawn(createSessionSpawnInput(session.id, cwd, session.launchProfile));
       setPhase("running");
     } catch (cause: unknown) {
       setError(errorMessage(cause));
@@ -245,7 +238,12 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
           </div>
           <div className="terminal-launcher__target">
             <span>{t("terminal.launchTarget")}</span>
-            <strong>{t("terminal.defaultShell")}</strong>
+            <span className="terminal-launcher__target-copy">
+              <strong>{launchLabel}</strong>
+              {launchCommand ? (
+                <code>{[launchCommand, ...session.launchProfile.args].join(" ")}</code>
+              ) : null}
+            </span>
           </div>
           <label className="terminal-launcher__field">
             <span>{t("terminal.workingDirectory")}</span>

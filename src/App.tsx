@@ -7,6 +7,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
 import { MobileDock } from "./components/MobileDock";
 import { type MobileSessionTab, MobileSessionView } from "./components/MobileSessionView";
+import { ProjectDialog } from "./components/ProjectDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
@@ -24,6 +25,7 @@ import {
   updateSplitRatio,
 } from "./layoutModel";
 import { platformFromUserAgent, shortcutLabel } from "./platform";
+import type { ProjectDraft } from "./projectStore";
 import {
   type FeatureSettingId,
   type SettingScope,
@@ -31,20 +33,25 @@ import {
   effectiveSetting,
   setSettingOverride,
 } from "./settingsModel";
+import { useProjectRegistry } from "./useProjectRegistry";
 
 type ProjectPages = Record<string, WorkspacePage[]>;
 type ActivePages = Record<string, string>;
 
 export default function App() {
   const { locale, setLocale, t } = useI18n();
-  const initialPages = useMemo(() => createInitialPages(demoProjects), []);
+  const projectRegistry = useProjectRegistry(demoProjects);
+  const { projects, setProjects } = projectRegistry;
+  const [initialPages] = useState(() => createInitialPages(projects));
+  const initialAttentionRequests = projects.some((project) => project.source === "local")
+    ? []
+    : demoAttentionRequests;
   const [presentationMode, setPresentationMode] = useState(() =>
     presentationModeForWidth(window.innerWidth),
   );
-  const [projects, setProjects] = useState<Project[]>(demoProjects);
   const [attentionRequests, setAttentionRequests] =
-    useState<AttentionRequest[]>(demoAttentionRequests);
-  const attentionRequestsRef = useRef<AttentionRequest[]>(demoAttentionRequests);
+    useState<AttentionRequest[]>(initialAttentionRequests);
+  const attentionRequestsRef = useRef<AttentionRequest[]>(initialAttentionRequests);
   const [selectedAttentionId, setSelectedAttentionId] = useState<string | null>(null);
   const [settings, setSettings] = useState(createDefaultSettingsState);
   const [draftsBySession, setDraftsBySession] = useState<Record<string, string>>({});
@@ -56,12 +63,12 @@ export default function App() {
   >({});
   const [pagesByProject, setPagesByProject] = useState<ProjectPages>(initialPages.pages);
   const [activePageByProject, setActivePageByProject] = useState<ActivePages>(initialPages.active);
-  const [activeProjectId, setActiveProjectId] = useState(demoProjects[0].id);
+  const [activeProjectId, setActiveProjectId] = useState(projects[0].id);
   const [activeSection, setActiveSection] = useState<AppSection>(() =>
     presentationModeForWidth(window.innerWidth) === "phone" ? "attention" : "workspace",
   );
   const [activeSessionId, setActiveSessionId] = useState<string | null>(
-    demoProjects[0].sessions[0]?.id ?? null,
+    projects[0].sessions[0]?.id ?? null,
   );
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>(readSidebarMode);
   const [focusMode, setFocusMode] = useState(false);
@@ -232,7 +239,7 @@ export default function App() {
 
     if (!session) {
       const nextIndex = previewSessionCount + 1;
-      const preview = createPreviewSession(nextIndex, locale);
+      const preview = createPreviewSession(nextIndex, locale, activeProject.launchProfile);
       setPreviewSessionCount(nextIndex);
       setProjects((current) =>
         current.map((project) =>
@@ -346,7 +353,7 @@ export default function App() {
 
   function createSession() {
     const nextIndex = previewSessionCount + 1;
-    const nextSession = createPreviewSession(nextIndex, locale);
+    const nextSession = createPreviewSession(nextIndex, locale, activeProject.launchProfile);
     const nextPage = createPage({
       pageId: nextId(`page-${activeProject.id}`),
       title: nextSession.title,
@@ -368,6 +375,26 @@ export default function App() {
     setActivePageByProject((current) => ({ ...current, [activeProject.id]: nextPage.id }));
     setActiveSessionId(nextSession.id);
     setInspectorMode("summary");
+  }
+
+  function saveProject(draft: ProjectDraft) {
+    const result = projectRegistry.saveProject(draft);
+    if (!result.created) return;
+    const createdPages = createInitialPages([result.project]);
+    setPagesByProject((current) =>
+      result.replacedPreviews ? createdPages.pages : { ...current, ...createdPages.pages },
+    );
+    setActivePageByProject((current) =>
+      result.replacedPreviews ? createdPages.active : { ...current, ...createdPages.active },
+    );
+    if (result.replacedPreviews) {
+      attentionRequestsRef.current = [];
+      setAttentionRequests([]);
+    }
+    setActiveProjectId(result.project.id);
+    setActiveSessionId(null);
+    setActiveSection("workspace");
+    setInspectorMode(null);
   }
 
   function resolveAttention(requestId: string, revision: number, choiceId: string) {
@@ -433,6 +460,8 @@ export default function App() {
         mode={sidebarMode}
         onSelectProject={selectProject}
         onSelectSection={setActiveSection}
+        onAddProject={projectRegistry.openProjectCreator}
+        onEditProject={projectRegistry.openProjectEditor}
         settingsShortcut={shortcutLabel(platformFromUserAgent(navigator.userAgent), ",")}
       />
 
@@ -598,6 +627,12 @@ export default function App() {
         onClose={() => setCommandOpen(false)}
         onOpenSession={openAttentionSession}
         onOpenProject={selectProject}
+      />
+      <ProjectDialog
+        open={projectRegistry.editorOpen}
+        project={projectRegistry.editingProject}
+        onClose={projectRegistry.closeProjectEditor}
+        onSave={saveProject}
       />
     </div>
   );

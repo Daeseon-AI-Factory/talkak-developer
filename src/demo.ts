@@ -1,19 +1,26 @@
-import type { AttentionRequest, Project } from "./domain";
+import type { AttentionRequest, LaunchProfile, Project } from "./domain";
+
+function defaultLaunchProfile(): LaunchProfile {
+  return { label: "", command: null, args: [] };
+}
 
 export const projects: Project[] = [
   {
     id: "talkak-dev",
+    source: "preview",
     name: "Talkak Dev",
     monogram: "T",
     color: "#5fe2ed",
     path: "/workspace/talkak-dev",
     branch: "main",
     description: "Lightweight developer cockpit",
+    launchProfile: defaultLaunchProfile(),
     sessions: [
       {
         id: "session-shell",
         title: "Product shell",
         profile: "Primary agent",
+        launchProfile: defaultLaunchProfile(),
         state: "working",
         runtime: {
           kind: "native",
@@ -71,6 +78,7 @@ export const projects: Project[] = [
         id: "session-contracts",
         title: "Runtime contracts",
         profile: "Review agent",
+        launchProfile: defaultLaunchProfile(),
         state: "needs-input",
         runtime: {
           kind: "native",
@@ -117,17 +125,20 @@ export const projects: Project[] = [
   },
   {
     id: "shadow-mobile",
+    source: "preview",
     name: "Shadow Mobile",
     monogram: "S",
     color: "#a78bfa",
     path: "/home/dev/shadow-mobile",
     branch: "feature/session-sync",
     description: "Mobile client and local API",
+    launchProfile: defaultLaunchProfile(),
     sessions: [
       {
         id: "session-wsl",
         title: "Mobile API",
         profile: "Configured agent",
+        launchProfile: defaultLaunchProfile(),
         state: "needs-input",
         runtime: {
           kind: "wsl",
@@ -171,17 +182,20 @@ export const projects: Project[] = [
   },
   {
     id: "ops-dashboard",
+    source: "preview",
     name: "Ops Dashboard",
     monogram: "O",
     color: "#fb923c",
     path: "C:\\dev\\ops-dashboard",
     branch: "main",
     description: "Internal operations dashboard",
+    launchProfile: defaultLaunchProfile(),
     sessions: [
       {
         id: "session-windows",
         title: "Dashboard checks",
         profile: "Shell",
+        launchProfile: defaultLaunchProfile(),
         state: "idle",
         runtime: {
           kind: "native",
