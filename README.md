@@ -64,9 +64,11 @@ cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D w
 cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
 ```
 
-Once committed to a GitHub remote, `.github/workflows/desktop.yml` runs on every push and pull
-request. Its two stable checks are `macOS / product gate` and `Windows / product gate`; configure
-both as required status checks for `main`. On trusted pushes, repository variables
+Once committed to a GitHub remote, `.github/workflows/desktop.yml` runs for pull requests targeting
+`main`, direct pushes to `main`, and manual dispatches. A feature-branch push with an open pull
+request therefore starts one gate set instead of duplicate push and pull-request runs. A newer run
+for the same ref cancels its stale predecessor. Its two stable checks are `macOS / product gate` and
+`Windows / product gate`; configure both as required status checks for `main`. On trusted pushes, repository variables
 `CI_MACOS_RUNNER` and `CI_WINDOWS_RUNNER` can select equivalent self-hosted runners without changing
 the workflow. Pull requests always use ephemeral GitHub-hosted runners so PR code is not executed on
 a persistent developer machine.
@@ -83,7 +85,7 @@ non-default `webdriver-ci` Cargo feature. Its matching frontend adapter is compi
 `webdriver-ci` Vite mode. Only the unsigned CI test installer enables those test layers; normal
 development and release builds mechanically reject their markers in the product bundle. The
 checked-in CI contract parses the workflow as YAML and has mutation tests for disabled jobs,
-filtered triggers, cancelled earlier runs, non-blocking checks, and accidental inclusion of
+incorrect branch targets, retained stale runs, non-blocking checks, and accidental inclusion of
 WebDriver in default product features. This does not yet claim WSL discovery and launch; WSL
 remains a per-session target of the Windows app, never a separate Talkak build.
 

@@ -50,8 +50,15 @@ const windowsCiConfig = JSON.stringify({
 const baseWorkflow = `
 on:
   push:
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
   workflow_dispatch:
+concurrency:
+  group: \${{ github.workflow }}-\${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   macos-product:
     name: macOS / product gate
@@ -104,30 +111,30 @@ test("rejects conditionally disabled jobs", () => {
   assert.match(validate(mutated).join("\n"), /conditionally disabled/u);
 });
 
-test("rejects branch-filtered triggers", () => {
-  const mutated = baseWorkflow.replace("  push:\n", "  push:\n    branches: [main]\n");
-  assert.match(validate(mutated).join("\n"), /must not restrict branches/u);
+test("rejects pushes to every branch", () => {
+  const mutated = baseWorkflow.replace("  push:\n    branches:\n      - main\n", "  push:\n");
+  assert.match(validate(mutated).join("\n"), /must target main/u);
 });
 
-test("rejects inline trigger restrictions", () => {
-  const mutated = baseWorkflow.replace("  push:\n", "  push: { branches: [main] }\n");
-  assert.match(validate(mutated).join("\n"), /must not restrict branches/u);
+test("rejects a non-main push target", () => {
+  const mutated = baseWorkflow.replace("      - main\n", "      - release\n");
+  assert.match(validate(mutated).join("\n"), /must target main only/u);
 });
 
 test("rejects pull request type filters", () => {
   const mutated = baseWorkflow.replace(
-    "  pull_request:\n",
-    "  pull_request:\n    types: [opened]\n",
+    "  pull_request:\n    branches:\n      - main\n",
+    "  pull_request:\n    branches:\n      - main\n    types: [opened]\n",
   );
-  assert.match(validate(mutated).join("\n"), /every event/u);
+  assert.match(validate(mutated).join("\n"), /every default activity type/u);
 });
 
-test("rejects cancelled previous runs", () => {
+test("rejects keeping stale runs", () => {
   const mutated = baseWorkflow.replace(
-    "jobs:\n",
-    "concurrency:\n  cancel-in-progress: true\njobs:\n",
+    "  cancel-in-progress: true\n",
+    "  cancel-in-progress: false\n",
   );
-  assert.match(validate(mutated).join("\n"), /must not cancel/u);
+  assert.match(validate(mutated).join("\n"), /must cancel stale runs/u);
 });
 
 test("rejects non-blocking jobs", () => {

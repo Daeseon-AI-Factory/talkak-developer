@@ -30,8 +30,7 @@ describe("installed Windows product path", () => {
     const terminalScreen = await $('[data-testid="live-terminal"] .xterm-screen');
     await terminalScreen.waitForClickable();
     await terminalScreen.click();
-    await browser.keys(markerCommand);
-    await browser.keys(Key.Enter);
+    await pasteTerminalCommand(markerCommand);
 
     await browser.waitUntil(async () => (await terminalText()).includes(marker), {
       timeout: 20_000,
@@ -83,4 +82,11 @@ async function terminalText() {
   const rows = await $$('[data-testid="live-terminal"] .xterm-rows');
   const text = await rows.map((row) => row.getText());
   return text.join("\n");
+}
+
+async function pasteTerminalCommand(command) {
+  const input = await $('[data-testid="live-terminal"] .xterm-helper-textarea');
+  await input.waitForExist();
+  await input.addValue(command);
+  await browser.keys(Key.Enter);
 }

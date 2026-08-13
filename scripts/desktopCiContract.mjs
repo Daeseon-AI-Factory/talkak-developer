@@ -1,7 +1,9 @@
 import { parseDocument } from "yaml";
 
 const REQUIRED_TRIGGERS = ["push", "pull_request", "workflow_dispatch"];
-const FORBIDDEN_EVENT_FILTERS = ["branches", "branches-ignore", "paths", "paths-ignore"];
+const FORBIDDEN_EVENT_FILTERS = ["branches-ignore", "paths", "paths-ignore", "tags", "tags-ignore"];
+const MAIN_BRANCH_ONLY = ["main"];
+const CONCURRENCY_GROUP = "${{ github.workflow }}-${{ github.ref }}";
 
 const JOBS = {
   "macos-product": {
@@ -65,23 +67,33 @@ export function validateDesktopCi(
     }
     for (const trigger of ["push", "pull_request"]) {
       const config = triggers[trigger];
-      if (config !== null && (typeof config !== "object" || Array.isArray(config))) {
-        errors.push(`${trigger} trigger must not use an inline restriction.`);
+      if (!config || typeof config !== "object" || Array.isArray(config)) {
+        errors.push(`${trigger} trigger must target main through an explicit mapping.`);
         continue;
       }
+      if (
+        !Array.isArray(config.branches) ||
+        config.branches.length !== MAIN_BRANCH_ONLY.length ||
+        config.branches.some((branch, index) => branch !== MAIN_BRANCH_ONLY[index])
+      ) {
+        errors.push(`${trigger} trigger must target main only.`);
+      }
       for (const filter of FORBIDDEN_EVENT_FILTERS) {
-        if (config && Object.hasOwn(config, filter)) {
+        if (Object.hasOwn(config, filter)) {
           errors.push(`${trigger} trigger must not restrict ${filter}.`);
         }
       }
-      if (config && Object.keys(config).length > 0) {
-        errors.push(`${trigger} trigger must run for every event of that type.`);
+      if (Object.hasOwn(config, "types")) {
+        errors.push(`${trigger} trigger must use every default activity type.`);
       }
     }
   }
 
-  if (workflow.concurrency?.["cancel-in-progress"] === true) {
-    errors.push("Desktop product gates must not cancel an earlier push or pull request run.");
+  if (workflow.concurrency?.group !== CONCURRENCY_GROUP) {
+    errors.push("Desktop product gates must isolate concurrency by workflow and ref.");
+  }
+  if (workflow.concurrency?.["cancel-in-progress"] !== true) {
+    errors.push("Desktop product gates must cancel stale runs for the same ref.");
   }
 
   const jobs = workflow.jobs;
