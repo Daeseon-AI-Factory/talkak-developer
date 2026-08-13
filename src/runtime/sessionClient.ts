@@ -11,6 +11,7 @@ export interface SpawnSessionInput {
 
 export interface SessionSnapshot {
   sessionId: string;
+  runId: number;
   processId: number | null;
   running: boolean;
   exitCode: number | null;
@@ -20,6 +21,7 @@ export interface SessionSnapshot {
 
 export interface SessionRead {
   sessionId: string;
+  runId: number;
   start: number;
   next: number;
   bytes: number[];
@@ -38,6 +40,7 @@ export interface SessionClient {
   write: (sessionId: string, data: Uint8Array) => Promise<void>;
   resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
   kill: (sessionId: string) => Promise<SessionSnapshot>;
+  discard: (sessionId: string) => Promise<void>;
 }
 
 export type InvokeCommand = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -69,10 +72,37 @@ export function createSessionClient(
       invokeCommand<SessionSnapshot>("session_kill", {
         request: { sessionId },
       }),
+    discard: (sessionId) =>
+      invokeCommand<void>("session_discard", {
+        request: { sessionId },
+      }),
   };
 }
 
 export const sessionClient = createSessionClient(invoke, isTauri);
+
+export function createSessionStarter(client: SessionClient) {
+  const pending = new Map<string, Promise<SessionSnapshot>>();
+  return (request: SpawnSessionInput): Promise<SessionSnapshot> => {
+    const current = pending.get(request.sessionId);
+    if (current) return current;
+    const attempt = client
+      .snapshot(request.sessionId)
+      .then(async (snapshot) => {
+        if (!snapshot) return client.spawn(request);
+        if (snapshot.running || !snapshot.readClosed) return snapshot;
+        await client.discard(request.sessionId);
+        return client.spawn(request);
+      })
+      .finally(() => {
+        if (pending.get(request.sessionId) === attempt) pending.delete(request.sessionId);
+      });
+    pending.set(request.sessionId, attempt);
+    return attempt;
+  };
+}
+
+export const ensureSessionStarted = createSessionStarter(sessionClient);
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);

@@ -35,7 +35,7 @@
 
 .inspector-tabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   padding: 7px;
   border-bottom: 1px solid var(--border);
 }
@@ -70,6 +70,14 @@
   border: 1px solid var(--border);
   border-radius: 11px;
   background: linear-gradient(145deg, rgba(95, 226, 237, 0.08), rgba(255, 255, 255, 0.015));
+}
+
+.summary-hero__source {
+  margin-bottom: 10px;
+  color: var(--warning);
+  font-family: var(--mono);
+  font-size: 7px;
+  text-align: right;
 }
 
 .summary-hero__status-row {
@@ -291,6 +299,86 @@
   color: var(--text-dim);
   font-size: 8px;
   line-height: 1.5;
+}
+
+.terminal-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.terminal-log__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 7px;
+}
+
+.terminal-log__meta span:first-child {
+  color: var(--text-secondary);
+}
+
+.terminal-log__meta span:first-child[data-phase="running"] {
+  color: var(--success);
+}
+
+.terminal-log__meta span:first-child[data-phase="waiting"] {
+  color: var(--warning);
+}
+
+.terminal-log__host,
+.terminal-log__empty {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #071216;
+}
+
+.terminal-log__host {
+  padding: 7px;
+}
+
+.terminal-log__host .xterm {
+  height: 100%;
+}
+
+.terminal-log__empty {
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  color: var(--text-dim);
+  font-size: 9px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.terminal-log__notice,
+.terminal-log__error {
+  margin: 0;
+  padding: 7px 8px;
+  border-radius: 6px;
+  font-size: 8px;
+  line-height: 1.4;
+}
+
+.terminal-log__notice {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.terminal-log__error {
+  display: block;
+  overflow: hidden;
+  background: rgba(255, 111, 111, 0.08);
+  color: #ff9f9f;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-statusbar {

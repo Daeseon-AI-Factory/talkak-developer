@@ -1,33 +1,33 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
-import type { DevSession } from "../domain";
+import type { DevSession, TerminalRuntimePhase } from "../domain";
 import { useI18n } from "../i18n";
-import { errorMessage, sessionClient } from "../runtime/sessionClient";
+import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
-
-type TerminalPhase =
-  | "checking"
-  | "idle"
-  | "starting"
-  | "running"
-  | "stopping"
-  | "exited"
-  | "error"
-  | "unavailable";
 
 const POLL_INTERVAL_MS = 75;
 
 interface SessionTerminalProps {
   session: DevSession;
   projectPath: string;
+  focused: boolean;
   onRuntimeAttached: (attached: boolean) => void;
+  onLaunchHandled: (sessionId: string) => void;
+  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
 }
 
-export function SessionTerminal({ session, projectPath, onRuntimeAttached }: SessionTerminalProps) {
+export function SessionTerminal({
+  session,
+  projectPath,
+  focused,
+  onRuntimeAttached,
+  onLaunchHandled,
+  onPhaseChange,
+}: SessionTerminalProps) {
   const { t } = useI18n();
   const launchCommand = session.launchProfile.command?.trim() || null;
   const launchLabel = session.launchProfile.label || t("terminal.defaultShell");
-  const [phase, setPhase] = useState<TerminalPhase>("checking");
+  const [phase, setPhase] = useState<TerminalRuntimePhase>("checking");
   const [cwd, setCwd] = useState(projectPath);
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -35,11 +35,24 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
   const terminalRef = useRef<XTerm | null>(null);
   const cursorRef = useRef(0);
   const pendingOutputRef = useRef<Uint8Array[]>([]);
+  const focusedRef = useRef(focused);
+  const launchRequestedRef = useRef(session.launchRequested === true);
+  const launchHandledRef = useRef(onLaunchHandled);
+  const phaseChangeRef = useRef(onPhaseChange);
+  focusedRef.current = focused;
+  launchRequestedRef.current = session.launchRequested === true;
+  launchHandledRef.current = onLaunchHandled;
+  phaseChangeRef.current = onPhaseChange;
   const terminalAttached = phase === "running" || phase === "stopping" || phase === "exited";
 
   useEffect(() => onRuntimeAttached(terminalAttached), [onRuntimeAttached, terminalAttached]);
 
   useEffect(() => {
+    phaseChangeRef.current(session.id, phase);
+  }, [phase, session.id]);
+
+  useEffect(() => {
+    const shouldLaunch = launchRequestedRef.current;
     setCwd(projectPath);
     setError(null);
     setExitCode(null);
@@ -47,13 +60,17 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
     pendingOutputRef.current = [];
     if (!sessionClient.available()) {
       setPhase("unavailable");
+      if (shouldLaunch) launchHandledRef.current(session.id);
       return;
     }
 
     let cancelled = false;
-    setPhase("checking");
-    void sessionClient
-      .snapshot(session.id)
+    setPhase(shouldLaunch ? "starting" : "checking");
+    const request = createSessionSpawnInput(session.id, projectPath, session.launchProfile);
+    const snapshot = shouldLaunch
+      ? ensureSessionStarted(request)
+      : sessionClient.snapshot(session.id);
+    void snapshot
       .then((snapshot) => {
         if (cancelled) return;
         if (!snapshot) {
@@ -68,11 +85,14 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
         if (cancelled) return;
         setError(errorMessage(cause));
         setPhase("error");
+      })
+      .finally(() => {
+        if (shouldLaunch && !cancelled) launchHandledRef.current(session.id);
       });
     return () => {
       cancelled = true;
     };
-  }, [projectPath, session.id]);
+  }, [projectPath, session.id, session.launchProfile]);
 
   useEffect(() => {
     if (!terminalAttached || !hostRef.current) return;
@@ -126,7 +146,7 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
         };
         const frame = requestAnimationFrame(() => {
           fit();
-          terminal.focus();
+          if (focusedRef.current && canMoveTerminalFocus()) terminal.focus();
         });
         const observer = new ResizeObserver(fit);
         observer.observe(hostRef.current);
@@ -150,6 +170,22 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
       disposeTerminal?.();
     };
   }, [session.id, terminalAttached]);
+
+  useEffect(() => {
+    if (!focused || !terminalAttached) return;
+    if (!canMoveTerminalFocus()) return;
+    const frame = requestAnimationFrame(() => terminalRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [focused, terminalAttached]);
+
+  useEffect(() => {
+    if (!focused || !terminalAttached) return;
+    const restoreFocus = () => {
+      if (canMoveTerminalFocus()) terminalRef.current?.focus();
+    };
+    window.addEventListener("focus", restoreFocus);
+    return () => window.removeEventListener("focus", restoreFocus);
+  }, [focused, terminalAttached]);
 
   useEffect(() => {
     if (phase !== "running" && phase !== "stopping") return;
@@ -196,16 +232,14 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
     setExitCode(null);
     setPhase("starting");
     cursorRef.current = 0;
+    pendingOutputRef.current = [];
     try {
-      const existing = await sessionClient.snapshot(session.id);
-      if (existing) {
-        setExitCode(existing.exitCode);
-        setError(existing.readError);
-        setPhase(existing.running || !existing.readClosed ? "running" : "exited");
-        return;
-      }
-      await sessionClient.spawn(createSessionSpawnInput(session.id, cwd, session.launchProfile));
-      setPhase("running");
+      const snapshot = await ensureSessionStarted(
+        createSessionSpawnInput(session.id, cwd, session.launchProfile),
+      );
+      setExitCode(snapshot.exitCode);
+      setError(snapshot.readError);
+      setPhase(snapshot.running || !snapshot.readClosed ? "running" : "exited");
     } catch (cause: unknown) {
       setError(errorMessage(cause));
       setPhase("error");
@@ -285,13 +319,16 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
     <>
       <div
         className="terminal-pane__body terminal-pane__body--live"
+        data-testid="live-terminal"
         aria-label={t("terminal.liveAria", { session: session.title })}
       >
         <div className="terminal-host" ref={hostRef} />
       </div>
       <footer className="terminal-pane__footer">
         <span className="live-label">LIVE PTY</span>
-        <span>{phaseLabel(phase, exitCode, t)}</span>
+        <span data-testid="runtime-phase" data-phase={phase}>
+          {phaseLabel(phase, exitCode, t)}
+        </span>
         {error ? (
           <span className="terminal-runtime-error" title={error}>
             {error}
@@ -299,8 +336,18 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
         ) : null}
         <span className="terminal-pane__footer-spacer" />
         {phase === "running" ? (
-          <button className="terminal-stop" type="button" onClick={() => void stop()}>
+          <button
+            className="terminal-stop"
+            type="button"
+            data-testid="stop-session"
+            onClick={() => void stop()}
+          >
             {t("terminal.stop")}
+          </button>
+        ) : null}
+        {phase === "exited" ? (
+          <button className="terminal-restart" type="button" onClick={() => void start()}>
+            {t("terminal.restart")}
           </button>
         ) : null}
       </footer>
@@ -309,7 +356,7 @@ export function SessionTerminal({ session, projectPath, onRuntimeAttached }: Ses
 }
 
 function phaseLabel(
-  phase: TerminalPhase,
+  phase: TerminalRuntimePhase,
   exitCode: number | null,
   t: ReturnType<typeof useI18n>["t"],
 ) {
@@ -320,4 +367,11 @@ function phaseLabel(
   if (phase === "error") return t("terminal.failed");
   if (phase === "unavailable") return t("terminal.ptyDisconnected");
   return t("terminal.readyToStart");
+}
+
+function canMoveTerminalFocus(): boolean {
+  if (document.querySelector("dialog[open]")) return false;
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || active.classList.contains("xterm-helper-textarea")) return true;
+  return !(active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
 }

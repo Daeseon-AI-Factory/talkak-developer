@@ -1,5 +1,5 @@
-import type { DevSession, LaunchProfile, Project } from "../domain";
-import { type Locale, useI18n } from "../i18n";
+import type { Project } from "../domain";
+import { useI18n } from "../i18n";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
 
@@ -124,59 +124,4 @@ function CollectionHeader({ eyebrow, title, description }: CollectionHeaderProps
       <p>{description}</p>
     </header>
   );
-}
-
-export function createPreviewSession(
-  index: number,
-  locale: Locale,
-  launchProfile: LaunchProfile,
-): DevSession {
-  const korean = locale === "ko";
-  const storedLaunchProfile = { ...launchProfile, args: [...launchProfile.args] };
-  return {
-    id: `preview-session-${index}`,
-    title: korean ? `새 세션 ${index}` : `New session ${index}`,
-    profile: launchProfile.label || (korean ? "기본 터미널" : "Default terminal"),
-    launchProfile: storedLaunchProfile,
-    state: "idle",
-    runtime: { kind: "unconfigured", label: "Runtime 미선택", shell: "—" },
-    branch: "main",
-    startedAt: "now",
-    lastActivity: korean ? "방금 생성" : "Created now",
-    lines: [
-      {
-        id: `preview-${index}-1`,
-        tone: "muted",
-        text: korean ? "세션 셸을 만들었습니다." : "Session shell created.",
-      },
-      {
-        id: `preview-${index}-2`,
-        tone: "warning",
-        text: korean
-          ? "작업 폴더를 확인한 뒤 로컬 셸을 명시적으로 시작하세요."
-          : "Confirm the working directory, then start the local shell explicitly.",
-      },
-    ],
-    conversation: [
-      {
-        id: `preview-conversation-${index}`,
-        author: "system",
-        time: "now",
-        text: korean
-          ? "미리보기 세션만 생성했으며 프로세스는 시작하지 않았습니다."
-          : "Preview session created. No process was started.",
-      },
-    ],
-    summary: {
-      outcome: korean
-        ? "실행 프로필과 런타임을 선택해야 합니다."
-        : "Choose a launch profile and runtime.",
-      progress: 0,
-      changedFiles: [],
-      decisions: [],
-      nextStep: korean
-        ? "작업 폴더를 확인하고 로컬 셸을 시작합니다."
-        : "Confirm the working directory and start the local shell.",
-    },
-  };
 }

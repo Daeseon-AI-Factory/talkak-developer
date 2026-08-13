@@ -6,10 +6,9 @@ import { Icon } from "./Icon";
 interface WorkspaceHeaderProps {
   project: Project;
   counts: SessionCounts;
-  onCreateSession: () => void;
 }
 
-export function WorkspaceHeader({ project, counts, onCreateSession }: WorkspaceHeaderProps) {
+export function WorkspaceHeader({ project, counts }: WorkspaceHeaderProps) {
   const { t } = useI18n();
   return (
     <header className="workspace-header">
@@ -47,10 +46,6 @@ export function WorkspaceHeader({ project, counts, onCreateSession }: WorkspaceH
             <dd>{t("header.ready")}</dd>
           </div>
         </dl>
-        <button className="button button--primary" type="button" onClick={onCreateSession}>
-          <Icon name="plus" size={17} />
-          {t("header.newSession")}
-        </button>
       </div>
     </header>
   );

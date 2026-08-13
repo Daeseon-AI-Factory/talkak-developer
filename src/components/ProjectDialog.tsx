@@ -139,6 +139,7 @@ export function ProjectDialog({ open, project, onClose, onSave }: ProjectDialogP
                   <span>{t("projectDialog.name")}</span>
                   <input
                     ref={nameRef}
+                    data-testid="project-name"
                     value={name}
                     onChange={(event) => setName(event.currentTarget.value)}
                     placeholder={t("projectDialog.namePlaceholder")}
@@ -160,6 +161,7 @@ export function ProjectDialog({ open, project, onClose, onSave }: ProjectDialogP
                 <span>{t("projectDialog.path")}</span>
                 <span className="project-dialog__path-field">
                   <input
+                    data-testid="project-path"
                     value={path}
                     onChange={(event) => setPath(event.currentTarget.value)}
                     placeholder={t("projectDialog.pathPlaceholder")}
@@ -235,7 +237,12 @@ export function ProjectDialog({ open, project, onClose, onSave }: ProjectDialogP
               <button className="button" type="button" disabled={busy} onClick={onClose}>
                 {t("projectDialog.cancel")}
               </button>
-              <button className="button button--primary" type="submit" disabled={busy}>
+              <button
+                className="button button--primary"
+                type="submit"
+                data-testid="save-project"
+                disabled={busy}
+              >
                 {busy
                   ? t("projectDialog.saving")
                   : project

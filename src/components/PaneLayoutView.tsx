@@ -1,5 +1,5 @@
 import type { CSSProperties, PointerEvent } from "react";
-import type { DevSession } from "../domain";
+import type { DevSession, TerminalRuntimePhase } from "../domain";
 import { useI18n } from "../i18n";
 import type { LayoutNode, SplitDirection, SplitNode } from "../layoutModel";
 import { Icon } from "./Icon";
@@ -9,22 +9,31 @@ interface PaneLayoutViewProps {
   node: LayoutNode | null;
   sessions: readonly DevSession[];
   projectPath: string;
-  activeSessionId: string | null;
+  activePaneId: string | null;
   canMovePane: boolean;
   canSplitPane: boolean;
   canResizeSplits: boolean;
   onAttachSession: (sessionId: string) => void;
-  onSelectSession: (sessionId: string) => void;
+  onCreateSession: () => void;
+  onSelectPane: (paneId: string, sessionId: string) => void;
   onOpenConversation: (sessionId: string) => void;
   onSplitPane: (paneId: string, direction: SplitDirection) => void;
   onMovePane: (paneId: string) => void;
   onDetachPane: (paneId: string) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
+  onLaunchHandled: (sessionId: string) => void;
+  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
 }
 
 export function PaneLayoutView(props: PaneLayoutViewProps) {
   if (props.node === null) {
-    return <EmptyPage sessions={props.sessions} onAttachSession={props.onAttachSession} />;
+    return (
+      <EmptyPage
+        sessions={props.sessions}
+        onAttachSession={props.onAttachSession}
+        onCreateSession={props.onCreateSession}
+      />
+    );
   }
 
   if (props.node.kind === "pane") {
@@ -37,14 +46,16 @@ export function PaneLayoutView(props: PaneLayoutViewProps) {
         paneId={pane.id}
         session={session}
         projectPath={props.projectPath}
-        active={session.id === props.activeSessionId}
+        active={pane.id === props.activePaneId}
         canMove={props.canMovePane}
         canSplit={props.canSplitPane}
-        onFocus={() => props.onSelectSession(session.id)}
+        onFocus={() => props.onSelectPane(pane.id, session.id)}
         onOpenConversation={() => props.onOpenConversation(session.id)}
         onSplit={(direction) => props.onSplitPane(pane.id, direction)}
         onMove={() => props.onMovePane(pane.id)}
         onDetach={() => props.onDetachPane(pane.id)}
+        onLaunchHandled={props.onLaunchHandled}
+        onPhaseChange={props.onPhaseChange}
       />
     );
   }
@@ -101,9 +112,11 @@ function SplitLayout({ node, props }: { node: SplitNode; props: PaneLayoutViewPr
 function EmptyPage({
   sessions,
   onAttachSession,
+  onCreateSession,
 }: {
   sessions: readonly DevSession[];
   onAttachSession: (sessionId: string) => void;
+  onCreateSession: () => void;
 }) {
   const { statusLabel, t } = useI18n();
   return (
@@ -115,6 +128,15 @@ function EmptyPage({
         <h2>{t("pages.emptyTitle")}</h2>
         <p>{t("pages.emptyDescription")}</p>
       </div>
+      <button
+        className="button button--primary"
+        type="button"
+        data-testid="start-session-in-page"
+        onClick={onCreateSession}
+      >
+        <Icon name="plus" size={15} />
+        {t("pages.startSession")}
+      </button>
       <div className="empty-page__sessions">
         {sessions.map((session) => (
           <button type="button" key={session.id} onClick={() => onAttachSession(session.id)}>

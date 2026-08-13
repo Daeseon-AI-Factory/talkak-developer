@@ -1,5 +1,5 @@
-import { useState } from "react";
-import type { DevSession } from "../domain";
+import { useEffect, useRef, useState } from "react";
+import type { DevSession, TerminalRuntimePhase } from "../domain";
 import { useI18n } from "../i18n";
 import type { SplitDirection } from "../layoutModel";
 import { runtimeLabel } from "../workspaceModel";
@@ -19,6 +19,8 @@ interface TerminalPaneProps {
   onSplit: (direction: SplitDirection) => void;
   onMove: () => void;
   onDetach: () => void;
+  onLaunchHandled: (sessionId: string) => void;
+  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
 }
 
 export function TerminalPane({
@@ -33,19 +35,37 @@ export function TerminalPane({
   onSplit,
   onMove,
   onDetach,
+  onLaunchHandled,
+  onPhaseChange,
 }: TerminalPaneProps) {
   const { statusLabel, t } = useI18n();
   const [runtimeAttached, setRuntimeAttached] = useState(false);
+  const paneRef = useRef<HTMLElement | null>(null);
   const runtime = runtimeAttached
     ? session.launchProfile.label || t("terminal.localShell")
     : session.runtime.kind === "unconfigured"
       ? t("runtime.unconfigured")
       : runtimeLabel(session);
+
+  useEffect(() => {
+    if (!active || runtimeAttached || document.querySelector("dialog[open]")) return;
+    const focused = document.activeElement as HTMLElement | null;
+    if (
+      focused &&
+      (focused.tagName === "INPUT" || focused.tagName === "TEXTAREA" || focused.isContentEditable)
+    ) {
+      return;
+    }
+    paneRef.current?.focus({ preventScroll: true });
+  }, [active, runtimeAttached]);
+
   return (
     <article
+      ref={paneRef}
       className="terminal-pane"
       data-active={active}
       data-state={session.state}
+      tabIndex={-1}
       onMouseDown={onFocus}
     >
       <header
@@ -118,7 +138,10 @@ export function TerminalPane({
       <SessionTerminal
         session={session}
         projectPath={projectPath}
+        focused={active}
         onRuntimeAttached={setRuntimeAttached}
+        onLaunchHandled={onLaunchHandled}
+        onPhaseChange={onPhaseChange}
       />
     </article>
   );

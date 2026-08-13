@@ -12,6 +12,9 @@ interface PageTabsProps {
   onCreatePage: () => void;
   onClosePage: (pageId: string) => void;
   onMovePaneToPage: (paneId: string, pageId: string) => void;
+  addShortcut: string;
+  previousShortcut: string;
+  nextShortcut: string;
 }
 
 export function PageTabs({
@@ -21,6 +24,9 @@ export function PageTabs({
   onCreatePage,
   onClosePage,
   onMovePaneToPage,
+  addShortcut,
+  previousShortcut,
+  nextShortcut,
 }: PageTabsProps) {
   const { t } = useI18n();
 
@@ -53,6 +59,7 @@ export function PageTabs({
             <button
               className="page-tab__select"
               type="button"
+              data-testid="page-tab"
               role="tab"
               aria-selected={active}
               onClick={() => onSelectPage(page.id)}
@@ -76,12 +83,18 @@ export function PageTabs({
       <button
         className="page-tabs__add"
         type="button"
+        data-testid="add-page"
         aria-label={t("pages.add")}
-        title={t("pages.add")}
+        title={`${t("pages.addDescription")} · ${addShortcut}`}
         onClick={onCreatePage}
       >
         <Icon name="plus" size={15} />
+        <span>{t("pages.addVisible")}</span>
+        <kbd>{addShortcut}</kbd>
       </button>
+      <span className="page-tabs__switch-hint">
+        {t("pages.switchHint", { previous: previousShortcut, next: nextShortcut })}
+      </span>
     </div>
   );
 }

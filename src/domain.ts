@@ -1,12 +1,22 @@
 export type AppSection = "workspace" | "sessions" | "activity" | "attention" | "settings";
 
-export type InspectorMode = "summary" | "conversation";
+export type InspectorMode = "summary" | "terminal" | "conversation";
 
 export type PaneLayout = "columns" | "rows";
 
 export type SidebarMode = "expanded" | "rail" | "hidden";
 
 export type SessionState = "working" | "needs-input" | "ready" | "idle";
+
+export type TerminalRuntimePhase =
+  | "checking"
+  | "idle"
+  | "starting"
+  | "running"
+  | "stopping"
+  | "exited"
+  | "error"
+  | "unavailable";
 
 export type AttentionKind = "question" | "approval" | "result" | "error";
 
@@ -55,6 +65,11 @@ export type RuntimeTarget =
       shell: "—";
     }
   | {
+      kind: "local";
+      label: string;
+      shell: string;
+    }
+  | {
       kind: "native";
       os: "macos" | "windows";
       label: string;
@@ -94,6 +109,8 @@ export interface DevSession {
   title: string;
   profile: string;
   launchProfile: LaunchProfile;
+  /** Ephemeral intent set only by an explicit Page/Split/Stack action. Never persisted. */
+  launchRequested?: boolean;
   state: SessionState;
   runtime: RuntimeTarget;
   branch: string;

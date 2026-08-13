@@ -2,6 +2,7 @@ import type { DevSession, InspectorMode } from "../domain";
 import { useI18n } from "../i18n";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
+import { TerminalLogView } from "./TerminalLogView";
 
 interface InspectorProps {
   session: DevSession;
@@ -49,6 +50,16 @@ export function Inspector({
         <button
           type="button"
           role="tab"
+          aria-selected={mode === "terminal"}
+          data-active={mode === "terminal"}
+          onClick={() => onChangeMode("terminal")}
+        >
+          <Icon name="terminal" size={15} />
+          {t("inspector.terminal")}
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={mode === "summary"}
           data-active={mode === "summary"}
           onClick={() => onChangeMode("summary")}
@@ -68,11 +79,9 @@ export function Inspector({
         </button>
       </div>
 
-      {mode === "summary" ? (
-        <SummaryView session={session} />
-      ) : (
-        <ConversationView session={session} />
-      )}
+      {mode === "summary" ? <SummaryView session={session} /> : null}
+      {mode === "terminal" ? <TerminalLogView sessionId={session.id} /> : null}
+      {mode === "conversation" ? <ConversationView session={session} /> : null}
     </aside>
   );
 }
@@ -84,6 +93,7 @@ function SummaryView({ session }: { session: DevSession }) {
   return (
     <div className="inspector__content">
       <section className="summary-hero">
+        <div className="summary-hero__source">{t("inspector.localPreview")}</div>
         <div className="summary-hero__status-row">
           <span className="state-badge" data-state={session.state}>
             {statusLabel(session.state)}

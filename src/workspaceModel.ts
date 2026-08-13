@@ -25,6 +25,7 @@ export function runtimeLabel(session: DevSession): string {
   if (session.runtime.kind === "wsl") {
     return `WSL · ${session.runtime.distribution}`;
   }
+  if (session.runtime.kind === "local") return session.runtime.label;
   return session.runtime.os === "macos" ? "macOS" : "Windows";
 }
 

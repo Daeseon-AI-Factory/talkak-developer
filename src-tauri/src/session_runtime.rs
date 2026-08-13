@@ -56,6 +56,7 @@ pub(crate) struct ResizeSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionSnapshot {
     pub(crate) session_id: String,
+    pub(crate) run_id: u64,
     pub(crate) process_id: Option<u32>,
     pub(crate) running: bool,
     pub(crate) exit_code: Option<u32>,
@@ -67,6 +68,7 @@ pub(crate) struct SessionSnapshot {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SessionRead {
     pub(crate) session_id: String,
+    pub(crate) run_id: u64,
     pub(crate) start: u64,
     pub(crate) next: u64,
     pub(crate) bytes: Vec<u8>,
@@ -81,6 +83,7 @@ pub(crate) struct SessionRead {
 pub(crate) enum RuntimeError {
     InvalidRequest(String),
     DuplicateSession(String),
+    RunningSession(String),
     MissingSession(String),
     Process(String),
     Internal(String),
@@ -93,6 +96,9 @@ impl fmt::Display for RuntimeError {
                 write!(formatter, "invalid session request: {message}")
             }
             Self::DuplicateSession(id) => write!(formatter, "session already exists: {id}"),
+            Self::RunningSession(id) => {
+                write!(formatter, "cannot discard running session: {id}")
+            }
             Self::MissingSession(id) => write!(formatter, "session not found: {id}"),
             Self::Process(message) => write!(formatter, "session process error: {message}"),
             Self::Internal(message) => write!(formatter, "session runtime error: {message}"),
@@ -105,10 +111,12 @@ impl std::error::Error for RuntimeError {}
 #[derive(Default)]
 pub(crate) struct SessionRuntime {
     sessions: Mutex<HashMap<String, Arc<SessionProcess>>>,
+    next_run_id: Mutex<u64>,
 }
 
 struct SessionProcess {
     id: String,
+    run_id: u64,
     process_id: Option<u32>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -141,6 +149,7 @@ impl SessionRuntime {
         if self.contains(&request.session_id)? {
             return Err(RuntimeError::DuplicateSession(request.session_id));
         }
+        let run_id = self.next_run_id()?;
 
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -180,6 +189,7 @@ impl SessionRuntime {
 
         let process = Arc::new(SessionProcess {
             id: request.session_id.clone(),
+            run_id,
             process_id,
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
@@ -215,6 +225,7 @@ impl SessionRuntime {
         let read = lock(&process.output, "output buffer")?.read(request.after);
         Ok(SessionRead {
             session_id: process.id.clone(),
+            run_id: process.run_id,
             start: read.start,
             next: read.next,
             bytes: read.bytes,
@@ -259,8 +270,32 @@ impl SessionRuntime {
         process.snapshot()
     }
 
+    pub(crate) fn discard(&self, request: SessionIdRequest) -> Result<(), RuntimeError> {
+        let removed = {
+            let mut sessions = lock(&self.sessions, "session registry")?;
+            let process = sessions
+                .get(&request.session_id)
+                .cloned()
+                .ok_or_else(|| RuntimeError::MissingSession(request.session_id.clone()))?;
+            if process.snapshot()?.running {
+                return Err(RuntimeError::RunningSession(request.session_id));
+            }
+            sessions.remove(&request.session_id)
+        };
+        drop(removed);
+        Ok(())
+    }
+
     fn contains(&self, session_id: &str) -> Result<bool, RuntimeError> {
         Ok(lock(&self.sessions, "session registry")?.contains_key(session_id))
+    }
+
+    fn next_run_id(&self) -> Result<u64, RuntimeError> {
+        let mut next = lock(&self.next_run_id, "run id counter")?;
+        *next = next
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::Internal("run id counter exhausted".into()))?;
+        Ok(*next)
     }
 
     fn session(&self, session_id: &str) -> Result<Arc<SessionProcess>, RuntimeError> {
@@ -289,6 +324,7 @@ impl SessionProcess {
         let status = lock(&self.status, "process status")?;
         Ok(SessionSnapshot {
             session_id: self.id.clone(),
+            run_id: self.run_id,
             process_id: self.process_id,
             running: status.running,
             exit_code: status.exit_code,

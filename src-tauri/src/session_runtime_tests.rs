@@ -81,6 +81,77 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
     assert!(!stopped.running);
 }
 
+#[test]
+fn discard_rejects_a_running_session() {
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "discard-running".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: None,
+            args: vec![],
+            cols: 80,
+            rows: 24,
+        })
+        .expect("PTY should spawn");
+
+    let error = runtime
+        .discard(SessionIdRequest {
+            session_id: "discard-running".into(),
+        })
+        .expect_err("a running session must not be discarded");
+    assert!(matches!(error, RuntimeError::RunningSession(_)));
+
+    runtime
+        .kill(SessionIdRequest {
+            session_id: "discard-running".into(),
+        })
+        .expect("PTY should stop");
+}
+
+#[test]
+fn discard_allows_an_exited_session_id_to_start_again() {
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let request = SpawnSessionRequest {
+        session_id: "restart-exited".into(),
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        command: None,
+        args: vec![],
+        cols: 80,
+        rows: 24,
+    };
+    let first = runtime.spawn(request.clone()).expect("PTY should spawn");
+    runtime
+        .kill(SessionIdRequest {
+            session_id: request.session_id.clone(),
+        })
+        .expect("PTY should stop");
+    runtime
+        .discard(SessionIdRequest {
+            session_id: request.session_id.clone(),
+        })
+        .expect("an exited session should be discarded");
+    assert!(runtime
+        .snapshot(SessionIdRequest {
+            session_id: request.session_id.clone(),
+        })
+        .expect("snapshot should succeed")
+        .is_none());
+
+    let restarted = runtime
+        .spawn(request)
+        .expect("the session id should be reusable");
+    assert!(restarted.running);
+    assert_ne!(restarted.run_id, first.run_id);
+    runtime
+        .kill(SessionIdRequest {
+            session_id: restarted.session_id,
+        })
+        .expect("restarted PTY should stop");
+}
+
 fn wait_for_output(runtime: &SessionRuntime, session_id: &str, after: u64, needle: &[u8]) {
     // Exact test timeout; it is not a runtime timeout or product guarantee.
     let deadline = Instant::now() + Duration::from_secs(5);

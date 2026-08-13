@@ -21,4 +21,12 @@ describe("workspace model", () => {
   it("provides an explicit empty fallback", () => {
     expect(firstSession({ ...projects[0], sessions: [] })).toBeNull();
   });
+
+  it("labels a connected provider-neutral local PTY", () => {
+    const session = {
+      ...projects[0].sessions[0],
+      runtime: { kind: "local" as const, label: "Review agent", shell: "PTY" },
+    };
+    expect(runtimeLabel(session)).toBe("Review agent");
+  });
 });

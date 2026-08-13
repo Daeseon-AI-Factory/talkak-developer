@@ -13,6 +13,7 @@ import "./styles/shell-layout.css";
 import "./styles/attention-settings.css";
 import "./styles/adaptive.css";
 import "./styles/project-dialog.css";
+import "./styles/shortcut-guide.css";
 
 const root = document.getElementById("root");
 

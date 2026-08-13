@@ -142,3 +142,12 @@
   color: var(--warning);
   font-size: 8px;
 }
+
+.terminal-restart {
+  padding: 3px 7px;
+  border: 1px solid rgba(134, 243, 247, 0.3);
+  border-radius: 6px;
+  background: rgba(134, 243, 247, 0.08);
+  color: var(--accent);
+  font-size: 8px;
+}

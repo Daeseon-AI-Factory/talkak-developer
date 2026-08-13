@@ -51,3 +51,11 @@ pub(crate) fn session_kill(
 ) -> Result<SessionSnapshot, String> {
     runtime.kill(request).map_err(|error| error.to_string())
 }
+
+#[tauri::command]
+pub(crate) fn session_discard(
+    runtime: State<'_, SessionRuntime>,
+    request: SessionIdRequest,
+) -> Result<(), String> {
+    runtime.discard(request).map_err(|error| error.to_string())
+}

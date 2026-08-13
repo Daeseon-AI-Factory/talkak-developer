@@ -83,6 +83,7 @@ export function Sidebar({
           </button>
           <button
             type="button"
+            data-testid="add-project"
             aria-label={t("sidebar.addProject")}
             title={t("sidebar.addProject")}
             onClick={onAddProject}

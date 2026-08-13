@@ -26,11 +26,14 @@ interface ProjectRegistry {
   saveProject: (draft: ProjectDraft) => ProjectSaveResult;
 }
 
-export function useProjectRegistry(previewProjects: readonly Project[]): ProjectRegistry {
+export function useProjectRegistry(
+  previewProjects: readonly Project[],
+  initializeProjects: (projects: Project[]) => Project[] = (projects) => projects,
+): ProjectRegistry {
   const [projects, setProjects] = useState<Project[]>(() => {
     const storage = browserProjectStorage();
     const stored = storage ? readStoredProjects(storage) : [];
-    return stored.length > 0 ? stored : [...previewProjects];
+    return initializeProjects(stored.length > 0 ? stored : [...previewProjects]);
   });
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);

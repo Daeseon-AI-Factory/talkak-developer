@@ -101,7 +101,21 @@
   font-size: 9px;
 }
 
+.app-utilitybar__actions > .shell-control--label {
+  display: inline-flex;
+  width: auto;
+  gap: 6px;
+  padding: 0 9px;
+}
+
+.shell-control--label kbd {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
 .workspace-toolbar--pages {
+  gap: 8px;
   padding-left: 8px;
 }
 
@@ -202,7 +216,26 @@
 }
 
 .page-tabs__add {
+  display: inline-flex;
+  width: auto;
+  min-width: max-content;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
   border: 1px dashed var(--border);
+}
+
+.page-tabs__add span {
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.page-tabs__switch-hint {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 7px;
+  white-space: nowrap;
 }
 
 .pane-count {
@@ -213,6 +246,26 @@
   font-family: var(--mono);
   font-size: 8px;
   white-space: nowrap;
+}
+
+.pane-count strong {
+  color: var(--warning);
+  font-size: 7px;
+}
+
+.workspace-toolbar__actions {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workspace-toolbar__actions::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-toolbar__actions .toolbar-button kbd {
+  padding-left: 2px;
+  opacity: 0.72;
 }
 
 .workspace-shell__body {
@@ -365,6 +418,8 @@
   border-radius: 14px;
   background: rgba(8, 19, 23, 0.9);
   text-align: center;
+  max-height: calc(100% - 32px);
+  overflow: auto;
 }
 
 .empty-page__icon {
@@ -438,6 +493,11 @@
   .runtime-chip {
     display: none;
   }
+
+  .page-tabs__switch-hint,
+  .workspace-toolbar__actions .toolbar-button kbd {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {
@@ -478,6 +538,10 @@
   .toolbar-divider {
     display: none;
   }
+
+  .workspace-toolbar__actions .toolbar-button span {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
@@ -494,5 +558,11 @@
 
   .page-tab {
     min-width: 96px;
+  }
+
+  .page-tabs__add span,
+  .page-tabs__add kbd,
+  .shell-control--label kbd {
+    display: none;
   }
 }

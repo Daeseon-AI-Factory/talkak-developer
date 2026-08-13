@@ -11,7 +11,8 @@ mod session_runtime_tests;
 
 use project_commands::project_validate_path;
 use session_commands::{
-    session_kill, session_read, session_resize, session_snapshot, session_spawn, session_write,
+    session_discard, session_kill, session_read, session_resize, session_snapshot, session_spawn,
+    session_write,
 };
 use session_runtime::SessionRuntime;
 
@@ -45,7 +46,8 @@ pub fn run() {
             session_read,
             session_write,
             session_resize,
-            session_kill
+            session_kill,
+            session_discard
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Talkak Dev");
