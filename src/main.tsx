@@ -15,16 +15,26 @@ import "./styles/adaptive.css";
 import "./styles/project-dialog.css";
 import "./styles/shortcut-guide.css";
 
-const root = document.getElementById("root");
+declare const __TALKAK_WEBDRIVER_CI__: boolean;
 
-if (!root) {
-  throw new Error("Missing #root element");
+async function renderApplication() {
+  if (__TALKAK_WEBDRIVER_CI__) {
+    await import("@wdio/tauri-plugin");
+  }
+
+  const root = document.getElementById("root");
+
+  if (!root) {
+    throw new Error("Missing #root element");
+  }
+
+  createRoot(root).render(
+    <StrictMode>
+      <I18nProvider>
+        <App />
+      </I18nProvider>
+    </StrictMode>,
+  );
 }
 
-createRoot(root).render(
-  <StrictMode>
-    <I18nProvider>
-      <App />
-    </I18nProvider>
-  </StrictMode>,
-);
+void renderApplication();

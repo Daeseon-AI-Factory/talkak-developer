@@ -18,16 +18,31 @@ const webdriverConfig = ['driverProvider: "embedded"', "appBinaryPath: installed
 );
 
 const webdriverBoundary = [
-  'webdriver-ci = ["dep:tauri-plugin-wdio-webdriver"]',
+  'webdriver-ci = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]',
+  'tauri-plugin-wdio = { version = "=1.3.0", optional = true }',
   'tauri-plugin-wdio-webdriver = { version = "=1.3.0", optional = true }',
   '#[cfg(feature = "webdriver-ci")]',
+  "tauri_plugin_wdio::init()",
   "tauri_plugin_wdio_webdriver::init()",
+  "__TALKAK_WEBDRIVER_CI__",
+  'import("@wdio/tauri-plugin")',
+  'mode === "webdriver-ci"',
+  "node scripts/check-webdriver-bundle.mjs absent",
+  "node scripts/check-webdriver-bundle.mjs present",
+  'const markers = ["__wdio_original_core__", "WDIO Tauri Plugin"]',
 ].join("\n");
 
 const windowsCiConfig = JSON.stringify({
+  build: { beforeBuildCommand: "pnpm build:webdriver-ci" },
   app: {
+    withGlobalTauri: true,
     security: {
-      capabilities: [{ identifier: "windows-ci", permissions: ["wdio-webdriver:default"] }],
+      capabilities: [
+        {
+          identifier: "windows-ci",
+          permissions: ["wdio:default", "wdio-webdriver:default"],
+        },
+      ],
     },
   },
 });
@@ -167,12 +182,35 @@ test("rejects embedded WebDriver in default product features", () => {
 
 test("rejects a WebDriver capability outside app.security", () => {
   const mutated = JSON.stringify({
+    build: { beforeBuildCommand: "pnpm build:webdriver-ci" },
     app: {
-      capabilities: [{ identifier: "windows-ci", permissions: ["wdio-webdriver:default"] }],
+      withGlobalTauri: true,
+      capabilities: [
+        {
+          identifier: "windows-ci",
+          permissions: ["wdio:default", "wdio-webdriver:default"],
+        },
+      ],
     },
   });
   assert.match(
     validate(baseWorkflow, webdriverConfig, webdriverBoundary, mutated).join("\n"),
     /app\.security\.capabilities/u,
+  );
+});
+
+test("rejects a Windows CI build without its frontend adapter mode", () => {
+  const mutated = windowsCiConfig.replace("pnpm build:webdriver-ci", "pnpm build");
+  assert.match(
+    validate(baseWorkflow, webdriverConfig, webdriverBoundary, mutated).join("\n"),
+    /WebDriver frontend mode/u,
+  );
+});
+
+test("rejects a Windows CI capability without the service permission", () => {
+  const mutated = windowsCiConfig.replace('"wdio:default",', "");
+  assert.match(
+    validate(baseWorkflow, webdriverConfig, webdriverBoundary, mutated).join("\n"),
+    /missing wdio:default/u,
   );
 });

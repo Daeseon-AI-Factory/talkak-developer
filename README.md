@@ -78,13 +78,14 @@ installed executable through project creation, one-click session start, PTY inpu
 and page creation. The script stops its sessions, runs the NSIS uninstaller, and removes only the
 Windows-CI-specific WebView profile. It never deletes a pre-existing installation or user profile.
 
-The installed-app test uses Tauri's embedded WebDriver behind the non-default `webdriver-ci` Cargo
-feature. Only the unsigned CI test installer enables that feature; normal development and release
-builds do not expose the automation server. The checked-in CI contract parses the workflow as YAML
-and has mutation tests for disabled jobs, filtered triggers, cancelled earlier runs, non-blocking
-checks, and accidental inclusion of WebDriver in default product features. This does not yet claim
-WSL discovery and launch; WSL remains a per-session target of the Windows app, never a separate
-Talkak build.
+The installed-app test uses Tauri's WebdriverIO service and embedded WebDriver plugins behind the
+non-default `webdriver-ci` Cargo feature. Its matching frontend adapter is compiled only in the
+`webdriver-ci` Vite mode. Only the unsigned CI test installer enables those test layers; normal
+development and release builds mechanically reject their markers in the product bundle. The
+checked-in CI contract parses the workflow as YAML and has mutation tests for disabled jobs,
+filtered triggers, cancelled earlier runs, non-blocking checks, and accidental inclusion of
+WebDriver in default product features. This does not yet claim WSL discovery and launch; WSL
+remains a per-session target of the Windows app, never a separate Talkak build.
 
 ### GitHub merge enforcement
 

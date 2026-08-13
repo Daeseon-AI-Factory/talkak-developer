@@ -14,6 +14,10 @@ const webdriverConfig = readFileSync(resolve(repositoryRoot, "wdio.windows.conf.
 const webdriverBoundary = [
   readFileSync(resolve(repositoryRoot, "src-tauri/Cargo.toml"), "utf8"),
   readFileSync(resolve(repositoryRoot, "src-tauri/src/lib.rs"), "utf8"),
+  readFileSync(resolve(repositoryRoot, "src/main.tsx"), "utf8"),
+  readFileSync(resolve(repositoryRoot, "vite.config.ts"), "utf8"),
+  readFileSync(resolve(repositoryRoot, "package.json"), "utf8"),
+  readFileSync(resolve(repositoryRoot, "scripts/check-webdriver-bundle.mjs"), "utf8"),
 ].join("\n");
 const windowsCiConfig = readFileSync(
   resolve(repositoryRoot, "src-tauri/tauri.windows-ci.conf.json"),

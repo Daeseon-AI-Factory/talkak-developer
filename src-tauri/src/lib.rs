@@ -40,7 +40,9 @@ pub fn run() {
         .manage(SessionRuntime::default());
 
     #[cfg(feature = "webdriver-ci")]
-    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
         .invoke_handler(tauri::generate_handler![

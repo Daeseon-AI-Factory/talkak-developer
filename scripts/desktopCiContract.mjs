@@ -139,10 +139,18 @@ export function validateDesktopCi(
   }
 
   const boundaryFragments = [
-    'webdriver-ci = ["dep:tauri-plugin-wdio-webdriver"]',
+    'webdriver-ci = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]',
+    'tauri-plugin-wdio = { version = "=1.3.0", optional = true }',
     'tauri-plugin-wdio-webdriver = { version = "=1.3.0", optional = true }',
     '#[cfg(feature = "webdriver-ci")]',
+    "tauri_plugin_wdio::init()",
     "tauri_plugin_wdio_webdriver::init()",
+    "__TALKAK_WEBDRIVER_CI__",
+    'import("@wdio/tauri-plugin")',
+    'mode === "webdriver-ci"',
+    "node scripts/check-webdriver-bundle.mjs absent",
+    "node scripts/check-webdriver-bundle.mjs present",
+    'const markers = ["__wdio_original_core__", "WDIO Tauri Plugin"]',
   ];
   for (const fragment of boundaryFragments) {
     if (!webdriverBoundarySource.includes(fragment)) {
@@ -160,14 +168,23 @@ export function validateDesktopCi(
     errors.push("Windows CI Tauri config must be valid JSON.");
   }
   const capabilities = windowsCiConfig?.app?.security?.capabilities;
+  if (windowsCiConfig?.build?.beforeBuildCommand !== "pnpm build:webdriver-ci") {
+    errors.push("Windows CI Tauri build must compile the WebDriver frontend mode.");
+  }
+  if (windowsCiConfig?.app?.withGlobalTauri !== true) {
+    errors.push("Windows CI Tauri config must expose its API only to the test frontend.");
+  }
   if (!Array.isArray(capabilities)) {
     errors.push("Windows CI WebDriver capability must be under app.security.capabilities.");
   } else {
     const webdriverCapability = capabilities.find(
       (capability) => capability?.identifier === "windows-ci",
     );
-    if (!webdriverCapability?.permissions?.includes("wdio-webdriver:default")) {
-      errors.push("Windows CI capability is missing wdio-webdriver:default.");
+    const permissions = webdriverCapability?.permissions;
+    for (const permission of ["wdio:default", "wdio-webdriver:default"]) {
+      if (!Array.isArray(permissions) || !permissions.includes(permission)) {
+        errors.push(`Windows CI capability is missing ${permission}.`);
+      }
     }
   }
   return errors;
