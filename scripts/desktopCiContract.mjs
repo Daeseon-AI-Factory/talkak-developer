@@ -34,14 +34,19 @@ const JOBS = {
       "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
       "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
       "cargo test --manifest-path src-tauri/Cargo.toml --lib --locked",
-      "cargo install tauri-driver --version 2.0.6 --locked",
-      "pnpm tauri build --bundles nsis --no-sign --ci --config src-tauri/tauri.windows-ci.conf.json",
+      "pnpm tauri build --features webdriver-ci --bundles nsis --no-sign --ci --config src-tauri/tauri.windows-ci.conf.json",
       "./scripts/verify-windows-package.ps1",
     ],
   },
 };
 
-export function validateDesktopCi(workflowSource, smokeScriptSource, webdriverConfigSource = "") {
+export function validateDesktopCi(
+  workflowSource,
+  smokeScriptSource,
+  webdriverConfigSource = "",
+  webdriverBoundarySource = "",
+  windowsCiConfigSource = "",
+) {
   const document = parseDocument(workflowSource);
   if (document.errors.length > 0) {
     return document.errors.map((error) => `Invalid workflow YAML: ${error.message}`);
@@ -116,7 +121,7 @@ export function validateDesktopCi(workflowSource, smokeScriptSource, webdriverCo
     '"uninstall.exe"',
     '"/S"',
     "TALKAK_WINDOWS_APP",
-    "TALKAK_WINDOWS_E2E_PROFILE",
+    '"main/talkak-windows-ci"',
     "pnpm e2e:windows",
     "WINDOWS_PRODUCT_E2E_OK",
   ];
@@ -126,14 +131,43 @@ export function validateDesktopCi(workflowSource, smokeScriptSource, webdriverCo
     }
   }
 
-  const webdriverFragments = [
-    "TALKAK_WINDOWS_E2E_PROFILE",
-    "webviewOptions",
-    "userDataFolder: e2eProfilePath",
-  ];
+  const webdriverFragments = ['driverProvider: "embedded"', "appBinaryPath: installedAppPath"];
   for (const fragment of webdriverFragments) {
     if (!webdriverConfigSource.includes(fragment)) {
       errors.push(`Windows WebDriver config is missing: ${fragment}`);
+    }
+  }
+
+  const boundaryFragments = [
+    'webdriver-ci = ["dep:tauri-plugin-wdio-webdriver"]',
+    'tauri-plugin-wdio-webdriver = { version = "=1.3.0", optional = true }',
+    '#[cfg(feature = "webdriver-ci")]',
+    "tauri_plugin_wdio_webdriver::init()",
+  ];
+  for (const fragment of boundaryFragments) {
+    if (!webdriverBoundarySource.includes(fragment)) {
+      errors.push(`CI-only WebDriver boundary is missing: ${fragment}`);
+    }
+  }
+  if (/^\s*default\s*=\s*\[[^\]]*webdriver-ci/mu.test(webdriverBoundarySource)) {
+    errors.push("webdriver-ci must not be enabled by default in product builds.");
+  }
+
+  let windowsCiConfig;
+  try {
+    windowsCiConfig = JSON.parse(windowsCiConfigSource);
+  } catch {
+    errors.push("Windows CI Tauri config must be valid JSON.");
+  }
+  const capabilities = windowsCiConfig?.app?.security?.capabilities;
+  if (!Array.isArray(capabilities)) {
+    errors.push("Windows CI WebDriver capability must be under app.security.capabilities.");
+  } else {
+    const webdriverCapability = capabilities.find(
+      (capability) => capability?.identifier === "windows-ci",
+    );
+    if (!webdriverCapability?.permissions?.includes("wdio-webdriver:default")) {
+      errors.push("Windows CI capability is missing wdio-webdriver:default.");
     }
   }
   return errors;

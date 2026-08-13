@@ -35,9 +35,14 @@ fn host_info() -> HostInfo {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(SessionRuntime::default())
+        .manage(SessionRuntime::default());
+
+    #[cfg(feature = "webdriver-ci")]
+    let builder = builder.plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             host_info,
             project_validate_path,

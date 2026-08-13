@@ -134,12 +134,9 @@ jobs:
       - name: Test native ConPTY backend
         run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
 
-      - name: Install pinned Tauri WebDriver
-        run: cargo install tauri-driver --version 2.0.6 --locked
-
-      - name: Build unsigned Windows NSIS installer
+      - name: Build unsigned Windows NSIS E2E installer
         run: >-
-          pnpm tauri build --bundles nsis --no-sign --ci
+          pnpm tauri build --features webdriver-ci --bundles nsis --no-sign --ci
           --config src-tauri/tauri.windows-ci.conf.json
 
       - name: Clean-install and exercise Windows product path

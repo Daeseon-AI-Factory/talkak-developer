@@ -11,7 +11,21 @@ const smokeScript = readFileSync(
   "utf8",
 );
 const webdriverConfig = readFileSync(resolve(repositoryRoot, "wdio.windows.conf.mjs"), "utf8");
-const errors = validateDesktopCi(workflow, smokeScript, webdriverConfig);
+const webdriverBoundary = [
+  readFileSync(resolve(repositoryRoot, "src-tauri/Cargo.toml"), "utf8"),
+  readFileSync(resolve(repositoryRoot, "src-tauri/src/lib.rs"), "utf8"),
+].join("\n");
+const windowsCiConfig = readFileSync(
+  resolve(repositoryRoot, "src-tauri/tauri.windows-ci.conf.json"),
+  "utf8",
+);
+const errors = validateDesktopCi(
+  workflow,
+  smokeScript,
+  webdriverConfig,
+  webdriverBoundary,
+  windowsCiConfig,
+);
 
 if (errors.length > 0) {
   throw new Error(`Desktop CI contract is incomplete:\n- ${errors.join("\n- ")}`);

@@ -8,16 +8,29 @@ const smokeScript = [
   '"uninstall.exe"',
   '"/S"',
   "TALKAK_WINDOWS_APP",
-  "TALKAK_WINDOWS_E2E_PROFILE",
+  '"main/talkak-windows-ci"',
   "pnpm e2e:windows",
   "WINDOWS_PRODUCT_E2E_OK",
 ].join("\n");
 
-const webdriverConfig = [
-  "TALKAK_WINDOWS_E2E_PROFILE",
-  "webviewOptions",
-  "userDataFolder: e2eProfilePath",
+const webdriverConfig = ['driverProvider: "embedded"', "appBinaryPath: installedAppPath"].join(
+  "\n",
+);
+
+const webdriverBoundary = [
+  'webdriver-ci = ["dep:tauri-plugin-wdio-webdriver"]',
+  'tauri-plugin-wdio-webdriver = { version = "=1.3.0", optional = true }',
+  '#[cfg(feature = "webdriver-ci")]',
+  "tauri_plugin_wdio_webdriver::init()",
 ].join("\n");
+
+const windowsCiConfig = JSON.stringify({
+  app: {
+    security: {
+      capabilities: [{ identifier: "windows-ci", permissions: ["wdio-webdriver:default"] }],
+    },
+  },
+});
 
 const baseWorkflow = `
 on:
@@ -51,13 +64,17 @@ jobs:
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
-      - run: cargo install tauri-driver --version 2.0.6 --locked
-      - run: pnpm tauri build --bundles nsis --no-sign --ci --config src-tauri/tauri.windows-ci.conf.json
+      - run: pnpm tauri build --features webdriver-ci --bundles nsis --no-sign --ci --config src-tauri/tauri.windows-ci.conf.json
       - run: ./scripts/verify-windows-package.ps1
 `;
 
-function validate(workflow = baseWorkflow, config = webdriverConfig) {
-  return validateDesktopCi(workflow, smokeScript, config);
+function validate(
+  workflow = baseWorkflow,
+  config = webdriverConfig,
+  boundary = webdriverBoundary,
+  tauriConfig = windowsCiConfig,
+) {
+  return validateDesktopCi(workflow, smokeScript, config, boundary, tauriConfig);
 }
 
 test("accepts the complete desktop gate", () => {
@@ -130,7 +147,32 @@ test("rejects jobs gated by dependencies", () => {
   assert.match(validate(mutated).join("\n"), /skippable job/u);
 });
 
-test("rejects a WebDriver profile that is not forwarded to EdgeDriver", () => {
-  const mutated = webdriverConfig.replace("userDataFolder: e2eProfilePath", "");
+test("rejects an external Windows driver", () => {
+  const mutated = webdriverConfig.replace(
+    'driverProvider: "embedded"',
+    'driverProvider: "external"',
+  );
   assert.match(validate(baseWorkflow, mutated).join("\n"), /Windows WebDriver config is missing/u);
+});
+
+test("rejects an unguarded embedded WebDriver", () => {
+  const mutated = webdriverBoundary.replace('#[cfg(feature = "webdriver-ci")]', "");
+  assert.match(validate(baseWorkflow, webdriverConfig, mutated).join("\n"), /boundary is missing/u);
+});
+
+test("rejects embedded WebDriver in default product features", () => {
+  const mutated = `${webdriverBoundary}\ndefault = ["webdriver-ci"]`;
+  assert.match(validate(baseWorkflow, webdriverConfig, mutated).join("\n"), /must not be enabled/u);
+});
+
+test("rejects a WebDriver capability outside app.security", () => {
+  const mutated = JSON.stringify({
+    app: {
+      capabilities: [{ identifier: "windows-ci", permissions: ["wdio-webdriver:default"] }],
+    },
+  });
+  assert.match(
+    validate(baseWorkflow, webdriverConfig, webdriverBoundary, mutated).join("\n"),
+    /app\.security\.capabilities/u,
+  );
 });

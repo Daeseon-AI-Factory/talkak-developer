@@ -47,7 +47,6 @@ try {
   }
 
   $env:TALKAK_WINDOWS_APP = $installedExecutable
-  $env:TALKAK_WINDOWS_E2E_PROFILE = $e2eDataDirectory
   & pnpm e2e:windows
   if ($LASTEXITCODE -ne 0) {
     throw "The installed Windows product E2E suite exited with code $LASTEXITCODE"
@@ -62,12 +61,6 @@ try {
   } catch {
     $cleanupErrors += "Could not clear TALKAK_WINDOWS_APP: $($_.Exception.Message)"
   }
-  try {
-    Remove-Item Env:TALKAK_WINDOWS_E2E_PROFILE -ErrorAction SilentlyContinue
-  } catch {
-    $cleanupErrors += "Could not clear TALKAK_WINDOWS_E2E_PROFILE: $($_.Exception.Message)"
-  }
-
   if ($installAttempted -and (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
     try {
       $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList "/S" -PassThru -Wait
