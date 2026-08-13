@@ -1,0 +1,132 @@
+import { parseDocument } from "yaml";
+
+const REQUIRED_TRIGGERS = ["push", "pull_request", "workflow_dispatch"];
+const FORBIDDEN_EVENT_FILTERS = ["branches", "branches-ignore", "paths", "paths-ignore"];
+
+const JOBS = {
+  "macos-product": {
+    name: "macOS / product gate",
+    runner:
+      "${{ github.event_name == 'pull_request' && 'macos-latest' || vars.CI_MACOS_RUNNER || 'macos-latest' }}",
+    commands: [
+      "pnpm ci:contract",
+      "pnpm test",
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm build",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+      "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib --locked",
+      "pnpm tauri build --bundles app --no-sign --ci",
+      'test -x "src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev"',
+    ],
+  },
+  "windows-product": {
+    name: "Windows / product gate",
+    runner:
+      "${{ github.event_name == 'pull_request' && 'windows-latest' || vars.CI_WINDOWS_RUNNER || 'windows-latest' }}",
+    commands: [
+      "pnpm ci:contract",
+      "pnpm test",
+      "pnpm typecheck",
+      "pnpm lint",
+      "pnpm build",
+      "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
+      "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+      "cargo test --manifest-path src-tauri/Cargo.toml --lib --locked",
+      "cargo install tauri-driver --version 2.0.6 --locked",
+      "pnpm tauri build --bundles nsis --no-sign --ci --config src-tauri/tauri.windows-ci.conf.json",
+      "./scripts/verify-windows-package.ps1",
+    ],
+  },
+};
+
+export function validateDesktopCi(workflowSource, smokeScriptSource) {
+  const document = parseDocument(workflowSource);
+  if (document.errors.length > 0) {
+    return document.errors.map((error) => `Invalid workflow YAML: ${error.message}`);
+  }
+  const workflow = document.toJS();
+  const errors = [];
+  if (!workflow || typeof workflow !== "object") return ["Workflow root must be a mapping."];
+
+  const triggers = workflow.on;
+  if (!triggers || typeof triggers !== "object" || Array.isArray(triggers)) {
+    errors.push("Workflow triggers must be an explicit mapping.");
+  } else {
+    const triggerNames = Object.keys(triggers);
+    for (const trigger of REQUIRED_TRIGGERS) {
+      if (!triggerNames.includes(trigger)) errors.push(`Missing ${trigger} trigger.`);
+    }
+    for (const trigger of ["push", "pull_request"]) {
+      const config = triggers[trigger];
+      if (config !== null && (typeof config !== "object" || Array.isArray(config))) {
+        errors.push(`${trigger} trigger must not use an inline restriction.`);
+        continue;
+      }
+      for (const filter of FORBIDDEN_EVENT_FILTERS) {
+        if (config && Object.hasOwn(config, filter)) {
+          errors.push(`${trigger} trigger must not restrict ${filter}.`);
+        }
+      }
+      if (config && Object.keys(config).length > 0) {
+        errors.push(`${trigger} trigger must run for every event of that type.`);
+      }
+    }
+  }
+
+  if (workflow.concurrency?.["cancel-in-progress"] === true) {
+    errors.push("Desktop product gates must not cancel an earlier push or pull request run.");
+  }
+
+  const jobs = workflow.jobs;
+  if (!jobs || typeof jobs !== "object" || Array.isArray(jobs)) {
+    errors.push("Workflow jobs must be a mapping.");
+  } else {
+    for (const [jobId, contract] of Object.entries(JOBS)) {
+      const job = jobs[jobId];
+      if (!job || typeof job !== "object" || Array.isArray(job)) {
+        errors.push(`Missing ${jobId} job.`);
+        continue;
+      }
+      if (Object.hasOwn(job, "if")) errors.push(`${jobId} must not be conditionally disabled.`);
+      if (Object.hasOwn(job, "needs")) errors.push(`${jobId} must not depend on a skippable job.`);
+      if (job.name !== contract.name) errors.push(`${jobId} has an unstable check name.`);
+      if (job["runs-on"] !== contract.runner) errors.push(`${jobId} has the wrong runner.`);
+      if (job["continue-on-error"] === true) errors.push(`${jobId} must remain merge-blocking.`);
+
+      const steps = Array.isArray(job.steps) ? job.steps : [];
+      for (const command of contract.commands) {
+        const step = steps.find((candidate) => normalizeCommand(candidate?.run) === command);
+        if (!step) {
+          errors.push(`${jobId} is missing command: ${command}`);
+          continue;
+        }
+        if (Object.hasOwn(step, "if")) errors.push(`${jobId} conditionally skips: ${command}`);
+        if (step["continue-on-error"] === true) {
+          errors.push(`${jobId} allows failure for: ${command}`);
+        }
+      }
+    }
+  }
+
+  const smokeFragments = [
+    '"*-setup.exe"',
+    '"talkak-dev.exe"',
+    '"uninstall.exe"',
+    '"/S"',
+    "TALKAK_WINDOWS_APP",
+    "pnpm e2e:windows",
+    "WINDOWS_PRODUCT_E2E_OK",
+  ];
+  for (const fragment of smokeFragments) {
+    if (!smokeScriptSource.includes(fragment)) {
+      errors.push(`Windows package script is missing: ${fragment}`);
+    }
+  }
+  return errors;
+}
+
+function normalizeCommand(command) {
+  return typeof command === "string" ? command.replace(/\s+/gu, " ").trim() : "";
+}

@@ -1,0 +1,147 @@
+name: Desktop product gates
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos-product:
+    name: macOS / product gate
+    # cost-ok(PR code must not execute on a persistent self-hosted runner)
+    runs-on: >-
+      ${{ github.event_name == 'pull_request' && 'macos-latest' ||
+      vars.CI_MACOS_RUNNER || 'macos-latest' }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.12.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy, rustfmt
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check CI contract
+        run: pnpm ci:contract
+
+      - name: Test renderer
+        run: pnpm test
+
+      - name: Type-check renderer
+        run: pnpm typecheck
+
+      - name: Lint renderer
+        run: pnpm lint
+
+      - name: Build renderer
+        run: pnpm build
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Lint Rust backend
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test native PTY backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+
+      - name: Build unsigned macOS app bundle
+        run: pnpm tauri build --bundles app --no-sign --ci
+
+      - name: Verify macOS app bundle
+        run: test -x "src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev"
+
+  windows-product:
+    name: Windows / product gate
+    # PR code always uses an ephemeral GitHub runner; trusted pushes may use the configured runner.
+    runs-on: >-
+      ${{ github.event_name == 'pull_request' && 'windows-latest' ||
+      vars.CI_WINDOWS_RUNNER || 'windows-latest' }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.12.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy, rustfmt
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check CI contract
+        run: pnpm ci:contract
+
+      - name: Test renderer
+        run: pnpm test
+
+      - name: Type-check renderer
+        run: pnpm typecheck
+
+      - name: Lint renderer
+        run: pnpm lint
+
+      - name: Build renderer
+        run: pnpm build
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Lint Rust backend
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test native ConPTY backend
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+
+      - name: Install pinned Tauri WebDriver
+        run: cargo install tauri-driver --version 2.0.6 --locked
+
+      - name: Build unsigned Windows NSIS installer
+        run: >-
+          pnpm tauri build --bundles nsis --no-sign --ci
+          --config src-tauri/tauri.windows-ci.conf.json
+
+      - name: Clean-install and exercise Windows product path
+        shell: pwsh
+        run: ./scripts/verify-windows-package.ps1
