@@ -120,8 +120,8 @@ struct SessionProcess {
     id: String,
     run_id: u64,
     process_id: Option<u32>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
+    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
@@ -188,7 +188,7 @@ impl SessionRuntime {
             .master
             .take_writer()
             .map_err(|error| RuntimeError::Process(error.to_string()))?;
-        let writer = Arc::new(Mutex::new(writer));
+        let writer = Arc::new(Mutex::new(Some(writer)));
 
         let command = command_for_request(&request);
         let mut child = pair
@@ -218,7 +218,7 @@ impl SessionRuntime {
             id: request.session_id.clone(),
             run_id,
             process_id,
-            master: Mutex::new(pair.master),
+            master: Mutex::new(Some(pair.master)),
             writer,
             child: Mutex::new(child),
             output,
@@ -273,6 +273,9 @@ impl SessionRuntime {
             ));
         }
         let mut writer = lock(&process.writer, "PTY writer")?;
+        let writer = writer
+            .as_mut()
+            .ok_or_else(|| RuntimeError::Process("PTY input is closed".into()))?;
         writer
             .write_all(&request.data)
             .and_then(|()| writer.flush())
@@ -282,10 +285,13 @@ impl SessionRuntime {
     pub(crate) fn resize(&self, request: ResizeSessionRequest) -> Result<(), RuntimeError> {
         validate_size(request.cols, request.rows)?;
         let process = self.session(&request.session_id)?;
-        let result = lock(&process.master, "PTY master")?
+        let master = lock(&process.master, "PTY master")?;
+        let master = master
+            .as_ref()
+            .ok_or_else(|| RuntimeError::Process("PTY is closed".into()))?;
+        master
             .resize(pty_size(request.cols, request.rows))
-            .map_err(|error| RuntimeError::Process(error.to_string()));
-        result
+            .map_err(|error| RuntimeError::Process(error.to_string()))
     }
 
     pub(crate) fn kill(&self, request: SessionIdRequest) -> Result<SessionSnapshot, RuntimeError> {
@@ -294,6 +300,7 @@ impl SessionRuntime {
             .kill()
             .map_err(|error| RuntimeError::Process(error.to_string()))?;
         lock(&process.status, "process status")?.running = false;
+        process.close_pty()?;
         process.snapshot()
     }
 
@@ -334,6 +341,12 @@ impl SessionRuntime {
 }
 
 impl SessionProcess {
+    fn close_pty(&self) -> Result<(), RuntimeError> {
+        drop(lock(&self.writer, "PTY writer")?.take());
+        drop(lock(&self.master, "PTY master")?.take());
+        Ok(())
+    }
+
     fn refresh_status(&self) -> Result<(), RuntimeError> {
         let exit = lock(&self.child, "child process")?
             .try_wait()
@@ -427,7 +440,7 @@ fn spawn_reader_thread(
     mut reader: Box<dyn Read + Send>,
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
-    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
 ) -> Result<(), RuntimeError> {
     thread::Builder::new()
         .name(format!("talkak-pty-reader-{session_id}"))
@@ -440,8 +453,10 @@ fn spawn_reader_thread(
                     Ok(read) => {
                         for _ in 0..cursor_query.observe(&chunk[..read]) {
                             if let Ok(mut current_writer) = writer.lock() {
-                                let _ = current_writer.write_all(CURSOR_POSITION_REPORT);
-                                let _ = current_writer.flush();
+                                if let Some(current_writer) = current_writer.as_mut() {
+                                    let _ = current_writer.write_all(CURSOR_POSITION_REPORT);
+                                    let _ = current_writer.flush();
+                                }
                             }
                         }
                         if let Ok(mut buffer) = output.lock() {
@@ -452,7 +467,9 @@ fn spawn_reader_thread(
                     }
                     Err(error) => {
                         if let Ok(mut current) = status.lock() {
-                            current.read_error = Some(error.to_string());
+                            if current.running {
+                                current.read_error = Some(error.to_string());
+                            }
                         }
                         break;
                     }

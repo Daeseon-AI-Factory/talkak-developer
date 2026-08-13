@@ -89,6 +89,7 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
         })
         .expect("PTY should stop");
     assert!(!stopped.running);
+    wait_for_read_closed(&runtime, "round-trip");
 }
 
 #[test]
@@ -189,6 +190,25 @@ fn wait_for_output(runtime: &SessionRuntime, session_id: &str, after: u64, needl
         String::from_utf8_lossy(needle),
         String::from_utf8_lossy(&collected)
     );
+}
+
+fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let read = runtime
+            .read(ReadSessionRequest {
+                session_id: session_id.into(),
+                after: 0,
+            })
+            .expect("stopped PTY status should remain readable");
+        if read.read_closed {
+            assert!(!read.running);
+            assert!(read.read_error.is_none());
+            return;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for stopped PTY reader to close");
 }
 
 #[cfg(unix)]
