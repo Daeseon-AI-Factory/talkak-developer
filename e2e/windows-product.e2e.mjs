@@ -81,6 +81,6 @@ async function stopVisibleSessions() {
 
 async function terminalText() {
   const rows = await $$('[data-testid="live-terminal"] .xterm-rows');
-  const text = await Promise.all(rows.map((row) => row.getText()));
+  const text = await rows.map((row) => row.getText());
   return text.join("\n");
 }
