@@ -8,8 +8,15 @@ const smokeScript = [
   '"uninstall.exe"',
   '"/S"',
   "TALKAK_WINDOWS_APP",
+  "TALKAK_WINDOWS_E2E_PROFILE",
   "pnpm e2e:windows",
   "WINDOWS_PRODUCT_E2E_OK",
+].join("\n");
+
+const webdriverConfig = [
+  "TALKAK_WINDOWS_E2E_PROFILE",
+  "webviewOptions",
+  "userDataFolder: e2eProfilePath",
 ].join("\n");
 
 const baseWorkflow = `
@@ -49,8 +56,12 @@ jobs:
       - run: ./scripts/verify-windows-package.ps1
 `;
 
+function validate(workflow = baseWorkflow, config = webdriverConfig) {
+  return validateDesktopCi(workflow, smokeScript, config);
+}
+
 test("accepts the complete desktop gate", () => {
-  assert.deepEqual(validateDesktopCi(baseWorkflow, smokeScript), []);
+  assert.deepEqual(validate(), []);
 });
 
 test("rejects conditionally disabled jobs", () => {
@@ -58,17 +69,17 @@ test("rejects conditionally disabled jobs", () => {
     "  windows-product:\n",
     "  windows-product:\n    if: false\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /conditionally disabled/u);
+  assert.match(validate(mutated).join("\n"), /conditionally disabled/u);
 });
 
 test("rejects branch-filtered triggers", () => {
   const mutated = baseWorkflow.replace("  push:\n", "  push:\n    branches: [main]\n");
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /must not restrict branches/u);
+  assert.match(validate(mutated).join("\n"), /must not restrict branches/u);
 });
 
 test("rejects inline trigger restrictions", () => {
   const mutated = baseWorkflow.replace("  push:\n", "  push: { branches: [main] }\n");
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /must not restrict branches/u);
+  assert.match(validate(mutated).join("\n"), /must not restrict branches/u);
 });
 
 test("rejects pull request type filters", () => {
@@ -76,7 +87,7 @@ test("rejects pull request type filters", () => {
     "  pull_request:\n",
     "  pull_request:\n    types: [opened]\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /every event/u);
+  assert.match(validate(mutated).join("\n"), /every event/u);
 });
 
 test("rejects cancelled previous runs", () => {
@@ -84,7 +95,7 @@ test("rejects cancelled previous runs", () => {
     "jobs:\n",
     "concurrency:\n  cancel-in-progress: true\njobs:\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /must not cancel/u);
+  assert.match(validate(mutated).join("\n"), /must not cancel/u);
 });
 
 test("rejects non-blocking jobs", () => {
@@ -92,7 +103,7 @@ test("rejects non-blocking jobs", () => {
     "  macos-product:\n",
     "  macos-product:\n    continue-on-error: true\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /merge-blocking/u);
+  assert.match(validate(mutated).join("\n"), /merge-blocking/u);
 });
 
 test("rejects skipped required steps", () => {
@@ -100,7 +111,7 @@ test("rejects skipped required steps", () => {
     "      - run: pnpm test\n",
     "      - if: false\n        run: pnpm test\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /conditionally skips/u);
+  assert.match(validate(mutated).join("\n"), /conditionally skips/u);
 });
 
 test("rejects allowed failures on required steps", () => {
@@ -108,7 +119,7 @@ test("rejects allowed failures on required steps", () => {
     "      - run: pnpm typecheck\n",
     "      - continue-on-error: true\n        run: pnpm typecheck\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /allows failure/u);
+  assert.match(validate(mutated).join("\n"), /allows failure/u);
 });
 
 test("rejects jobs gated by dependencies", () => {
@@ -116,5 +127,10 @@ test("rejects jobs gated by dependencies", () => {
     "  windows-product:\n",
     "  windows-product:\n    needs: setup\n",
   );
-  assert.match(validateDesktopCi(mutated, smokeScript).join("\n"), /skippable job/u);
+  assert.match(validate(mutated).join("\n"), /skippable job/u);
+});
+
+test("rejects a WebDriver profile that is not forwarded to EdgeDriver", () => {
+  const mutated = webdriverConfig.replace("userDataFolder: e2eProfilePath", "");
+  assert.match(validate(baseWorkflow, mutated).join("\n"), /Windows WebDriver config is missing/u);
 });

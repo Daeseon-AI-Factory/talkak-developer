@@ -41,7 +41,7 @@ const JOBS = {
   },
 };
 
-export function validateDesktopCi(workflowSource, smokeScriptSource) {
+export function validateDesktopCi(workflowSource, smokeScriptSource, webdriverConfigSource = "") {
   const document = parseDocument(workflowSource);
   if (document.errors.length > 0) {
     return document.errors.map((error) => `Invalid workflow YAML: ${error.message}`);
@@ -116,12 +116,24 @@ export function validateDesktopCi(workflowSource, smokeScriptSource) {
     '"uninstall.exe"',
     '"/S"',
     "TALKAK_WINDOWS_APP",
+    "TALKAK_WINDOWS_E2E_PROFILE",
     "pnpm e2e:windows",
     "WINDOWS_PRODUCT_E2E_OK",
   ];
   for (const fragment of smokeFragments) {
     if (!smokeScriptSource.includes(fragment)) {
       errors.push(`Windows package script is missing: ${fragment}`);
+    }
+  }
+
+  const webdriverFragments = [
+    "TALKAK_WINDOWS_E2E_PROFILE",
+    "webviewOptions",
+    "userDataFolder: e2eProfilePath",
+  ];
+  for (const fragment of webdriverFragments) {
+    if (!webdriverConfigSource.includes(fragment)) {
+      errors.push(`Windows WebDriver config is missing: ${fragment}`);
     }
   }
   return errors;

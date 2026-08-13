@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 
 const installedApp = process.env.TALKAK_WINDOWS_APP;
+const e2eProfile = process.env.TALKAK_WINDOWS_E2E_PROFILE;
 
 if (process.platform !== "win32") {
   throw new Error("The installed-app E2E suite must run on a native Windows host.");
@@ -8,6 +9,14 @@ if (process.platform !== "win32") {
 if (!installedApp) {
   throw new Error("TALKAK_WINDOWS_APP must point to the installed Talkak executable.");
 }
+if (!e2eProfile) {
+  throw new Error(
+    "TALKAK_WINDOWS_E2E_PROFILE must point to the isolated WebView2 user data folder.",
+  );
+}
+
+const installedAppPath = resolve(installedApp);
+const e2eProfilePath = resolve(e2eProfile);
 
 export const config = {
   runner: "local",
@@ -17,7 +26,7 @@ export const config = {
     [
       "@wdio/tauri-service",
       {
-        appBinaryPath: resolve(installedApp),
+        appBinaryPath: installedAppPath,
         driverProvider: "external",
         autoInstallTauriDriver: false,
         autoDownloadEdgeDriver: true,
@@ -27,7 +36,11 @@ export const config = {
   capabilities: [
     {
       browserName: "tauri",
-      "tauri:options": { application: resolve(installedApp) },
+      "tauri:options": {
+        application: installedAppPath,
+        // EdgeDriver must watch the same WebView2 profile that Tauri opens.
+        webviewOptions: { userDataFolder: e2eProfilePath },
+      },
     },
   ],
   logLevel: "info",

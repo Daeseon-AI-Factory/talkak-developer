@@ -10,7 +10,8 @@ const smokeScript = readFileSync(
   resolve(repositoryRoot, "scripts/verify-windows-package.ps1"),
   "utf8",
 );
-const errors = validateDesktopCi(workflow, smokeScript);
+const webdriverConfig = readFileSync(resolve(repositoryRoot, "wdio.windows.conf.mjs"), "utf8");
+const errors = validateDesktopCi(workflow, smokeScript, webdriverConfig);
 
 if (errors.length > 0) {
   throw new Error(`Desktop CI contract is incomplete:\n- ${errors.join("\n- ")}`);
