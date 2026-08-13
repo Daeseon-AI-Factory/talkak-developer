@@ -1,6 +1,7 @@
 use crate::session_runtime::{
-    OutputBuffer, ReadSessionRequest, ResizeSessionRequest, RuntimeError, SessionIdRequest,
-    SessionRuntime, SpawnSessionRequest, WriteSessionRequest, MAX_OUTPUT_BYTES,
+    CursorPositionQueryDetector, OutputBuffer, ReadSessionRequest, ResizeSessionRequest,
+    RuntimeError, SessionIdRequest, SessionRuntime, SpawnSessionRequest, WriteSessionRequest,
+    MAX_OUTPUT_BYTES,
 };
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,6 +15,15 @@ fn output_buffer_keeps_a_bounded_replay_window() {
     let read = output.read_for_test(0);
     assert!(read.truncated);
     assert_eq!(read.start, 4);
+}
+
+#[test]
+fn cursor_position_query_detector_handles_split_and_repeated_queries() {
+    let mut detector = CursorPositionQueryDetector::default();
+
+    assert_eq!(detector.observe(b"prefix\x1b["), 0);
+    assert_eq!(detector.observe(b"6n middle \x1b[6n suffix"), 2);
+    assert_eq!(detector.observe(b"ordinary output"), 0);
 }
 
 #[test]

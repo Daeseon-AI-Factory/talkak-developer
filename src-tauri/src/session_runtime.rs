@@ -11,6 +11,8 @@ use std::thread;
 pub(crate) const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_SESSION_ID_BYTES: usize = 128;
+const CURSOR_POSITION_QUERY: &[u8] = b"\x1b[6n";
+const CURSOR_POSITION_REPORT: &[u8] = b"\x1b[1;1R";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -119,7 +121,7 @@ struct SessionProcess {
     run_id: u64,
     process_id: Option<u32>,
     master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     child: Mutex<Box<dyn Child + Send + Sync>>,
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
@@ -131,6 +133,29 @@ struct ProcessStatus {
     exit_code: Option<u32>,
     read_closed: bool,
     read_error: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct CursorPositionQueryDetector {
+    matched: usize,
+}
+
+impl CursorPositionQueryDetector {
+    pub(crate) fn observe(&mut self, bytes: &[u8]) -> usize {
+        let mut query_count = 0;
+        for byte in bytes {
+            if *byte == CURSOR_POSITION_QUERY[self.matched] {
+                self.matched += 1;
+                if self.matched == CURSOR_POSITION_QUERY.len() {
+                    query_count += 1;
+                    self.matched = 0;
+                }
+            } else {
+                self.matched = usize::from(*byte == CURSOR_POSITION_QUERY[0]);
+            }
+        }
+        query_count
+    }
 }
 
 #[derive(Debug, Default)]
@@ -163,6 +188,7 @@ impl SessionRuntime {
             .master
             .take_writer()
             .map_err(|error| RuntimeError::Process(error.to_string()))?;
+        let writer = Arc::new(Mutex::new(writer));
 
         let command = command_for_request(&request);
         let mut child = pair
@@ -182,6 +208,7 @@ impl SessionRuntime {
             reader,
             Arc::clone(&output),
             Arc::clone(&status),
+            Arc::clone(&writer),
         ) {
             let _ = child.kill();
             return Err(error);
@@ -192,7 +219,7 @@ impl SessionRuntime {
             run_id,
             process_id,
             master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
+            writer,
             child: Mutex::new(child),
             output,
             status,
@@ -400,15 +427,23 @@ fn spawn_reader_thread(
     mut reader: Box<dyn Read + Send>,
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
 ) -> Result<(), RuntimeError> {
     thread::Builder::new()
         .name(format!("talkak-pty-reader-{session_id}"))
         .spawn(move || {
             let mut chunk = [0_u8; 8192];
+            let mut cursor_query = CursorPositionQueryDetector::default();
             loop {
                 match reader.read(&mut chunk) {
                     Ok(0) => break,
                     Ok(read) => {
+                        for _ in 0..cursor_query.observe(&chunk[..read]) {
+                            if let Ok(mut current_writer) = writer.lock() {
+                                let _ = current_writer.write_all(CURSOR_POSITION_REPORT);
+                                let _ = current_writer.flush();
+                            }
+                        }
                         if let Ok(mut buffer) = output.lock() {
                             buffer.append(&chunk[..read]);
                         } else {
