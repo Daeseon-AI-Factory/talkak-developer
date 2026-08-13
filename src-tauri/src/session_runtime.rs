@@ -343,7 +343,15 @@ impl SessionRuntime {
 impl SessionProcess {
     fn close_pty(&self) -> Result<(), RuntimeError> {
         drop(lock(&self.writer, "PTY writer")?.take());
-        drop(lock(&self.master, "PTY master")?.take());
+        let Some(master) = lock(&self.master, "PTY master")?.take() else {
+            return Ok(());
+        };
+        thread::Builder::new()
+            .name(format!("talkak-pty-closer-{}", self.id))
+            .spawn(move || drop(master))
+            .map_err(|error| {
+                RuntimeError::Internal(format!("failed to start PTY closer: {error}"))
+            })?;
         Ok(())
     }
 
@@ -352,9 +360,12 @@ impl SessionProcess {
             .try_wait()
             .map_err(|error| RuntimeError::Process(error.to_string()))?;
         if let Some(exit) = exit {
-            let mut status = lock(&self.status, "process status")?;
-            status.running = false;
-            status.exit_code = Some(exit.exit_code());
+            {
+                let mut status = lock(&self.status, "process status")?;
+                status.running = false;
+                status.exit_code = Some(exit.exit_code());
+            }
+            self.close_pty()?;
         }
         Ok(())
     }

@@ -93,6 +93,25 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
 }
 
 #[test]
+fn native_pty_closes_after_command_exits_without_kill() {
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let (command, args) = natural_exit_fixture();
+    runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "natural-exit".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: Some(command.into()),
+            args,
+            cols: 80,
+            rows: 24,
+        })
+        .expect("short-lived PTY command should spawn");
+
+    wait_for_read_closed(&runtime, "natural-exit");
+}
+
+#[test]
 fn discard_rejects_a_running_session() {
     let runtime = SessionRuntime::default();
     let cwd = std::env::current_dir().expect("test working directory should resolve");
@@ -220,11 +239,24 @@ fn default_shell_fixture() -> (Vec<u8>, Vec<u8>, &'static [u8]) {
     )
 }
 
+#[cfg(unix)]
+fn natural_exit_fixture() -> (&'static str, Vec<String>) {
+    ("/bin/sh", vec!["-c".into(), "exit 0".into()])
+}
+
 #[cfg(windows)]
 fn default_shell_fixture() -> (Vec<u8>, Vec<u8>, &'static [u8]) {
     (
         b"@echo off\r\n".to_vec(),
         b"echo talkak-result\r\n".to_vec(),
         b"talkak-result",
+    )
+}
+
+#[cfg(windows)]
+fn natural_exit_fixture() -> (&'static str, Vec<String>) {
+    (
+        "cmd.exe",
+        vec!["/D".into(), "/S".into(), "/C".into(), "exit /B 0".into()],
     )
 }
