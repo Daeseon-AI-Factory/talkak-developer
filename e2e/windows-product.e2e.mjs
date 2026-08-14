@@ -2,10 +2,7 @@ import { strict as assert } from "node:assert";
 import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
 
-const marker = "TALKAK_WINDOWS_PTY_OK";
-const markerCommand = "echo TALKAK_WINDOWS_PTY_^OK";
-const attentionMarker = "TALKAK_ATTENTION_LOG_OK";
-const attentionMarkerCommand = "echo TALKAK_ATTENTION_LOG_^OK";
+const echoStatusPattern = /ECHO is (?:on|off)\./u;
 const projectPath = process.env.TALKAK_WINDOWS_PROJECT;
 if (!projectPath || !isAbsolute(projectPath)) {
   throw new Error("TALKAK_WINDOWS_PROJECT must be an absolute external test directory.");
@@ -31,11 +28,11 @@ describe("installed Windows product path", () => {
     await startSession.click();
     await waitForRunningTerminalCount(1);
 
-    await typeTerminalCommand(markerCommand);
+    await typeTerminalCommand("echo");
 
-    await browser.waitUntil(async () => (await terminalText()).includes(marker), {
+    await browser.waitUntil(async () => echoStatusPattern.test(await terminalText()), {
       timeout: 20_000,
-      timeoutMsg: `PTY did not echo ${marker}`,
+      timeoutMsg: "PTY did not report the Windows echo state",
     });
 
     await (await $('[data-testid="split-right"]')).click();
@@ -51,10 +48,10 @@ describe("installed Windows product path", () => {
     assert.equal((await $$('[data-testid="page-tab"]')).length, 2);
     assert.equal((await $$('[data-testid="live-terminal"]')).length, 1);
 
-    await typeTerminalCommand(attentionMarkerCommand);
-    await browser.waitUntil(async () => (await terminalText()).includes(attentionMarker), {
+    await typeTerminalCommand("echo");
+    await browser.waitUntil(async () => echoStatusPattern.test(await terminalText()), {
       timeout: 20_000,
-      timeoutMsg: `PTY did not echo ${attentionMarker}`,
+      timeoutMsg: "The Attention probe did not report the Windows echo state",
     });
     await exitVisibleSession();
     await (await $('[data-testid="nav-attention"]')).click();
@@ -68,10 +65,10 @@ describe("installed Windows product path", () => {
     await terminalLog.waitForExist();
     await (await terminalLog.$('[data-phase="exited"]')).waitForExist({ timeout: 20_000 });
     await browser.waitUntil(
-      async () => (await terminalLogText(terminalLog)).includes(attentionMarker),
+      async () => echoStatusPattern.test(await terminalLogText(terminalLog)),
       {
         timeout: 20_000,
-        timeoutMsg: `Terminal log did not retain ${attentionMarker}`,
+        timeoutMsg: "Terminal log did not retain the Windows echo state",
       },
     );
 
@@ -146,9 +143,12 @@ async function terminalLogText(terminalLog) {
 }
 
 async function typeTerminalCommand(command) {
-  const terminalScreen = await $('[data-testid="live-terminal"] .xterm-screen');
-  await terminalScreen.waitForClickable();
-  await terminalScreen.click();
+  if (!/^[a-z]+$/u.test(command)) {
+    throw new Error("The embedded terminal key probe only accepts lowercase ASCII letters.");
+  }
+  const input = await $('[data-testid="live-terminal"] .xterm-helper-textarea');
+  await input.waitForExist();
+  await input.click();
   await browser.keys(command);
   await browser.keys(Key.Enter);
 }

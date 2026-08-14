@@ -29,7 +29,9 @@ const windowsE2e = [
   "process.env.TALKAK_WINDOWS_PROJECT",
   "!projectPath || !isAbsolute(projectPath)",
   "setValue(projectPath)",
-  "TALKAK_ATTENTION_LOG_OK",
+  'typeTerminalCommand("echo")',
+  ".xterm-helper-textarea",
+  "browser.keys(command)",
   '[data-testid="runtime-attention-card"]',
   '[data-testid="terminal-log-view"]',
   '[data-testid="ack-runtime-notice"]',
@@ -321,6 +323,36 @@ test("rejects removing the absolute external-project guard", () => {
 
 test("rejects an installed-product test that does not inspect terminal log rows", () => {
   const mutated = windowsE2e.replace(".terminal-log__host .xterm-rows", ".terminal-log__host");
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      mutated,
+    ).join("\n"),
+    /Windows product E2E is missing/u,
+  );
+});
+
+test("rejects element value injection for terminal commands", () => {
+  const mutated = windowsE2e.replace("browser.keys(command)", "input.addValue(command)");
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      mutated,
+    ).join("\n"),
+    /Windows product E2E is missing/u,
+  );
+});
+
+test("rejects focusing the non-input terminal screen", () => {
+  const mutated = windowsE2e.replace(".xterm-helper-textarea", ".xterm-screen");
   assert.match(
     validate(
       baseWorkflow,
