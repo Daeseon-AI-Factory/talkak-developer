@@ -77,6 +77,11 @@
     padding: 0;
   }
 
+  .app-utilitybar__leading > .shell-control--project {
+    width: 44px;
+    height: 44px;
+  }
+
   .command-search span,
   .command-search kbd {
     display: none;

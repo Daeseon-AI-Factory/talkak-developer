@@ -265,7 +265,7 @@ export default function App() {
               <Icon name="panel" size={16} />
             </button>
             <button
-              className="shell-control"
+              className="shell-control shell-control--project"
               type="button"
               data-testid="add-project-global"
               aria-label={t("sidebar.addProject")}
@@ -275,7 +275,7 @@ export default function App() {
               <Icon name="plus" size={16} />
             </button>
             <button
-              className="shell-control"
+              className="shell-control shell-control--project"
               type="button"
               aria-label={t("sidebar.editProject")}
               title={t("sidebar.editProject")}
