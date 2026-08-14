@@ -30,7 +30,9 @@ const windowsE2e = [
   "!projectPath || !isAbsolute(projectPath)",
   "setValue(projectPath)",
   'typeTerminalCommand("echo")',
+  "if (!/^[a-z]+$/u.test(command))",
   ".xterm-helper-textarea",
+  "await input.click();",
   "browser.keys(command)",
   '[data-testid="runtime-attention-card"]',
   '[data-testid="terminal-log-view"]',
@@ -352,7 +354,22 @@ test("rejects element value injection for terminal commands", () => {
 });
 
 test("rejects focusing the non-input terminal screen", () => {
-  const mutated = windowsE2e.replace(".xterm-helper-textarea", ".xterm-screen");
+  const mutated = windowsE2e.replace("await input.click();", "await terminalScreen.click();");
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      mutated,
+    ).join("\n"),
+    /Windows product E2E is missing/u,
+  );
+});
+
+test("rejects terminal probes that allow unsupported uppercase input", () => {
+  const mutated = windowsE2e.replace("/^[a-z]+$/u", "/^[A-Z]+$/u");
   assert.match(
     validate(
       baseWorkflow,
