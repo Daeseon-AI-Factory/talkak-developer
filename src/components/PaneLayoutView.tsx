@@ -118,7 +118,7 @@ function EmptyPage({
   onAttachSession: (sessionId: string) => void;
   onCreateSession: () => void;
 }) {
-  const { statusLabel, t } = useI18n();
+  const { statusLabel, t, text } = useI18n();
   return (
     <div className="empty-page">
       <span className="empty-page__icon">
@@ -141,7 +141,7 @@ function EmptyPage({
         {sessions.map((session) => (
           <button type="button" key={session.id} onClick={() => onAttachSession(session.id)}>
             <span className="terminal-pane__status" data-state={session.state} />
-            <strong>{session.title}</strong>
+            <strong>{text(session.title)}</strong>
             <small>{statusLabel(session.state)}</small>
           </button>
         ))}

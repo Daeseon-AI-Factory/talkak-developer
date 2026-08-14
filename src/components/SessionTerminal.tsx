@@ -4,13 +4,30 @@ import type { DevSession, TerminalRuntimePhase } from "../domain";
 import { useI18n } from "../i18n";
 import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
+import { partitionTerminalOutput } from "../runtime/terminalReplay";
 
 const POLL_INTERVAL_MS = 75;
+
+interface ObservedRuntimeCursor {
+  runId: number;
+  next: number;
+}
+
+interface PendingTerminalOutput {
+  bytes: Uint8Array;
+  suppressProtocolInput: boolean;
+  resolve: () => void;
+}
+
+type TerminalOutputWriter = (bytes: Uint8Array, suppressProtocolInput: boolean) => Promise<void>;
+
+const observedRuntimeCursors = new Map<string, ObservedRuntimeCursor>();
 
 interface SessionTerminalProps {
   session: DevSession;
   projectPath: string;
   focused: boolean;
+  background?: boolean;
   onRuntimeAttached: (attached: boolean) => void;
   onLaunchHandled: (sessionId: string) => void;
   onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
@@ -20,11 +37,12 @@ export function SessionTerminal({
   session,
   projectPath,
   focused,
+  background = false,
   onRuntimeAttached,
   onLaunchHandled,
   onPhaseChange,
 }: SessionTerminalProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   const launchCommand = session.launchProfile.command?.trim() || null;
   const launchLabel = session.launchProfile.label || t("terminal.defaultShell");
   const [phase, setPhase] = useState<TerminalRuntimePhase>("checking");
@@ -34,7 +52,10 @@ export function SessionTerminal({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const cursorRef = useRef(0);
-  const pendingOutputRef = useRef<Uint8Array[]>([]);
+  const replayThroughRef = useRef(0);
+  const pendingOutputRef = useRef<PendingTerminalOutput[]>([]);
+  const outputWriterRef = useRef<TerminalOutputWriter | null>(null);
+  const suppressProtocolInputRef = useRef(false);
   const focusedRef = useRef(focused);
   const launchRequestedRef = useRef(session.launchRequested === true);
   const launchHandledRef = useRef(onLaunchHandled);
@@ -44,6 +65,9 @@ export function SessionTerminal({
   launchHandledRef.current = onLaunchHandled;
   phaseChangeRef.current = onPhaseChange;
   const terminalAttached = phase === "running" || phase === "stopping" || phase === "exited";
+  const shouldAttachTerminal = background
+    ? phase === "running" || phase === "stopping"
+    : terminalAttached;
 
   useEffect(() => onRuntimeAttached(terminalAttached), [onRuntimeAttached, terminalAttached]);
 
@@ -57,7 +81,8 @@ export function SessionTerminal({
     setError(null);
     setExitCode(null);
     cursorRef.current = 0;
-    pendingOutputRef.current = [];
+    replayThroughRef.current = 0;
+    resolvePendingOutput();
     if (!sessionClient.available()) {
       setPhase("unavailable");
       if (shouldLaunch) launchHandledRef.current(session.id);
@@ -74,9 +99,11 @@ export function SessionTerminal({
       .then((snapshot) => {
         if (cancelled) return;
         if (!snapshot) {
+          observedRuntimeCursors.delete(session.id);
           setPhase("idle");
           return;
         }
+        prepareRuntimeReplay(session.id, snapshot.runId);
         setExitCode(snapshot.exitCode);
         setError(snapshot.readError);
         setPhase(snapshot.running || !snapshot.readClosed ? "running" : "exited");
@@ -95,7 +122,7 @@ export function SessionTerminal({
   }, [projectPath, session.id, session.launchProfile]);
 
   useEffect(() => {
-    if (!terminalAttached || !hostRef.current) return;
+    if (!shouldAttachTerminal || !hostRef.current) return;
     let disposed = false;
     let disposeTerminal: (() => void) | undefined;
     void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
@@ -118,14 +145,39 @@ export function SessionTerminal({
         terminal.loadAddon(fitAddon);
         terminal.open(hostRef.current);
         terminalRef.current = terminal;
-        for (const chunk of pendingOutputRef.current) terminal.write(chunk);
-        pendingOutputRef.current = [];
-
+        let writeChain = Promise.resolve();
+        const activeWrites = new Set<() => void>();
+        const enqueueOutput: TerminalOutputWriter = (bytes, suppressProtocolInput) => {
+          let settled = false;
+          return new Promise<void>((resolve) => {
+            const finish = () => {
+              if (settled) return;
+              settled = true;
+              activeWrites.delete(finish);
+              suppressProtocolInputRef.current = false;
+              resolve();
+            };
+            activeWrites.add(finish);
+            writeChain = writeChain.then(() => {
+              if (disposed) {
+                finish();
+                return;
+              }
+              suppressProtocolInputRef.current = suppressProtocolInput;
+              terminal.write(bytes, finish);
+            });
+          });
+        };
+        outputWriterRef.current = enqueueOutput;
         const sendInput = terminal.onData((data) => {
+          if (suppressProtocolInputRef.current) return;
           void sessionClient
             .write(session.id, new TextEncoder().encode(data))
             .catch((cause: unknown) => setError(errorMessage(cause)));
         });
+        for (const pending of pendingOutputRef.current.splice(0)) {
+          void enqueueOutput(pending.bytes, pending.suppressProtocolInput).then(pending.resolve);
+        }
         const sendResize = terminal.onResize(({ cols, rows }) => {
           void sessionClient
             .resize(session.id, cols, rows)
@@ -151,6 +203,9 @@ export function SessionTerminal({
         const observer = new ResizeObserver(fit);
         observer.observe(hostRef.current);
         disposeTerminal = () => {
+          disposed = true;
+          if (outputWriterRef.current === enqueueOutput) outputWriterRef.current = null;
+          for (const finish of [...activeWrites]) finish();
           cancelAnimationFrame(frame);
           observer.disconnect();
           sendInput.dispose();
@@ -161,15 +216,17 @@ export function SessionTerminal({
       })
       .catch((cause: unknown) => {
         if (disposed) return;
+        resolvePendingOutput();
         setError(errorMessage(cause));
         setPhase("error");
       });
 
     return () => {
       disposed = true;
+      resolvePendingOutput();
       disposeTerminal?.();
     };
-  }, [session.id, terminalAttached]);
+  }, [session.id, shouldAttachTerminal]);
 
   useEffect(() => {
     if (!focused || !terminalAttached) return;
@@ -196,11 +253,19 @@ export function SessionTerminal({
       try {
         const read = await sessionClient.read(session.id, cursorRef.current);
         if (cancelled) return;
-        cursorRef.current = read.next;
         if (read.truncated) {
-          writeOutput(new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`));
+          await writeOutput(
+            new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`),
+            true,
+          );
         }
-        if (read.bytes.length > 0) writeOutput(Uint8Array.from(read.bytes));
+        const output = Uint8Array.from(read.bytes);
+        for (const chunk of partitionTerminalOutput(output, read.start, replayThroughRef.current)) {
+          await writeOutput(chunk.bytes, chunk.suppressProtocolInput);
+        }
+        if (cancelled) return;
+        cursorRef.current = read.next;
+        observedRuntimeCursors.set(session.id, { runId: read.runId, next: read.next });
         setExitCode(read.exitCode);
         if (read.readError) setError(read.readError);
         if (!read.running && read.readClosed) {
@@ -222,9 +287,22 @@ export function SessionTerminal({
     };
   }, [phase, session.id, t]);
 
-  function writeOutput(bytes: Uint8Array) {
-    if (terminalRef.current) terminalRef.current.write(bytes);
-    else pendingOutputRef.current.push(bytes);
+  function prepareRuntimeReplay(sessionId: string, runId: number) {
+    const observed = observedRuntimeCursors.get(sessionId);
+    replayThroughRef.current = observed?.runId === runId ? observed.next : 0;
+    if (observed?.runId !== runId) observedRuntimeCursors.delete(sessionId);
+  }
+
+  function writeOutput(bytes: Uint8Array, suppressProtocolInput: boolean) {
+    const writer = outputWriterRef.current;
+    if (writer) return writer(bytes, suppressProtocolInput);
+    return new Promise<void>((resolve) => {
+      pendingOutputRef.current.push({ bytes, suppressProtocolInput, resolve });
+    });
+  }
+
+  function resolvePendingOutput() {
+    for (const pending of pendingOutputRef.current.splice(0)) pending.resolve();
   }
 
   async function start() {
@@ -232,11 +310,13 @@ export function SessionTerminal({
     setExitCode(null);
     setPhase("starting");
     cursorRef.current = 0;
-    pendingOutputRef.current = [];
+    replayThroughRef.current = 0;
+    resolvePendingOutput();
     try {
       const snapshot = await ensureSessionStarted(
         createSessionSpawnInput(session.id, cwd, session.launchProfile),
       );
+      prepareRuntimeReplay(session.id, snapshot.runId);
       setExitCode(snapshot.exitCode);
       setError(snapshot.readError);
       setPhase(snapshot.running || !snapshot.readClosed ? "running" : "exited");
@@ -259,6 +339,14 @@ export function SessionTerminal({
     }
   }
 
+  if (background) {
+    return shouldAttachTerminal ? (
+      <div className="background-session-runtime" aria-hidden="true">
+        <div className="terminal-host" ref={hostRef} />
+      </div>
+    ) : null;
+  }
+
   if (!terminalAttached) {
     return (
       <>
@@ -266,7 +354,7 @@ export function SessionTerminal({
           <div className="terminal-launcher__preview">
             {session.lines.map((line) => (
               <div className="terminal-line" data-tone={line.tone} key={line.id}>
-                {line.text}
+                {text(line.text)}
               </div>
             ))}
           </div>
@@ -309,7 +397,7 @@ export function SessionTerminal({
           <span className="preview-label">{t("terminal.preview")}</span>
           <span>{phaseLabel(phase, exitCode, t)}</span>
           <span className="terminal-pane__footer-spacer" />
-          <span>{session.lastActivity}</span>
+          <span>{text(session.lastActivity)}</span>
         </footer>
       </>
     );
@@ -320,7 +408,7 @@ export function SessionTerminal({
       <div
         className="terminal-pane__body terminal-pane__body--live"
         data-testid="live-terminal"
-        aria-label={t("terminal.liveAria", { session: session.title })}
+        aria-label={t("terminal.liveAria", { session: text(session.title) })}
       >
         <div className="terminal-host" ref={hostRef} />
       </div>

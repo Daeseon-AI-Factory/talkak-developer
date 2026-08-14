@@ -34,7 +34,7 @@ export function AttentionCenter({
   onResolve,
   onOpenSession,
 }: AttentionCenterProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   const [pendingChoice, setPendingChoice] = useState<{
     requestId: string;
     revision: number;
@@ -128,7 +128,7 @@ export function AttentionCenter({
                 <span className="attention-card__description">{request.description}</span>
                 <span className="attention-card__footer">
                   <span data-risk={request.risk}>{t(riskKeys[request.risk])}</span>
-                  <span>{context.session?.title ?? request.sessionId}</span>
+                  <span>{context.session ? text(context.session.title) : request.sessionId}</span>
                 </span>
               </button>
             );
@@ -208,7 +208,7 @@ function AttentionDetail({
   onConfirm,
   onOpenSession,
 }: AttentionDetailProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   const context = findContext(projects, request);
   const choicesRef = useRef<HTMLDivElement | null>(null);
   const reviewRef = useRef<HTMLDivElement | null>(null);
@@ -234,7 +234,8 @@ function AttentionDetail({
         <span>{t("attention.revision", { revision: request.revision })}</span>
       </div>
       <p className="attention-detail__context">
-        {context.project?.name ?? request.projectId} / {context.session?.title ?? request.sessionId}
+        {context.project?.name ?? request.projectId} /{" "}
+        {context.session ? text(context.session.title) : request.sessionId}
       </p>
       <h2>{request.title}</h2>
       <p className="attention-detail__description">{request.description}</p>

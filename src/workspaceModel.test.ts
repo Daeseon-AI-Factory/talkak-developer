@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { projects } from "./demo";
-import { countSessions, firstSession, runtimeLabel } from "./workspaceModel";
+import {
+  countSessions,
+  firstSession,
+  nextGeneratedPageTitle,
+  runtimeLabel,
+} from "./workspaceModel";
 
 describe("workspace model", () => {
   it("counts only actionable session states", () => {
@@ -28,5 +33,14 @@ describe("workspace model", () => {
       runtime: { kind: "local" as const, label: "Review agent", shell: "PTY" },
     };
     expect(runtimeLabel(session)).toBe("Review agent");
+  });
+
+  it("does not reuse a generated page number after a middle page is closed", () => {
+    expect(
+      nextGeneratedPageTitle([
+        { id: "page-1", title: { kind: "page-title", index: 1 }, root: null },
+        { id: "page-3", title: { kind: "page-title", index: 3 }, root: null },
+      ]),
+    ).toEqual({ kind: "page-title", index: 4 });
   });
 });

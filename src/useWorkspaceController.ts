@@ -1,7 +1,6 @@
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import type { PresentationMode } from "./adaptiveLayout";
 import type { DevSession, Project, TerminalRuntimePhase } from "./domain";
-import type { useI18n } from "./i18n";
 import {
   type LayoutNode,
   type SplitDirection,
@@ -15,8 +14,13 @@ import {
 import { browserProjectStorage } from "./projectStore";
 import { createWorkspaceSession } from "./sessionModel";
 import { applyRuntimePhase } from "./sessionRuntimeState";
-import { createInitialWorkspace, initialFocusedSessionId } from "./workspaceBootstrap";
+import {
+  createInitialWorkspace,
+  initialFocusedSessionId,
+  initialProjectId,
+} from "./workspaceBootstrap";
 import { cycleFocusedPane, focusedPane } from "./workspaceFocus";
+import { nextGeneratedPageTitle } from "./workspaceModel";
 import {
   type ActivePages,
   type ActivePanes,
@@ -25,14 +29,11 @@ import {
   writeWorkspaceSnapshot,
 } from "./workspaceStore";
 
-type Translate = ReturnType<typeof useI18n>["t"];
-
 interface WorkspaceControllerInput {
   projects: Project[];
   setProjects: Dispatch<SetStateAction<Project[]>>;
   presentationMode: PresentationMode;
   snapshot: WorkspaceSnapshot | null;
-  t: Translate;
 }
 
 export function useWorkspaceController({
@@ -40,19 +41,20 @@ export function useWorkspaceController({
   setProjects,
   presentationMode,
   snapshot,
-  t,
 }: WorkspaceControllerInput) {
-  const [initial] = useState(() =>
-    createInitialWorkspace(projects, snapshot, (index) => t("pages.defaultTitle", { index })),
-  );
+  const [initial] = useState(() => createInitialWorkspace(projects, snapshot));
   const [pagesByProject, setPagesByProject] = useState<ProjectPages>(initial.pages);
   const [activePageByProject, setActivePageByProject] = useState<ActivePages>(initial.active);
   const [activePaneByPage, setActivePaneByPage] = useState<ActivePanes>(initial.focused);
-  const [activeProjectId, setActiveProjectId] = useState(projects[0]?.id ?? "");
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
-    const firstProject = projects[0];
-    return firstProject ? initialFocusedSessionId(initial, firstProject.id) : null;
+  const [initialSelection] = useState(() => {
+    const projectId = initialProjectId(projects, snapshot);
+    return {
+      projectId,
+      sessionId: projectId ? initialFocusedSessionId(initial, projectId) : null,
+    };
   });
+  const [activeProjectId, setActiveProjectId] = useState(initialSelection.projectId);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(initialSelection.sessionId);
   const fallbackCounter = useRef(0);
 
   const activeProject = useMemo(
@@ -80,6 +82,7 @@ export function useWorkspaceController({
     if (!storage) return;
     try {
       writeWorkspaceSnapshot(storage, projects, {
+        activeProjectId,
         pagesByProject,
         activePageByProject,
         activePaneByPage,
@@ -87,7 +90,7 @@ export function useWorkspaceController({
     } catch {
       // The current workspace remains usable when browser storage is unavailable.
     }
-  }, [activePageByProject, activePaneByPage, pagesByProject, projects]);
+  }, [activePageByProject, activePaneByPage, activeProjectId, pagesByProject, projects]);
 
   useEffect(() => {
     if (presentationMode === "phone" || !activeSessionId) return;
@@ -105,7 +108,7 @@ export function useWorkspaceController({
     }
     const page = createPage({
       pageId: nextId(`page-${activeProject.id}`, fallbackCounter),
-      title: nextPageTitle(activePages, t),
+      title: nextPageTitle(activePages),
       paneId: nextId("pane", fallbackCounter),
       sessionId: session.id,
     });
@@ -114,7 +117,7 @@ export function useWorkspaceController({
       [activeProject.id]: [...(current[activeProject.id] ?? []), page],
     }));
     focusPage(activeProject.id, page, page.root?.id ?? null);
-  }, [activeProject, activePages, activeSessionId, presentationMode, t]);
+  }, [activeProject, activePages, activeSessionId, presentationMode]);
 
   function updatePage(
     projectId: string,
@@ -169,12 +172,11 @@ export function useWorkspaceController({
       activeProject,
       activeProject.sessions.length + 1,
       true,
-      t,
       fallbackCounter,
     );
     const page = createPage({
       pageId: nextId(`page-${activeProject.id}`, fallbackCounter),
-      title: nextPageTitle(activePages, t),
+      title: nextPageTitle(activePages),
       paneId: nextId("pane", fallbackCounter),
       sessionId: session.id,
     });
@@ -231,7 +233,6 @@ export function useWorkspaceController({
       activeProject,
       activeProject.sessions.length + 1,
       true,
-      t,
       fallbackCounter,
     );
     const paneId = nextId("pane", fallbackCounter);
@@ -239,7 +240,7 @@ export function useWorkspaceController({
       activePage ??
       ({
         id: nextId(`page-${activeProject.id}`, fallbackCounter),
-        title: nextPageTitle(activePages, t),
+        title: nextPageTitle(activePages),
         root: null,
       } satisfies WorkspacePage);
     const pageWithSession: WorkspacePage = {
@@ -274,7 +275,6 @@ export function useWorkspaceController({
       activeProject,
       activeProject.sessions.length + 1,
       true,
-      t,
       fallbackCounter,
     );
     const nextPaneId = nextId("pane", fallbackCounter);
@@ -379,7 +379,7 @@ export function useWorkspaceController({
     if (!page) {
       page = createPage({
         pageId: nextId(`page-${projectId}`, fallbackCounter),
-        title: nextPageTitle(projectPages, t),
+        title: nextPageTitle(projectPages),
         paneId: nextId("pane", fallbackCounter),
         sessionId,
       });
@@ -409,9 +409,7 @@ export function useWorkspaceController({
   }
 
   function installProject(project: Project, replacedPreviews: boolean) {
-    const created = createInitialWorkspace([project], null, (index) =>
-      t("pages.defaultTitle", { index }),
-    );
+    const created = createInitialWorkspace([project], null);
     setPagesByProject((current) =>
       replacedPreviews ? created.pages : { ...current, ...created.pages },
     );
@@ -497,20 +495,19 @@ function makeSession(
   project: Project,
   index: number,
   launchRequested: boolean,
-  t: Translate,
   counter: { current: number },
 ): DevSession {
-  const profile = project.launchProfile.label.trim() || t("session.defaultProfile");
+  const profile = project.launchProfile.label.trim() || { kind: "default-profile" as const };
   return createWorkspaceSession({
     id: nextId("session", counter),
-    title: t("session.defaultTitle", { index }),
+    title: { kind: "session-title", index },
     profile,
     launchProfile: project.launchProfile,
     createdAt: new Date().toISOString(),
-    lastActivity: t("session.createdNow"),
-    intro: t("session.readyIntro"),
-    outcome: t("session.readyOutcome"),
-    nextStep: t("session.readyNext"),
+    lastActivity: { kind: "session-created" },
+    intro: { kind: "ready-intro" },
+    outcome: { kind: "ready-outcome" },
+    nextStep: { kind: "ready-next" },
     launchRequested,
   });
 }
@@ -526,13 +523,6 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return Object.fromEntries(Object.entries(record).filter(([candidate]) => candidate !== key));
 }
 
-function nextPageTitle(pages: readonly WorkspacePage[], t: Translate): string {
-  const existing = new Set(pages.map((page) => page.title));
-  let index = pages.length + 1;
-  let title = t("pages.defaultTitle", { index });
-  while (existing.has(title)) {
-    index += 1;
-    title = t("pages.defaultTitle", { index });
-  }
-  return title;
+function nextPageTitle(pages: readonly WorkspacePage[]) {
+  return nextGeneratedPageTitle(pages);
 }

@@ -28,7 +28,7 @@ export function PageTabs({
   previousShortcut,
   nextShortcut,
 }: PageTabsProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
 
   function allowPaneDrop(event: DragEvent<HTMLDivElement>) {
     if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) return;
@@ -48,6 +48,7 @@ export function PageTabs({
       {pages.map((page) => {
         const active = page.id === activePageId;
         const paneCount = listPanes(page.root).length;
+        const pageTitle = text(page.title);
         return (
           <div
             className="page-tab"
@@ -64,14 +65,14 @@ export function PageTabs({
               aria-selected={active}
               onClick={() => onSelectPage(page.id)}
             >
-              <span>{page.title}</span>
+              <span>{pageTitle}</span>
               <small>{paneCount}</small>
             </button>
             {pages.length > 1 ? (
               <button
                 className="page-tab__close"
                 type="button"
-                aria-label={t("pages.close", { page: page.title })}
+                aria-label={t("pages.close", { page: pageTitle })}
                 onClick={() => onClosePage(page.id)}
               >
                 <Icon name="x" size={12} />

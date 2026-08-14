@@ -15,34 +15,36 @@ interface ProjectDialogProps {
 }
 
 export function ProjectDialog({ open, project, onClose, onSave }: ProjectDialogProps) {
+  if (!open) return null;
+  return (
+    <ProjectDialogForm
+      key={project?.id ?? "new-project"}
+      project={project}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+}
+
+function ProjectDialogForm({ project, onClose, onSave }: Omit<ProjectDialogProps, "open">) {
   const { t } = useI18n();
   const nameRef = useRef<HTMLInputElement>(null);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [path, setPath] = useState("");
-  const [profileLabel, setProfileLabel] = useState("");
-  const [command, setCommand] = useState("");
-  const [argsText, setArgsText] = useState("");
+  const [name, setName] = useState(project?.name ?? "");
+  const [description, setDescription] = useState(project?.description ?? "");
+  const [path, setPath] = useState(project?.path ?? "");
+  const [profileLabel, setProfileLabel] = useState(project?.launchProfile.label ?? "");
+  const [command, setCommand] = useState(project?.launchProfile.command ?? "");
+  const [argsText, setArgsText] = useState(project?.launchProfile.args.join("\n") ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const desktopAvailable = projectClient.available();
 
   useEffect(() => {
-    if (!open) return;
-    setName(project?.name ?? "");
-    setDescription(project?.description ?? "");
-    setPath(project?.path ?? "");
-    setProfileLabel(project?.launchProfile.label ?? "");
-    setCommand(project?.launchProfile.command ?? "");
-    setArgsText(project?.launchProfile.args.join("\n") ?? "");
-    setBusy(false);
-    setError(null);
     const frame = requestAnimationFrame(() => nameRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [open, project]);
+  }, []);
 
   useEffect(() => {
-    if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || busy) return;
       event.preventDefault();
@@ -51,9 +53,7 @@ export function ProjectDialog({ open, project, onClose, onSave }: ProjectDialogP
     };
     window.addEventListener("keydown", closeOnEscape, true);
     return () => window.removeEventListener("keydown", closeOnEscape, true);
-  }, [busy, onClose, open]);
-
-  if (!open) return null;
+  }, [busy, onClose]);
 
   async function chooseDirectory() {
     setBusy(true);

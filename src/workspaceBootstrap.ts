@@ -10,10 +10,20 @@ export interface InitialWorkspaceState {
   focused: ActivePanes;
 }
 
+export function initialProjectId(
+  projects: readonly Project[],
+  snapshot: WorkspaceSnapshot | null,
+): string {
+  return (
+    projects.find((project) => project.id === snapshot?.activeProjectId)?.id ??
+    projects[0]?.id ??
+    ""
+  );
+}
+
 export function createInitialWorkspace(
   projects: readonly Project[],
   snapshot: WorkspaceSnapshot | null,
-  pageTitle: (index: number) => string = (index) => `Page ${index}`,
 ): InitialWorkspaceState {
   const pages: ProjectPages = {};
   const active: ActivePages = {};
@@ -22,8 +32,7 @@ export function createInitialWorkspace(
   for (const project of projects) {
     const stored = project.source === "local" ? workspaceForProject(snapshot, project.id) : null;
     if (stored) {
-      const storedPages =
-        stored.pages.length > 0 ? stored.pages : [createEmptyPage(project.id, pageTitle(1))];
+      const storedPages = stored.pages.length > 0 ? stored.pages : [createEmptyPage(project.id)];
       pages[project.id] = storedPages;
       active[project.id] = storedPages.some((page) => page.id === stored.activePageId)
         ? stored.activePageId
@@ -34,7 +43,7 @@ export function createInitialWorkspace(
 
     const firstSession = project.sessions[0];
     if (!firstSession) {
-      const page = createEmptyPage(project.id, pageTitle(1));
+      const page = createEmptyPage(project.id);
       pages[project.id] = [page];
       active[project.id] = page.id;
       continue;
@@ -42,7 +51,7 @@ export function createInitialWorkspace(
 
     const page = createPage({
       pageId: `page-${project.id}-1`,
-      title: pageTitle(1),
+      title: { kind: "page-title", index: 1 },
       paneId: `pane-${firstSession.id}`,
       sessionId: firstSession.id,
     });
@@ -54,10 +63,10 @@ export function createInitialWorkspace(
   return { pages, active, focused };
 }
 
-function createEmptyPage(projectId: string, title: string): WorkspacePage {
+function createEmptyPage(projectId: string): WorkspacePage {
   return {
     id: `page-${projectId}-1`,
-    title,
+    title: { kind: "page-title", index: 1 },
     root: null,
   };
 }

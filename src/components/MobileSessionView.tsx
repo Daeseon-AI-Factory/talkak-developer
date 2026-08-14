@@ -44,7 +44,7 @@ export function MobileSessionView({
   onEditDraft,
   onOpenSettings,
 }: MobileSessionViewProps) {
-  const { statusLabel, t } = useI18n();
+  const { statusLabel, t, text } = useI18n();
   const visibleReview = reviewedDraft === draft ? reviewedDraft : null;
 
   function updateDraft(value: string) {
@@ -66,7 +66,7 @@ export function MobileSessionView({
       <header className="mobile-session-view__header">
         <div>
           <span className="mobile-session-view__project">{project.name}</span>
-          <h1>{session?.title ?? t("mobile.noSession")}</h1>
+          <h1>{session ? text(session.title) : t("mobile.noSession")}</h1>
         </div>
         {session ? (
           <span className="state-badge" data-state={session.state}>
@@ -86,7 +86,7 @@ export function MobileSessionView({
             key={candidate.id}
             onClick={() => onSelectSession(candidate.id)}
           >
-            <strong>{candidate.title}</strong>
+            <strong>{text(candidate.title)}</strong>
             <span>{statusLabel(candidate.state)}</span>
           </button>
         ))}
@@ -252,11 +252,12 @@ function ConversationTab({ session }: { session: DevSession }) {
 }
 
 function TerminalTab({ session }: { session: DevSession }) {
+  const { text } = useI18n();
   return (
     <div className="mobile-terminal" aria-live="off">
       {session.lines.map((line) => (
         <div className="terminal-line" data-tone={line.tone} key={line.id}>
-          {line.text}
+          {text(line.text)}
         </div>
       ))}
     </div>
@@ -264,10 +265,10 @@ function TerminalTab({ session }: { session: DevSession }) {
 }
 
 function SummaryTab({ session }: { session: DevSession }) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   return (
     <div className="mobile-summary">
-      <p className="mobile-summary__outcome">{session.summary.outcome}</p>
+      <p className="mobile-summary__outcome">{text(session.summary.outcome)}</p>
 
       <section>
         <h2>{t("inspector.changedFiles")}</h2>
@@ -299,7 +300,7 @@ function SummaryTab({ session }: { session: DevSession }) {
 
       <section>
         <h2>{t("inspector.nextStep")}</h2>
-        <p>{session.summary.nextStep}</p>
+        <p>{text(session.summary.nextStep)}</p>
       </section>
     </div>
   );

@@ -1,8 +1,9 @@
 use crate::session_runtime::{
-    CursorPositionQueryDetector, OutputBuffer, ReadSessionRequest, ResizeSessionRequest,
+    InitialCursorPositionQuery, OutputBuffer, ReadSessionRequest, ResizeSessionRequest,
     RuntimeError, SessionIdRequest, SessionRuntime, SpawnSessionRequest, WriteSessionRequest,
     MAX_OUTPUT_BYTES,
 };
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -18,12 +19,29 @@ fn output_buffer_keeps_a_bounded_replay_window() {
 }
 
 #[test]
-fn cursor_position_query_detector_handles_split_and_repeated_queries() {
-    let mut detector = CursorPositionQueryDetector::default();
+fn initial_cursor_query_is_answered_once_and_removed_from_replay() {
+    let mut query = InitialCursorPositionQuery::new(true);
 
-    assert_eq!(detector.observe(b"prefix\x1b["), 0);
-    assert_eq!(detector.observe(b"6n middle \x1b[6n suffix"), 2);
-    assert_eq!(detector.observe(b"ordinary output"), 0);
+    let first = query.observe(b"prefix\x1b[");
+    let second = query.observe(b"6n middle \x1b[6n suffix");
+    let third = query.observe(b" ordinary");
+
+    assert_eq!(first.output, b"prefix");
+    assert!(!first.should_respond);
+    assert_eq!(second.output, b" middle \x1b[6n suffix");
+    assert!(second.should_respond);
+    assert_eq!(third.output, b" ordinary");
+    assert!(!third.should_respond);
+    assert!(query.finish().is_empty());
+}
+
+#[test]
+fn cursor_query_filter_can_be_disabled_for_non_conpty_hosts() {
+    let mut query = InitialCursorPositionQuery::new(false);
+    let output = query.observe(b"\x1b[6n");
+
+    assert_eq!(output.output, b"\x1b[6n");
+    assert!(!output.should_respond);
 }
 
 #[test]
@@ -109,6 +127,32 @@ fn native_pty_closes_after_command_exits_without_kill() {
         .expect("short-lived PTY command should spawn");
 
     wait_for_read_closed(&runtime, "natural-exit");
+}
+
+#[test]
+fn dropping_a_runtime_with_a_live_session_returns() {
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "drop-live-runtime".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: None,
+            args: vec![],
+            cols: 80,
+            rows: 24,
+        })
+        .expect("PTY should spawn");
+
+    let (finished_tx, finished_rx) = mpsc::channel();
+    thread::spawn(move || {
+        drop(runtime);
+        let _ = finished_tx.send(());
+    });
+
+    finished_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("dropping a runtime must not synchronously wait for PTY master close");
 }
 
 #[test]

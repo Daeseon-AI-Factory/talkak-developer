@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { projects } from "./demo";
 import { createLocalProject } from "./projectStore";
-import { createInitialWorkspace, initialFocusedSessionId } from "./workspaceBootstrap";
+import {
+  createInitialWorkspace,
+  initialFocusedSessionId,
+  initialProjectId,
+} from "./workspaceBootstrap";
 import type { WorkspaceSnapshot } from "./workspaceStore";
 
 describe("createInitialWorkspace", () => {
@@ -21,7 +25,7 @@ describe("createInitialWorkspace", () => {
     expect(state.pages[project.id]).toEqual([
       {
         id: "page-project-local-1",
-        title: "Page 1",
+        title: { kind: "page-title", index: 1 },
         root: null,
       },
     ]);
@@ -40,7 +44,8 @@ describe("createInitialWorkspace", () => {
       "project-local",
     );
     const snapshot: WorkspaceSnapshot = {
-      version: 1,
+      version: 2,
+      activeProjectId: project.id,
       projects: [
         {
           projectId: project.id,
@@ -57,7 +62,7 @@ describe("createInitialWorkspace", () => {
     expect(state.pages[project.id]).toEqual([
       {
         id: "page-project-local-1",
-        title: "Page 1",
+        title: { kind: "page-title", index: 1 },
         root: null,
       },
     ]);
@@ -68,7 +73,7 @@ describe("createInitialWorkspace", () => {
     const [project] = projects;
     const state = createInitialWorkspace([project], null);
 
-    expect(state.pages[project.id][0]?.title).toBe("Page 1");
+    expect(state.pages[project.id][0]?.title).toEqual({ kind: "page-title", index: 1 });
     expect(state.pages[project.id][0]?.title).not.toBe(project.sessions[0]?.title);
   });
 
@@ -83,7 +88,8 @@ describe("createInitialWorkspace", () => {
       "project-local",
     );
     const snapshot: WorkspaceSnapshot = {
-      version: 1,
+      version: 2,
+      activeProjectId: project.id,
       projects: [
         {
           projectId: project.id,
@@ -113,5 +119,34 @@ describe("createInitialWorkspace", () => {
 
     expect(state.active[project.id]).toBe("page-2");
     expect(initialFocusedSessionId(state, project.id)).toBe("session-2");
+  });
+
+  it("restores the active project before resolving its focused session", () => {
+    const first = createLocalProject(
+      {
+        name: "First",
+        description: "",
+        path: "/workspace/first",
+        launchProfile: { label: "Shell", command: null, args: [] },
+      },
+      "project-first",
+    );
+    const second = createLocalProject(
+      {
+        name: "Second",
+        description: "",
+        path: "/workspace/second",
+        launchProfile: { label: "Shell", command: null, args: [] },
+      },
+      "project-second",
+    );
+    const snapshot: WorkspaceSnapshot = {
+      version: 2,
+      activeProjectId: second.id,
+      projects: [],
+    };
+
+    expect(initialProjectId([first, second], snapshot)).toBe(second.id);
+    expect(initialProjectId([first, second], null)).toBe(first.id);
   });
 });

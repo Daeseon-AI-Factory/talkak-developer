@@ -38,14 +38,15 @@ export function TerminalPane({
   onLaunchHandled,
   onPhaseChange,
 }: TerminalPaneProps) {
-  const { statusLabel, t } = useI18n();
+  const { statusLabel, t, text } = useI18n();
   const [runtimeAttached, setRuntimeAttached] = useState(false);
   const paneRef = useRef<HTMLElement | null>(null);
+  const sessionTitle = text(session.title);
   const runtime = runtimeAttached
     ? session.launchProfile.label || t("terminal.localShell")
     : session.runtime.kind === "unconfigured"
       ? t("runtime.unconfigured")
-      : runtimeLabel(session);
+      : text(runtimeLabel(session));
 
   useEffect(() => {
     if (!active || runtimeAttached || document.querySelector("dialog[open]")) return;
@@ -77,15 +78,15 @@ export function TerminalPane({
         <div className="terminal-pane__title">
           <span className="terminal-pane__status" />
           <Icon name="terminal" size={16} />
-          <strong>{session.title}</strong>
-          <span className="terminal-pane__profile">{session.profile}</span>
+          <strong>{sessionTitle}</strong>
+          <span className="terminal-pane__profile">{text(session.profile)}</span>
         </div>
         <div className="terminal-pane__actions">
           <span className="runtime-chip">{runtime}</span>
           <button
             type="button"
-            aria-label={t("terminal.splitRight", { session: session.title })}
-            title={t("terminal.splitRight", { session: session.title })}
+            aria-label={t("terminal.splitRight", { session: sessionTitle })}
+            title={t("terminal.splitRight", { session: sessionTitle })}
             disabled={!canSplit}
             onClick={() => onSplit("horizontal")}
           >
@@ -93,8 +94,8 @@ export function TerminalPane({
           </button>
           <button
             type="button"
-            aria-label={t("terminal.splitDown", { session: session.title })}
-            title={t("terminal.splitDown", { session: session.title })}
+            aria-label={t("terminal.splitDown", { session: sessionTitle })}
+            title={t("terminal.splitDown", { session: sessionTitle })}
             disabled={!canSplit}
             onClick={() => onSplit("vertical")}
           >
@@ -102,8 +103,8 @@ export function TerminalPane({
           </button>
           <button
             type="button"
-            aria-label={t("terminal.movePage", { session: session.title })}
-            title={t("terminal.movePage", { session: session.title })}
+            aria-label={t("terminal.movePage", { session: sessionTitle })}
+            title={t("terminal.movePage", { session: sessionTitle })}
             disabled={!canMove}
             onClick={onMove}
           >
@@ -111,15 +112,15 @@ export function TerminalPane({
           </button>
           <button
             type="button"
-            aria-label={t("terminal.openConversation", { session: session.title })}
+            aria-label={t("terminal.openConversation", { session: sessionTitle })}
             onClick={onOpenConversation}
           >
             <Icon name="conversation" size={16} />
           </button>
           <button
             type="button"
-            aria-label={t("terminal.detach", { session: session.title })}
-            title={t("terminal.detach", { session: session.title })}
+            aria-label={t("terminal.detach", { session: sessionTitle })}
+            title={t("terminal.detach", { session: sessionTitle })}
             onClick={onDetach}
           >
             <Icon name="x" size={15} />

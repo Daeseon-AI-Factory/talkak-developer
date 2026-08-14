@@ -20,6 +20,17 @@
   scrollbar-color: rgba(95, 226, 237, 0.24) transparent;
 }
 
+.background-session-runtime,
+.background-session-runtime .terminal-host {
+  position: absolute;
+  width: 0;
+  height: 0;
+  min-height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .terminal-launcher {
   display: grid;
   align-content: center;

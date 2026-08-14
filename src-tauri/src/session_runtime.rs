@@ -12,7 +12,7 @@ pub(crate) const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
 const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_SESSION_ID_BYTES: usize = 128;
 const CURSOR_POSITION_QUERY: &[u8] = b"\x1b[6n";
-const CURSOR_POSITION_REPORT: &[u8] = b"\x1b[1;1R";
+const INHERITED_CURSOR_POSITION_REPORT: &[u8] = b"\x1b[1;1R";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -135,26 +135,65 @@ struct ProcessStatus {
     read_error: Option<String>,
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct CursorPositionQueryDetector {
-    matched: usize,
+#[derive(Debug)]
+pub(crate) struct InitialCursorPositionQuery {
+    enabled: bool,
+    answered: bool,
+    pending: Vec<u8>,
 }
 
-impl CursorPositionQueryDetector {
-    pub(crate) fn observe(&mut self, bytes: &[u8]) -> usize {
-        let mut query_count = 0;
-        for byte in bytes {
-            if *byte == CURSOR_POSITION_QUERY[self.matched] {
-                self.matched += 1;
-                if self.matched == CURSOR_POSITION_QUERY.len() {
-                    query_count += 1;
-                    self.matched = 0;
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct CursorQueryObservation {
+    pub(crate) output: Vec<u8>,
+    pub(crate) should_respond: bool,
+}
+
+impl InitialCursorPositionQuery {
+    pub(crate) fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            answered: false,
+            pending: Vec::new(),
+        }
+    }
+
+    pub(crate) fn observe(&mut self, bytes: &[u8]) -> CursorQueryObservation {
+        if !self.enabled || self.answered {
+            return CursorQueryObservation {
+                output: bytes.to_vec(),
+                should_respond: false,
+            };
+        }
+
+        let mut output = Vec::with_capacity(self.pending.len() + bytes.len());
+        for (index, byte) in bytes.iter().enumerate() {
+            if *byte == CURSOR_POSITION_QUERY[self.pending.len()] {
+                self.pending.push(*byte);
+                if self.pending.len() == CURSOR_POSITION_QUERY.len() {
+                    self.pending.clear();
+                    self.answered = true;
+                    output.extend_from_slice(&bytes[index + 1..]);
+                    break;
                 }
+                continue;
+            }
+
+            output.append(&mut self.pending);
+            if *byte == CURSOR_POSITION_QUERY[0] {
+                self.pending.push(*byte);
             } else {
-                self.matched = usize::from(*byte == CURSOR_POSITION_QUERY[0]);
+                output.push(*byte);
             }
         }
-        query_count
+
+        CursorQueryObservation {
+            output,
+            should_respond: self.answered,
+        }
+    }
+
+    pub(crate) fn finish(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.pending)
     }
 }
 
@@ -346,13 +385,7 @@ impl SessionProcess {
         let Some(master) = lock(&self.master, "PTY master")?.take() else {
             return Ok(());
         };
-        thread::Builder::new()
-            .name(format!("talkak-pty-closer-{}", self.id))
-            .spawn(move || drop(master))
-            .map_err(|error| {
-                RuntimeError::Internal(format!("failed to start PTY closer: {error}"))
-            })?;
-        Ok(())
+        close_master_async(&self.id, master)
     }
 
     fn refresh_status(&self) -> Result<(), RuntimeError> {
@@ -387,8 +420,42 @@ impl SessionProcess {
 
 impl Drop for SessionProcess {
     fn drop(&mut self) {
-        if let Ok(mut child) = self.child.lock() {
+        if let Ok(child) = self.child.get_mut() {
             let _ = child.kill();
+        }
+        if let Ok(mut writer) = self.writer.lock() {
+            drop(writer.take());
+        }
+        if let Ok(master) = self.master.get_mut() {
+            if let Some(master) = master.take() {
+                let _ = close_master_async(&self.id, master);
+            }
+        }
+    }
+}
+
+fn close_master_async(
+    session_id: &str,
+    master: Box<dyn MasterPty + Send>,
+) -> Result<(), RuntimeError> {
+    let retained = Arc::new(Mutex::new(Some(master)));
+    let worker_copy = Arc::clone(&retained);
+    let result = thread::Builder::new()
+        .name(format!("talkak-pty-closer-{session_id}"))
+        .spawn(move || {
+            if let Ok(mut current) = worker_copy.lock() {
+                drop(current.take());
+            }
+        });
+    match result {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            // A synchronous master drop can block indefinitely on older ConPTY versions.
+            // Leak only on the exceptional thread-creation failure path instead.
+            std::mem::forget(retained);
+            Err(RuntimeError::Internal(format!(
+                "failed to start PTY closer: {error}"
+            )))
         }
     }
 }
@@ -457,21 +524,25 @@ fn spawn_reader_thread(
         .name(format!("talkak-pty-reader-{session_id}"))
         .spawn(move || {
             let mut chunk = [0_u8; 8192];
-            let mut cursor_query = CursorPositionQueryDetector::default();
+            // portable-pty requests cursor inheritance from ConPTY. On Windows, answer and
+            // remove that one host-level query; later application queries remain for xterm.
+            let mut inherited_cursor_query = InitialCursorPositionQuery::new(cfg!(windows));
             loop {
                 match reader.read(&mut chunk) {
                     Ok(0) => break,
                     Ok(read) => {
-                        for _ in 0..cursor_query.observe(&chunk[..read]) {
+                        let observation = inherited_cursor_query.observe(&chunk[..read]);
+                        if observation.should_respond {
                             if let Ok(mut current_writer) = writer.lock() {
                                 if let Some(current_writer) = current_writer.as_mut() {
-                                    let _ = current_writer.write_all(CURSOR_POSITION_REPORT);
-                                    let _ = current_writer.flush();
+                                    let _ = current_writer
+                                        .write_all(INHERITED_CURSOR_POSITION_REPORT)
+                                        .and_then(|()| current_writer.flush());
                                 }
                             }
                         }
                         if let Ok(mut buffer) = output.lock() {
-                            buffer.append(&chunk[..read]);
+                            buffer.append(&observation.output);
                         } else {
                             break;
                         }
@@ -484,6 +555,12 @@ fn spawn_reader_thread(
                         }
                         break;
                     }
+                }
+            }
+            let trailing = inherited_cursor_query.finish();
+            if !trailing.is_empty() {
+                if let Ok(mut buffer) = output.lock() {
+                    buffer.append(&trailing);
                 }
             }
             if let Ok(mut current) = status.lock() {

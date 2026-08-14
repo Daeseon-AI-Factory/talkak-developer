@@ -1,3 +1,5 @@
+import type { LocalizedText } from "./localizedText";
+
 export type SplitDirection = "horizontal" | "vertical";
 
 export type PanePlacement = "before" | "after";
@@ -23,13 +25,13 @@ export type LayoutNode = PaneNode | SplitNode;
 
 export interface WorkspacePage {
   id: string;
-  title: string;
+  title: LocalizedText;
   root: LayoutNode | null;
 }
 
 export interface CreatePageInput {
   pageId: string;
-  title: string;
+  title: LocalizedText;
   paneId: string;
   sessionId: string;
 }

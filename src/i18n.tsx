@@ -1,5 +1,6 @@
 import { type ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { SessionState } from "./domain";
+import { type LocalizedText, resolveLocalizedText } from "./localizedText";
 
 export type Locale = "ko" | "en";
 
@@ -592,10 +593,28 @@ interface I18nValue {
   setLocale: (locale: Locale) => void;
   toggleLocale: () => void;
   t: (key: MessageKey, values?: Record<string, string | number>) => string;
+  text: (value: LocalizedText) => string;
   statusLabel: (state: SessionState) => string;
 }
 
 const I18nContext = createContext<I18nValue | null>(null);
+
+export function translate(
+  locale: Locale,
+  key: MessageKey,
+  values?: Record<string, string | number>,
+): string {
+  const dictionary = locale === "ko" ? ko : en;
+  let message: string = dictionary[key];
+  for (const [name, replacement] of Object.entries(values ?? {})) {
+    message = message.split(`{${name}}`).join(String(replacement));
+  }
+  return message;
+}
+
+export function formatLocalizedText(locale: Locale, value: LocalizedText): string {
+  return resolveLocalizedText(value, (key, values) => translate(locale, key, values));
+}
 
 function readInitialLocale(): Locale {
   try {
@@ -618,14 +637,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   }, [locale]);
 
   const value = useMemo<I18nValue>(() => {
-    const dictionary = locale === "ko" ? ko : en;
-    const t: I18nValue["t"] = (key, values) => {
-      let message: string = dictionary[key];
-      for (const [name, replacement] of Object.entries(values ?? {})) {
-        message = message.split(`{${name}}`).join(String(replacement));
-      }
-      return message;
-    };
+    const t: I18nValue["t"] = (key, values) => translate(locale, key, values);
     const statusKeys: Record<SessionState, MessageKey> = {
       working: "status.working",
       "needs-input": "status.needsInput",
@@ -637,6 +649,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       setLocale,
       toggleLocale: () => setLocale((current) => (current === "ko" ? "en" : "ko")),
       t,
+      text: (text) => formatLocalizedText(locale, text),
       statusLabel: (state) => t(statusKeys[state]),
     };
   }, [locale]);

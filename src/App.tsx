@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { presentationModeForWidth } from "./adaptiveLayout";
 import { resolveAttentionRequest } from "./attentionModel";
 import { AttentionCenter } from "./components/AttentionCenter";
+import { BackgroundSessionRuntimes } from "./components/BackgroundSessionRuntimes";
 import { ActivityView, SessionsView } from "./components/CollectionViews";
 import { CommandPalette } from "./components/CommandPalette";
 import { Icon } from "./components/Icon";
@@ -17,6 +18,7 @@ import type { AppSection, AttentionRequest, InspectorMode, SidebarMode } from ".
 import { useI18n } from "./i18n";
 import { platformFromUserAgent } from "./platform";
 import { type ProjectDraft, browserProjectStorage } from "./projectStore";
+import { foregroundTerminalSessionIds } from "./runtime/sessionVisibility";
 import { createWorkspaceSession } from "./sessionModel";
 import {
   type FeatureSettingId,
@@ -39,13 +41,13 @@ export default function App() {
       createWorkspaceSession({
         id: metadata.id,
         title: metadata.title,
-        profile: project.launchProfile.label || t("session.defaultProfile"),
+        profile: project.launchProfile.label || { kind: "default-profile" },
         launchProfile: project.launchProfile,
         createdAt: metadata.createdAt,
-        lastActivity: t("session.restored"),
-        intro: t("session.restoredIntro"),
-        outcome: t("session.restoredOutcome"),
-        nextStep: t("session.restoredNext"),
+        lastActivity: { kind: "session-restored" },
+        intro: { kind: "restored-intro" },
+        outcome: { kind: "restored-outcome" },
+        nextStep: { kind: "restored-next" },
         launchRequested: false,
       }),
     ),
@@ -59,7 +61,6 @@ export default function App() {
     setProjects,
     presentationMode,
     snapshot: workspaceSnapshot,
-    t,
   });
   const { activeProject, activePages, activePageId, activePane, activeSession, activeSessionId } =
     workspace;
@@ -97,6 +98,16 @@ export default function App() {
     projectId: activeProject.id,
     sessionId: activeSession?.id,
   });
+  const foregroundSessionIds = new Set(
+    activeSection === "workspace" && presentationMode !== "phone"
+      ? foregroundTerminalSessionIds(
+          activePages,
+          activePageId,
+          activeSessionId,
+          presentationMode === "tablet" ? 2 : undefined,
+        )
+      : [],
+  );
 
   useEffect(() => {
     const updatePresentation = () =>
@@ -421,6 +432,12 @@ export default function App() {
           onSelectSection={setActiveSection}
         />
       ) : null}
+      <BackgroundSessionRuntimes
+        projects={projects}
+        foregroundSessionIds={foregroundSessionIds}
+        onLaunchHandled={workspace.markLaunchHandled}
+        onPhaseChange={workspace.updateRuntimePhase}
+      />
       <CommandPalette
         open={commandOpen}
         projects={projects}

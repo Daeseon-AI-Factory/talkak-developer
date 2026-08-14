@@ -19,7 +19,7 @@ export function CommandPalette({
   onOpenSession,
   onOpenProject,
 }: CommandPaletteProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -52,7 +52,7 @@ export function CommandPalette({
       .map((project) => ({
         ...project,
         sessions: project.sessions.filter((session) =>
-          [session.title, session.profile, session.branch, project.name]
+          [text(session.title), text(session.profile), session.branch, project.name]
             .join(" ")
             .toLocaleLowerCase()
             .includes(normalized),
@@ -62,7 +62,7 @@ export function CommandPalette({
         (project) =>
           project.name.toLocaleLowerCase().includes(normalized) || project.sessions.length > 0,
       );
-  }, [projects, query]);
+  }, [projects, query, text]);
 
   if (!open) return null;
 
@@ -140,12 +140,12 @@ export function CommandPalette({
                   >
                     <Icon name="terminal" size={15} />
                     <span>
-                      <strong>{session.title}</strong>
+                      <strong>{text(session.title)}</strong>
                       <small>
-                        {session.profile} ·{" "}
+                        {text(session.profile)} ·{" "}
                         {session.runtime.kind === "unconfigured"
                           ? t("runtime.unconfigured")
-                          : runtimeLabel(session)}
+                          : text(runtimeLabel(session))}
                       </small>
                     </span>
                     <Icon name="chevron" size={13} />

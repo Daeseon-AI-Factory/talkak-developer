@@ -9,7 +9,7 @@ interface CollectionViewProps {
 }
 
 export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
-  const { statusLabel, t } = useI18n();
+  const { statusLabel, t, text } = useI18n();
   const rows = projects.flatMap((project) =>
     project.sessions.map((session) => ({ project, session })),
   );
@@ -41,15 +41,15 @@ export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
                 <Icon name="terminal" size={16} />
               </span>
               <span>
-                <strong>{session.title}</strong>
-                <small>{session.profile}</small>
+                <strong>{text(session.title)}</strong>
+                <small>{text(session.profile)}</small>
               </span>
             </span>
             <span>{project.name}</span>
             <span>
               {session.runtime.kind === "unconfigured"
                 ? t("runtime.unconfigured")
-                : runtimeLabel(session)}
+                : text(runtimeLabel(session))}
             </span>
             <span className="state-badge" data-state={session.state}>
               {statusLabel(session.state)}
@@ -65,7 +65,7 @@ export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
 }
 
 export function ActivityView({ projects, onOpenSession }: CollectionViewProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   const entries = projects
     .flatMap((project) =>
       project.sessions.flatMap((session) =>
@@ -97,7 +97,7 @@ export function ActivityView({ projects, onOpenSession }: CollectionViewProps) {
               <span className="activity-row__meta">
                 <strong>{project.name}</strong>
                 <span>/</span>
-                <span>{session.title}</span>
+                <span>{text(session.title)}</span>
                 <time>{entry.time}</time>
               </span>
               <span className="activity-row__message">{entry.text}</span>

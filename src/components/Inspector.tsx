@@ -21,13 +21,13 @@ export function Inspector({
   onTogglePin,
   onClose,
 }: InspectorProps) {
-  const { t } = useI18n();
+  const { t, text } = useI18n();
   return (
     <aside className="inspector" data-pinned={pinned} aria-label={t("inspector.aria")}>
       <header className="inspector__header">
         <div>
           <span className="inspector__eyebrow">{t("inspector.title")}</span>
-          <strong>{session.title}</strong>
+          <strong>{text(session.title)}</strong>
         </div>
         <div className="inspector__header-actions">
           <button
@@ -87,9 +87,11 @@ export function Inspector({
 }
 
 function SummaryView({ session }: { session: DevSession }) {
-  const { statusLabel, t } = useI18n();
+  const { statusLabel, t, text } = useI18n();
   const runtime =
-    session.runtime.kind === "unconfigured" ? t("runtime.unconfigured") : runtimeLabel(session);
+    session.runtime.kind === "unconfigured"
+      ? t("runtime.unconfigured")
+      : text(runtimeLabel(session));
   return (
     <div className="inspector__content">
       <section className="summary-hero">
@@ -100,7 +102,7 @@ function SummaryView({ session }: { session: DevSession }) {
           </span>
           <span>{runtime}</span>
         </div>
-        <h2>{session.summary.outcome}</h2>
+        <h2>{text(session.summary.outcome)}</h2>
         <div
           className="progress-track"
           aria-label={t("inspector.progress", { progress: session.summary.progress })}
@@ -130,7 +132,7 @@ function SummaryView({ session }: { session: DevSession }) {
 
       <section className="next-step-card">
         <span>{t("inspector.nextStep")}</span>
-        <p>{session.summary.nextStep}</p>
+        <p>{text(session.summary.nextStep)}</p>
       </section>
     </div>
   );

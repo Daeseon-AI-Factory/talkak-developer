@@ -1,3 +1,5 @@
+import type { LocalizedText } from "./localizedText";
+
 export type AppSection = "workspace" | "sessions" | "activity" | "attention" | "settings";
 
 export type InspectorMode = "summary" | "terminal" | "conversation";
@@ -61,12 +63,12 @@ export interface AttentionRequest {
 export type RuntimeTarget =
   | {
       kind: "unconfigured";
-      label: string;
+      label: LocalizedText;
       shell: "—";
     }
   | {
       kind: "local";
-      label: string;
+      label: LocalizedText;
       shell: string;
     }
   | {
@@ -86,7 +88,7 @@ export type RuntimeTarget =
 export interface TerminalLine {
   id: string;
   tone: "command" | "muted" | "success" | "agent" | "warning";
-  text: string;
+  text: LocalizedText;
 }
 
 export interface ConversationEntry {
@@ -97,17 +99,17 @@ export interface ConversationEntry {
 }
 
 export interface SessionSummary {
-  outcome: string;
+  outcome: LocalizedText;
   progress: number;
   changedFiles: string[];
   decisions: string[];
-  nextStep: string;
+  nextStep: LocalizedText;
 }
 
 export interface DevSession {
   id: string;
-  title: string;
-  profile: string;
+  title: LocalizedText;
+  profile: LocalizedText;
   launchProfile: LaunchProfile;
   /** Ephemeral intent set only by an explicit Page/Split/Stack action. Never persisted. */
   launchRequested?: boolean;
@@ -115,7 +117,7 @@ export interface DevSession {
   runtime: RuntimeTarget;
   branch: string;
   startedAt: string;
-  lastActivity: string;
+  lastActivity: LocalizedText;
   lines: TerminalLine[];
   conversation: ConversationEntry[];
   summary: SessionSummary;

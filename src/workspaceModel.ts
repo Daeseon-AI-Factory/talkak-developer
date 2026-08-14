@@ -1,4 +1,6 @@
 import type { DevSession, Project } from "./domain";
+import type { WorkspacePage } from "./layoutModel";
+import type { LocalizedText } from "./localizedText";
 
 export interface SessionCounts {
   working: number;
@@ -18,7 +20,7 @@ export function countSessions(sessions: readonly DevSession[]): SessionCounts {
   );
 }
 
-export function runtimeLabel(session: DevSession): string {
+export function runtimeLabel(session: DevSession): LocalizedText {
   if (session.runtime.kind === "unconfigured") {
     return session.runtime.label;
   }
@@ -31,4 +33,17 @@ export function runtimeLabel(session: DevSession): string {
 
 export function firstSession(project: Project): DevSession | null {
   return project.sessions[0] ?? null;
+}
+
+export function nextGeneratedPageTitle(pages: readonly WorkspacePage[]): {
+  kind: "page-title";
+  index: number;
+} {
+  let highestIndex = pages.length;
+  for (const page of pages) {
+    if (typeof page.title !== "string" && page.title.kind === "page-title") {
+      highestIndex = Math.max(highestIndex, page.title.index);
+    }
+  }
+  return { kind: "page-title", index: highestIndex + 1 };
 }

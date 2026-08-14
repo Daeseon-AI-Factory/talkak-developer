@@ -1,15 +1,16 @@
 import type { DevSession, LaunchProfile } from "./domain";
+import type { LocalizedText } from "./localizedText";
 
 export interface CreateWorkspaceSessionInput {
   id: string;
-  title: string;
-  profile: string;
+  title: LocalizedText;
+  profile: LocalizedText;
   launchProfile: LaunchProfile;
   createdAt: string;
-  lastActivity: string;
-  intro: string;
-  outcome: string;
-  nextStep: string;
+  lastActivity: LocalizedText;
+  intro: LocalizedText | null;
+  outcome: LocalizedText;
+  nextStep: LocalizedText;
   launchRequested: boolean;
 }
 

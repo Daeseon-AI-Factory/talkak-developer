@@ -1,9 +1,12 @@
 import type { DevSession, Project } from "./domain";
 import type { LayoutNode, PaneNode, WorkspacePage } from "./layoutModel";
 import { listPanes } from "./layoutModel";
+import type { LocalizedText } from "./localizedText";
+import { readPageTitle, readSessionTitle } from "./localizedText";
 import type { ProjectStorage } from "./projectStore";
 
-export const WORKSPACE_STORAGE_KEY = "talkak.workspace.v1";
+export const WORKSPACE_STORAGE_KEY = "talkak.workspace.v2";
+export const LEGACY_WORKSPACE_STORAGE_KEY = "talkak.workspace.v1";
 
 // Safety maximums for corrupted or hand-edited localStorage payloads.
 const MAX_PROJECTS = 100;
@@ -18,7 +21,7 @@ export type ActivePanes = Record<string, string>;
 
 export interface StoredSessionMetadata {
   id: string;
-  title: string;
+  title: LocalizedText;
   createdAt: string;
 }
 
@@ -31,11 +34,13 @@ export interface StoredProjectWorkspace {
 }
 
 export interface WorkspaceSnapshot {
-  version: 1;
+  version: 2;
+  activeProjectId: string | null;
   projects: StoredProjectWorkspace[];
 }
 
 export interface WorkspaceStateForStorage {
+  activeProjectId: string;
   pagesByProject: ProjectPages;
   activePageByProject: ActivePages;
   activePaneByPage: ActivePanes;
@@ -49,13 +54,20 @@ export type RestoreSession = (
 
 export function readWorkspaceSnapshot(storage: ProjectStorage | null): WorkspaceSnapshot | null {
   if (!storage) return null;
-  try {
-    const serialized = storage.getItem(WORKSPACE_STORAGE_KEY);
-    if (!serialized) return null;
-    return parseWorkspaceSnapshot(JSON.parse(serialized));
-  } catch {
-    return null;
+  for (const [key, version] of [
+    [WORKSPACE_STORAGE_KEY, 2],
+    [LEGACY_WORKSPACE_STORAGE_KEY, 1],
+  ] as const) {
+    try {
+      const serialized = storage.getItem(key);
+      if (!serialized) continue;
+      const snapshot = parseWorkspaceSnapshot(JSON.parse(serialized), version);
+      if (snapshot) return snapshot;
+    } catch {
+      // Try the legacy snapshot when the new payload is absent or malformed.
+    }
   }
+  return null;
 }
 
 export function workspaceForProject(
@@ -90,7 +102,10 @@ export function writeWorkspaceSnapshot(
 ): number {
   const localProjects = projects.filter((project) => project.source === "local");
   const payload: WorkspaceSnapshot = {
-    version: 1,
+    version: 2,
+    activeProjectId: localProjects.some((project) => project.id === state.activeProjectId)
+      ? state.activeProjectId
+      : null,
     projects: localProjects.map((project) => {
       const pages = (state.pagesByProject[project.id] ?? []).map(serializePage);
       const pageIds = new Set(pages.map((page) => page.id));
@@ -120,8 +135,10 @@ export function writeWorkspaceSnapshot(
   return localProjects.length;
 }
 
-function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | null {
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.projects)) return null;
+function parseWorkspaceSnapshot(value: unknown, expectedVersion: 1 | 2): WorkspaceSnapshot | null {
+  if (!isRecord(value) || value.version !== expectedVersion || !Array.isArray(value.projects)) {
+    return null;
+  }
 
   const projectIds = new Set<string>();
   const sessionIds = new Set<string>();
@@ -133,7 +150,12 @@ function parseWorkspaceSnapshot(value: unknown): WorkspaceSnapshot | null {
     const project = readProjectWorkspace(candidate, { projectIds, sessionIds, pageIds, nodeIds });
     if (project) projects.push(project);
   }
-  return { version: 1, projects };
+  const activeProjectId =
+    typeof value.activeProjectId === "string" &&
+    projects.some((project) => project.projectId === value.activeProjectId)
+      ? value.activeProjectId
+      : null;
+  return { version: 2, activeProjectId, projects };
 }
 
 function readProjectWorkspace(
@@ -160,16 +182,17 @@ function readProjectWorkspace(
     if (
       !isRecord(candidate) ||
       typeof candidate.id !== "string" ||
-      typeof candidate.title !== "string" ||
       typeof candidate.createdAt !== "string" ||
       !candidate.id ||
       ids.sessionIds.has(candidate.id)
     ) {
       continue;
     }
+    const title = readSessionTitle(candidate.title);
+    if (title === null) continue;
     ids.sessionIds.add(candidate.id);
     projectSessionIds.add(candidate.id);
-    sessions.push({ id: candidate.id, title: candidate.title, createdAt: candidate.createdAt });
+    sessions.push({ id: candidate.id, title, createdAt: candidate.createdAt });
   }
 
   const pages: WorkspacePage[] = [];
@@ -177,16 +200,17 @@ function readProjectWorkspace(
     if (
       !isRecord(candidate) ||
       typeof candidate.id !== "string" ||
-      typeof candidate.title !== "string" ||
       !candidate.id ||
       ids.pageIds.has(candidate.id)
     ) {
       continue;
     }
+    const title = readPageTitle(candidate.title);
+    if (title === null) continue;
     const budget = { count: 0 };
     const root = readLayoutNode(candidate.root, projectSessionIds, ids.nodeIds, budget, 0);
     ids.pageIds.add(candidate.id);
-    pages.push({ id: candidate.id, title: candidate.title, root });
+    pages.push({ id: candidate.id, title, root });
   }
 
   const pageIdSet = new Set(pages.map((page) => page.id));
