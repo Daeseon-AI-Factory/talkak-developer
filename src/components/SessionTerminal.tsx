@@ -4,7 +4,7 @@ import type { DevSession, TerminalRuntimePhase } from "../domain";
 import { useI18n } from "../i18n";
 import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
-import { partitionTerminalOutput } from "../runtime/terminalReplay";
+import { partitionTerminalOutput, terminalPollingEnabled } from "../runtime/terminalReplay";
 
 const POLL_INTERVAL_MS = 75;
 
@@ -245,7 +245,7 @@ export function SessionTerminal({
   }, [focused, terminalAttached]);
 
   useEffect(() => {
-    if (phase !== "running" && phase !== "stopping") return;
+    if (!terminalPollingEnabled(phase, background)) return;
     let cancelled = false;
     let timer: number | undefined;
 
@@ -260,7 +260,9 @@ export function SessionTerminal({
           );
         }
         const output = Uint8Array.from(read.bytes);
-        for (const chunk of partitionTerminalOutput(output, read.start, replayThroughRef.current)) {
+        const replayThrough =
+          !read.running && read.readClosed ? Number.POSITIVE_INFINITY : replayThroughRef.current;
+        for (const chunk of partitionTerminalOutput(output, read.start, replayThrough)) {
           await writeOutput(chunk.bytes, chunk.suppressProtocolInput);
         }
         if (cancelled) return;
@@ -269,6 +271,10 @@ export function SessionTerminal({
         setExitCode(read.exitCode);
         if (read.readError) setError(read.readError);
         if (!read.running && read.readClosed) {
+          if (read.bytes.length > 0) {
+            timer = window.setTimeout(poll, 0);
+            return;
+          }
           setPhase("exited");
           return;
         }
@@ -285,7 +291,7 @@ export function SessionTerminal({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [phase, session.id, t]);
+  }, [background, phase, session.id, t]);
 
   function prepareRuntimeReplay(sessionId: string, runId: number) {
     const observed = observedRuntimeCursors.get(sessionId);

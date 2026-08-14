@@ -1,6 +1,6 @@
 import { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
-import { partitionTerminalOutput } from "./terminalReplay";
+import { partitionTerminalOutput, terminalPollingEnabled } from "./terminalReplay";
 
 describe("xterm protocol handling", () => {
   it("answers a cursor-position query with the emulator's actual cursor", async () => {
@@ -35,5 +35,13 @@ describe("xterm protocol handling", () => {
     expect(replies).toEqual(["\x1b[7;11R"]);
     input.dispose();
     terminal.dispose();
+  });
+
+  it("replays exited foreground sessions without keeping exited background emulators alive", () => {
+    expect(terminalPollingEnabled("running", true)).toBe(true);
+    expect(terminalPollingEnabled("stopping", true)).toBe(true);
+    expect(terminalPollingEnabled("exited", false)).toBe(true);
+    expect(terminalPollingEnabled("exited", true)).toBe(false);
+    expect(terminalPollingEnabled("idle", false)).toBe(false);
   });
 });

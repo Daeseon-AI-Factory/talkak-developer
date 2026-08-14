@@ -1,6 +1,12 @@
+import type { TerminalRuntimePhase } from "../domain";
+
 export interface TerminalOutputChunk {
   bytes: Uint8Array;
   suppressProtocolInput: boolean;
+}
+
+export function terminalPollingEnabled(phase: TerminalRuntimePhase, background: boolean): boolean {
+  return phase === "running" || phase === "stopping" || (phase === "exited" && !background);
 }
 
 export function partitionTerminalOutput(
