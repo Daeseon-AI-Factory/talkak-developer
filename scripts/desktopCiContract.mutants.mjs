@@ -29,6 +29,14 @@ const windowsE2e = [
   "process.env.TALKAK_WINDOWS_PROJECT",
   "!projectPath || !isAbsolute(projectPath)",
   "setValue(projectPath)",
+  "TALKAK_ATTENTION_LOG_OK",
+  '[data-testid="runtime-attention-card"]',
+  '[data-testid="terminal-log-view"]',
+  '[data-testid="ack-runtime-notice"]',
+  '[data-testid="attention-list"]',
+  "attentionList.isFocused()",
+  '[data-phase="exited"]',
+  ".terminal-log__host .xterm-rows",
 ].join("\n");
 
 const webdriverBoundary = [
@@ -298,6 +306,36 @@ test("rejects assigning the Windows E2E project to the repository", () => {
 
 test("rejects removing the absolute external-project guard", () => {
   const mutated = windowsE2e.replace("!projectPath || !isAbsolute(projectPath)", "!projectPath");
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      mutated,
+    ).join("\n"),
+    /Windows product E2E is missing/u,
+  );
+});
+
+test("rejects an installed-product test that does not inspect terminal log rows", () => {
+  const mutated = windowsE2e.replace(".terminal-log__host .xterm-rows", ".terminal-log__host");
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      mutated,
+    ).join("\n"),
+    /Windows product E2E is missing/u,
+  );
+});
+
+test("rejects an installed-product review flow that does not restore Attention focus", () => {
+  const mutated = windowsE2e.replace("attentionList.isFocused()", "attentionList.isExisting()");
   assert.match(
     validate(
       baseWorkflow,

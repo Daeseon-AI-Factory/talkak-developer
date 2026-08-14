@@ -1,4 +1,4 @@
-import type { InspectorMode, Project, TerminalRuntimePhase } from "../domain";
+import type { InspectorMode, Project, TerminalRuntimeObservation } from "../domain";
 import { useI18n } from "../i18n";
 import {
   type SplitDirection,
@@ -41,7 +41,7 @@ interface WorkspaceProps {
   onCloseInspector: () => void;
   onToggleInspectorPin: () => void;
   onLaunchHandled: (sessionId: string) => void;
-  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
+  onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
 export function Workspace({
@@ -70,7 +70,7 @@ export function Workspace({
   onCloseInspector,
   onToggleInspectorPin,
   onLaunchHandled,
-  onPhaseChange,
+  onRuntimeObservation,
 }: WorkspaceProps) {
   const { t } = useI18n();
   const counts = countSessions(project.sessions);
@@ -239,7 +239,7 @@ export function Workspace({
               onDetachPane={onDetachPane}
               onResizeSplit={onResizeSplit}
               onLaunchHandled={onLaunchHandled}
-              onPhaseChange={onPhaseChange}
+              onRuntimeObservation={onRuntimeObservation}
             />
           </div>
 

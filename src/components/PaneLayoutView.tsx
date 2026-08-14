@@ -1,5 +1,5 @@
 import type { CSSProperties, PointerEvent } from "react";
-import type { DevSession, TerminalRuntimePhase } from "../domain";
+import type { DevSession, TerminalRuntimeObservation } from "../domain";
 import { useI18n } from "../i18n";
 import type { LayoutNode, SplitDirection, SplitNode } from "../layoutModel";
 import { Icon } from "./Icon";
@@ -22,7 +22,7 @@ interface PaneLayoutViewProps {
   onDetachPane: (paneId: string) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
   onLaunchHandled: (sessionId: string) => void;
-  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
+  onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
 export function PaneLayoutView(props: PaneLayoutViewProps) {
@@ -55,7 +55,7 @@ export function PaneLayoutView(props: PaneLayoutViewProps) {
         onMove={() => props.onMovePane(pane.id)}
         onDetach={() => props.onDetachPane(pane.id)}
         onLaunchHandled={props.onLaunchHandled}
-        onPhaseChange={props.onPhaseChange}
+        onRuntimeObservation={props.onRuntimeObservation}
       />
     );
   }
@@ -118,7 +118,7 @@ function EmptyPage({
   onAttachSession: (sessionId: string) => void;
   onCreateSession: () => void;
 }) {
-  const { statusLabel, t, text } = useI18n();
+  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   return (
     <div className="empty-page">
       <span className="empty-page__icon">
@@ -140,9 +140,17 @@ function EmptyPage({
       <div className="empty-page__sessions">
         {sessions.map((session) => (
           <button type="button" key={session.id} onClick={() => onAttachSession(session.id)}>
-            <span className="terminal-pane__status" data-state={session.state} />
+            <span
+              className="terminal-pane__status"
+              data-state={session.state}
+              data-runtime-phase={session.runtimeStatus?.phase}
+            />
             <strong>{text(session.title)}</strong>
-            <small>{statusLabel(session.state)}</small>
+            <small>
+              {session.runtimeStatus
+                ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
+                : statusLabel(session.state)}
+            </small>
           </button>
         ))}
       </div>

@@ -99,6 +99,14 @@
   border-left-color: var(--warning);
 }
 
+.attention-card--runtime {
+  border-left-color: rgba(95, 226, 237, 0.36);
+}
+
+.attention-card--runtime[data-runtime-kind="error"] {
+  border-left-color: var(--warning);
+}
+
 .attention-card__meta,
 .attention-card__footer,
 .attention-detail__meta {
@@ -180,7 +188,8 @@
   line-height: 1.75;
 }
 
-.attention-detail__session {
+.attention-detail__session,
+.attention-detail__acknowledge {
   display: flex;
   width: 100%;
   min-height: 48px;
@@ -192,6 +201,14 @@
   background: rgba(255, 255, 255, 0.018);
   color: var(--text-secondary);
   cursor: pointer;
+}
+
+.attention-detail__acknowledge {
+  justify-content: center;
+  margin-top: 8px;
+  border-color: rgba(95, 226, 237, 0.28);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .attention-detail__session > svg:last-child {

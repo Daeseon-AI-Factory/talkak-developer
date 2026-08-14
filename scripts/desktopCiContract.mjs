@@ -205,6 +205,14 @@ export function validateDesktopCi(
     "process.env.TALKAK_WINDOWS_PROJECT",
     "!projectPath || !isAbsolute(projectPath)",
     "setValue(projectPath)",
+    "TALKAK_ATTENTION_LOG_OK",
+    '[data-testid="runtime-attention-card"]',
+    '[data-testid="terminal-log-view"]',
+    '[data-testid="ack-runtime-notice"]',
+    '[data-testid="attention-list"]',
+    "attentionList.isFocused()",
+    '[data-phase="exited"]',
+    ".terminal-log__host .xterm-rows",
   ]) {
     if (!windowsE2eSource.includes(fragment)) {
       errors.push(`Windows product E2E is missing: ${fragment}`);

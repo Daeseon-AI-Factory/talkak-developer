@@ -10,6 +10,7 @@ interface WorkspaceHeaderProps {
 
 export function WorkspaceHeader({ project, counts }: WorkspaceHeaderProps) {
   const { t } = useI18n();
+  const activePty = counts.starting + counts.running + counts.stopping;
   return (
     <header className="workspace-header">
       <div className="workspace-header__identity">
@@ -33,18 +34,37 @@ export function WorkspaceHeader({ project, counts }: WorkspaceHeaderProps) {
 
       <div className="workspace-header__actions">
         <dl className="session-stats" aria-label={t("header.statsAria")}>
-          <div>
-            <dt>{counts.working}</dt>
-            <dd>{t("header.working")}</dd>
-          </div>
-          <div data-alert={counts.needsInput > 0}>
-            <dt>{counts.needsInput}</dt>
-            <dd>{t("header.needsInput")}</dd>
-          </div>
-          <div>
-            <dt>{counts.ready}</dt>
-            <dd>{t("header.ready")}</dd>
-          </div>
+          {project.source === "local" ? (
+            <>
+              <div>
+                <dt>{activePty}</dt>
+                <dd>{t("header.activePty")}</dd>
+              </div>
+              <div data-alert={counts.errors > 0}>
+                <dt>{counts.errors}</dt>
+                <dd>{t("header.runtimeErrors")}</dd>
+              </div>
+              <div>
+                <dt>{counts.exited}</dt>
+                <dd>{t("header.exitedPty")}</dd>
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <dt>{counts.working}</dt>
+                <dd>{t("header.working")}</dd>
+              </div>
+              <div data-alert={counts.needsInput > 0}>
+                <dt>{counts.needsInput}</dt>
+                <dd>{t("header.needsInput")}</dd>
+              </div>
+              <div>
+                <dt>{counts.ready}</dt>
+                <dd>{t("header.ready")}</dd>
+              </div>
+            </>
+          )}
         </dl>
       </div>
     </header>

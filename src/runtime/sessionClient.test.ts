@@ -36,7 +36,9 @@ describe("session client", () => {
       cols: 80,
       rows: 24,
     });
-    await client.write("session-1", Uint8Array.from([65, 13]));
+    await client.write("session-1", 1, Uint8Array.from([65, 13]));
+    await client.resize("session-1", 1, 100, 40);
+    await client.kill("session-1", 1);
     await client.discard("session-1");
 
     expect(calls).toEqual([
@@ -55,7 +57,15 @@ describe("session client", () => {
       },
       {
         command: "session_write",
-        args: { request: { sessionId: "session-1", data: [65, 13] } },
+        args: { request: { sessionId: "session-1", runId: 1, data: [65, 13] } },
+      },
+      {
+        command: "session_resize",
+        args: { request: { sessionId: "session-1", runId: 1, cols: 100, rows: 40 } },
+      },
+      {
+        command: "session_kill",
+        args: { request: { sessionId: "session-1", runId: 1 } },
       },
       {
         command: "session_discard",

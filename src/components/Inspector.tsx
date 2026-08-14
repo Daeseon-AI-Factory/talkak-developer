@@ -87,7 +87,7 @@ export function Inspector({
 }
 
 function SummaryView({ session }: { session: DevSession }) {
-  const { statusLabel, t, text } = useI18n();
+  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const runtime =
     session.runtime.kind === "unconfigured"
       ? t("runtime.unconfigured")
@@ -97,8 +97,14 @@ function SummaryView({ session }: { session: DevSession }) {
       <section className="summary-hero">
         <div className="summary-hero__source">{t("inspector.localPreview")}</div>
         <div className="summary-hero__status-row">
-          <span className="state-badge" data-state={session.state}>
-            {statusLabel(session.state)}
+          <span
+            className="state-badge"
+            data-state={session.state}
+            data-runtime-phase={session.runtimeStatus?.phase}
+          >
+            {session.runtimeStatus
+              ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
+              : statusLabel(session.state)}
           </span>
           <span>{runtime}</span>
         </div>

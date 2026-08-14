@@ -38,6 +38,7 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
           convertEol: false,
           cursorBlink: false,
           disableStdin: true,
+          screenReaderMode: true,
           fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
           fontSize: 11,
           scrollback: 5000,
@@ -116,7 +117,7 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
   }, [available, sessionId]);
 
   return (
-    <div className="inspector__content terminal-log">
+    <div className="inspector__content terminal-log" data-testid="terminal-log-view">
       <div className="terminal-log__meta">
         <span data-phase={phase}>{terminalLogPhaseLabel(phase, t)}</span>
         <span>{t("inspector.terminalMemoryOnly")}</span>

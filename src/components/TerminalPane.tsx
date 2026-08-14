@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { DevSession, TerminalRuntimePhase } from "../domain";
+import type { DevSession, TerminalRuntimeObservation } from "../domain";
 import { useI18n } from "../i18n";
 import type { SplitDirection } from "../layoutModel";
 import { runtimeLabel } from "../workspaceModel";
@@ -20,7 +20,7 @@ interface TerminalPaneProps {
   onMove: () => void;
   onDetach: () => void;
   onLaunchHandled: (sessionId: string) => void;
-  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
+  onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
 export function TerminalPane({
@@ -36,9 +36,9 @@ export function TerminalPane({
   onMove,
   onDetach,
   onLaunchHandled,
-  onPhaseChange,
+  onRuntimeObservation,
 }: TerminalPaneProps) {
-  const { statusLabel, t, text } = useI18n();
+  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const [runtimeAttached, setRuntimeAttached] = useState(false);
   const paneRef = useRef<HTMLElement | null>(null);
   const sessionTitle = text(session.title);
@@ -66,6 +66,7 @@ export function TerminalPane({
       className="terminal-pane"
       data-active={active}
       data-state={session.state}
+      data-runtime-phase={session.runtimeStatus?.phase}
       tabIndex={-1}
       onMouseDown={onFocus}
     >
@@ -133,7 +134,11 @@ export function TerminalPane({
         <span>·</span>
         <span>{session.runtime.shell}</span>
         <span className="terminal-pane__meta-spacer" />
-        <span data-state={session.state}>{statusLabel(session.state)}</span>
+        <span data-state={session.state} data-runtime-phase={session.runtimeStatus?.phase}>
+          {session.runtimeStatus
+            ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
+            : statusLabel(session.state)}
+        </span>
       </div>
 
       <SessionTerminal
@@ -142,7 +147,7 @@ export function TerminalPane({
         focused={active}
         onRuntimeAttached={setRuntimeAttached}
         onLaunchHandled={onLaunchHandled}
-        onPhaseChange={onPhaseChange}
+        onRuntimeObservation={onRuntimeObservation}
       />
     </article>
   );

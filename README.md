@@ -9,10 +9,10 @@ This repository contains the interactive product shell and its first native runt
 
 - project switching
 - multi-pane workspace layouts
-- session status and focus controls
+- backend-observed PTY status across panes, project counts, Sessions, inspector, and mobile views
 - Korean/English UI switching with local preference persistence
 - platform-aware shortcuts (`Command` on macOS, `Control` on Windows/WSL)
-- an attention path that opens sessions waiting for a developer decision
+- an attention path for decision requests plus observed PTY errors and natural exits
 - a cross-project Attention inbox with revision-checked local resolution previews
 - session summary and conversation-preview inspector plus a real, read-only PTY log
 - adaptive phone, tablet, and desktop presentations backed by the same session state
@@ -28,6 +28,11 @@ product default. Output replay is memory-bounded and process state is currently 
 After a PTY has fully exited, an explicit restart discards its old replay buffer before reusing the
 session ID. A running session cannot be discarded. The Terminal Log inspector follows each runtime
 run separately and reads only the backend's memory-bounded replay; it does not persist output.
+Observed PTY errors and natural exits surface in Attention with their operation or exit code and
+open that real terminal log. Exits requested with Talkak's Stop control do not create another
+attention item. A reviewed runtime notice can be acknowledged for the current app run; a later
+changed error observation appears again. These runtime facts do not claim that an AI task succeeded
+or failed.
 Local projects, page layouts, pane focus, generated session metadata, and the active project persist
 without storing terminal output or launch arguments in the workspace snapshot. Running PTY process
 recovery, transcript adapters, remote access, voice recognition, and message sending are not claimed
@@ -80,9 +85,10 @@ builds an unsigned `.app`. The Windows job first builds the ordinary unsigned NS
 clean-installs it, and confirms the installed release process stays running. It then builds a
 separate CI-instrumented NSIS installer. WebdriverIO drives that installed executable through
 project creation in a fresh empty directory outside the checkout, one-click session start, PTY
-input/output, split, and page creation. The scripts stop their sessions, run the NSIS uninstaller,
-and remove only profiles and test directories created by that run. They never delete a pre-existing
-installation or user profile.
+input/output, split, page creation, natural process exit, runtime Attention, and retained terminal
+log output. The scripts stop their remaining sessions, run the NSIS uninstaller, and remove only
+profiles and test directories created by that run. They never delete a pre-existing installation or
+user profile.
 
 The installed-app test uses Tauri's WebdriverIO service and embedded WebDriver plugins behind the
 non-default `webdriver-ci` Cargo feature. Its matching frontend adapter is compiled only in the

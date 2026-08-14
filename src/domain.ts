@@ -20,6 +20,41 @@ export type TerminalRuntimePhase =
   | "error"
   | "unavailable";
 
+export type TerminalRuntimeTermination = "observed-exit" | "requested-stop";
+
+export type TerminalRuntimeOperation =
+  | "availability"
+  | "snapshot"
+  | "start"
+  | "attach"
+  | "read"
+  | "write"
+  | "resize"
+  | "stop";
+
+export interface TerminalRuntimeFault {
+  readonly operation: TerminalRuntimeOperation;
+  readonly message: string;
+}
+
+export interface TerminalRuntimeStatus {
+  readonly phase: TerminalRuntimePhase;
+  readonly runId: number | null;
+  readonly exitCode: number | null;
+  readonly termination: TerminalRuntimeTermination | null;
+  readonly fault: TerminalRuntimeFault | null;
+  readonly observedAt: string;
+}
+
+export type TerminalRuntimeObservationOrigin =
+  | "passive-probe"
+  | "explicit-action"
+  | "runtime-event";
+
+export interface TerminalRuntimeObservation extends TerminalRuntimeStatus {
+  readonly origin: TerminalRuntimeObservationOrigin;
+}
+
 export type AttentionKind = "question" | "approval" | "result" | "error";
 
 export type AttentionRisk = "low" | "medium" | "high";
@@ -115,6 +150,8 @@ export interface DevSession {
   launchRequested?: boolean;
   state: SessionState;
   runtime: RuntimeTarget;
+  /** Ephemeral host observation. Storage adapters must not persist it. */
+  runtimeStatus?: TerminalRuntimeStatus | null;
   branch: string;
   startedAt: string;
   lastActivity: LocalizedText;

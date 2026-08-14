@@ -22,6 +22,7 @@ describe("workspace sessions", () => {
     expect(session.launchProfile.args).toEqual(["--review"]);
     expect(session.branch).toBe("feature/review");
     expect(session.launchRequested).toBe(true);
+    expect(session.runtimeStatus).toBeNull();
     expect(session.lines[0]?.text).toBe("Ready");
   });
 });

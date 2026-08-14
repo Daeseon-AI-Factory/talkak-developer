@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { presentationModeForWidth } from "./adaptiveLayout";
 import { resolveAttentionRequest } from "./attentionModel";
 import { AttentionCenter } from "./components/AttentionCenter";
@@ -18,6 +18,11 @@ import type { AppSection, AttentionRequest, InspectorMode, SidebarMode } from ".
 import { useI18n } from "./i18n";
 import { platformFromUserAgent } from "./platform";
 import { type ProjectDraft, browserProjectStorage } from "./projectStore";
+import {
+  type RuntimeAttentionNotice,
+  runtimeAttentionNoticeKey,
+  runtimeAttentionNotices,
+} from "./runtime/runtimeAttentionModel";
 import { foregroundTerminalSessionIds } from "./runtime/sessionVisibility";
 import { createWorkspaceSession } from "./sessionModel";
 import {
@@ -72,6 +77,9 @@ export default function App() {
     useState<AttentionRequest[]>(initialAttentionRequests);
   const attentionRequestsRef = useRef<AttentionRequest[]>(initialAttentionRequests);
   const [selectedAttentionId, setSelectedAttentionId] = useState<string | null>(null);
+  const [acknowledgedRuntimeNotices, setAcknowledgedRuntimeNotices] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [settings, setSettings] = useState(createDefaultSettingsState);
   const [draftsBySession, setDraftsBySession] = useState<Record<string, string>>({});
   const [mobileTabsBySession, setMobileTabsBySession] = useState<Record<string, MobileSessionTab>>(
@@ -92,9 +100,16 @@ export default function App() {
   const platform = platformFromUserAgent(navigator.userAgent);
   const commandShortcut = shortcutDisplay(platform, "palette");
   const guideShortcut = shortcutDisplay(platform, "guide");
-  const openAttentionCount = attentionRequests.filter(
-    (request) => request.status === "open",
-  ).length;
+  const observedRuntimeNotices = useMemo(() => runtimeAttentionNotices(projects), [projects]);
+  const runtimeNotices = useMemo(
+    () =>
+      observedRuntimeNotices.filter(
+        (notice) => !acknowledgedRuntimeNotices.has(runtimeAttentionNoticeKey(notice)),
+      ),
+    [acknowledgedRuntimeNotices, observedRuntimeNotices],
+  );
+  const openAttentionCount =
+    attentionRequests.filter((request) => request.status === "open").length + runtimeNotices.length;
   const voiceEnabled = effectiveSetting(settings, "voiceInput", {
     projectId: activeProject.id,
     sessionId: activeSession?.id,
@@ -125,6 +140,14 @@ export default function App() {
       // The layout remains usable when persistence is unavailable.
     }
   }, [sidebarMode]);
+
+  useEffect(() => {
+    const activeKeys = new Set(observedRuntimeNotices.map(runtimeAttentionNoticeKey));
+    setAcknowledgedRuntimeNotices((current) => {
+      const retained = new Set([...current].filter((key) => activeKeys.has(key)));
+      return retained.size === current.size ? current : retained;
+    });
+  }, [observedRuntimeNotices]);
 
   function selectProject(projectId: string) {
     workspace.selectProject(projectId);
@@ -174,6 +197,32 @@ export default function App() {
     workspace.selectProject(projectId);
     workspace.setActiveSessionId(sessionId);
     setActiveSection("workspace");
+  }
+
+  function openRuntimeSession(projectId: string, sessionId: string) {
+    if (presentationMode === "phone") {
+      const project = projects.find((candidate) => candidate.id === projectId);
+      if (!project?.sessions.some((session) => session.id === sessionId)) return;
+      workspace.selectProject(projectId);
+      workspace.setActiveSessionId(sessionId);
+      setMobileTabsBySession((current) => ({ ...current, [sessionId]: "terminal" }));
+      setActiveSection("workspace");
+      return;
+    }
+    workspace.openSession(projectId, sessionId);
+    setActiveSection("workspace");
+    setInspectorMode("terminal");
+  }
+
+  function acknowledgeRuntimeNotice(notice: RuntimeAttentionNotice) {
+    const key = runtimeAttentionNoticeKey(notice);
+    setAcknowledgedRuntimeNotices((current) => {
+      if (current.has(key)) return current;
+      const next = new Set(current);
+      next.add(key);
+      return next;
+    });
+    if (selectedAttentionId === notice.id) setSelectedAttentionId(null);
   }
 
   function updateSetting(
@@ -244,6 +293,7 @@ export default function App() {
         projects={projects}
         activeProjectId={activeProject.id}
         activeSection={activeSection}
+        attentionCount={openAttentionCount}
         mode={sidebarMode}
         onSelectProject={selectProject}
         onSelectSection={setActiveSection}
@@ -349,11 +399,14 @@ export default function App() {
         {activeSection === "attention" ? (
           <AttentionCenter
             requests={attentionRequests}
+            runtimeNotices={runtimeNotices}
             projects={projects}
             selectedRequestId={selectedAttentionId}
             onSelectRequest={setSelectedAttentionId}
             onResolve={resolveAttention}
             onOpenSession={openAttentionSession}
+            onOpenRuntimeSession={openRuntimeSession}
+            onAcknowledgeRuntimeNotice={acknowledgeRuntimeNotice}
           />
         ) : null}
 
@@ -425,7 +478,7 @@ export default function App() {
             onCloseInspector={() => setInspectorMode(null)}
             onToggleInspectorPin={() => setInspectorPinned((current) => !current)}
             onLaunchHandled={workspace.markLaunchHandled}
-            onPhaseChange={workspace.updateRuntimePhase}
+            onRuntimeObservation={workspace.updateRuntimeObservation}
           />
         ) : null}
 
@@ -457,7 +510,7 @@ export default function App() {
         projects={projects}
         foregroundSessionIds={foregroundSessionIds}
         onLaunchHandled={workspace.markLaunchHandled}
-        onPhaseChange={workspace.updateRuntimePhase}
+        onRuntimeObservation={workspace.updateRuntimeObservation}
       />
       <CommandPalette
         open={commandOpen}

@@ -37,9 +37,9 @@ export interface SessionClient {
   spawn: (request: SpawnSessionInput) => Promise<SessionSnapshot>;
   snapshot: (sessionId: string) => Promise<SessionSnapshot | null>;
   read: (sessionId: string, after: number) => Promise<SessionRead>;
-  write: (sessionId: string, data: Uint8Array) => Promise<void>;
-  resize: (sessionId: string, cols: number, rows: number) => Promise<void>;
-  kill: (sessionId: string) => Promise<SessionSnapshot>;
+  write: (sessionId: string, runId: number, data: Uint8Array) => Promise<void>;
+  resize: (sessionId: string, runId: number, cols: number, rows: number) => Promise<void>;
+  kill: (sessionId: string, runId: number) => Promise<SessionSnapshot>;
   discard: (sessionId: string) => Promise<void>;
 }
 
@@ -60,17 +60,17 @@ export function createSessionClient(
       invokeCommand<SessionRead>("session_read", {
         request: { sessionId, after },
       }),
-    write: (sessionId, data) =>
+    write: (sessionId, runId, data) =>
       invokeCommand<void>("session_write", {
-        request: { sessionId, data: Array.from(data) },
+        request: { sessionId, runId, data: Array.from(data) },
       }),
-    resize: (sessionId, cols, rows) =>
+    resize: (sessionId, runId, cols, rows) =>
       invokeCommand<void>("session_resize", {
-        request: { sessionId, cols, rows },
+        request: { sessionId, runId, cols, rows },
       }),
-    kill: (sessionId) =>
+    kill: (sessionId, runId) =>
       invokeCommand<SessionSnapshot>("session_kill", {
-        request: { sessionId },
+        request: { sessionId, runId },
       }),
     discard: (sessionId) =>
       invokeCommand<void>("session_discard", {

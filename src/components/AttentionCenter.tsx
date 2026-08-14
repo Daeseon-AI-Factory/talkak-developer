@@ -1,16 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { openAttentionRequests } from "../attentionModel";
-import type { AttentionRequest, Project } from "../domain";
-import { useI18n } from "../i18n";
+import type { AttentionRequest, Project, TerminalRuntimeOperation } from "../domain";
+import { type Locale, useI18n } from "../i18n";
+import type { RuntimeAttentionNotice } from "../runtime/runtimeAttentionModel";
 import { Icon } from "./Icon";
 
 interface AttentionCenterProps {
   requests: readonly AttentionRequest[];
+  runtimeNotices: readonly RuntimeAttentionNotice[];
   projects: readonly Project[];
   selectedRequestId: string | null;
   onSelectRequest: (requestId: string | null) => void;
   onResolve: (requestId: string, revision: number, choiceId: string) => boolean;
   onOpenSession: (projectId: string, sessionId: string) => void;
+  onOpenRuntimeSession: (projectId: string, sessionId: string) => void;
+  onAcknowledgeRuntimeNotice: (notice: RuntimeAttentionNotice) => void;
 }
 
 const kindKeys = {
@@ -26,15 +30,39 @@ const riskKeys = {
   high: "attention.risk.high",
 } as const;
 
+const runtimeOperationKeys: Record<
+  TerminalRuntimeOperation,
+  | "runtime.operation.availability"
+  | "runtime.operation.snapshot"
+  | "runtime.operation.start"
+  | "runtime.operation.attach"
+  | "runtime.operation.read"
+  | "runtime.operation.write"
+  | "runtime.operation.resize"
+  | "runtime.operation.stop"
+> = {
+  availability: "runtime.operation.availability",
+  snapshot: "runtime.operation.snapshot",
+  start: "runtime.operation.start",
+  attach: "runtime.operation.attach",
+  read: "runtime.operation.read",
+  write: "runtime.operation.write",
+  resize: "runtime.operation.resize",
+  stop: "runtime.operation.stop",
+};
+
 export function AttentionCenter({
   requests,
+  runtimeNotices,
   projects,
   selectedRequestId,
   onSelectRequest,
   onResolve,
   onOpenSession,
+  onOpenRuntimeSession,
+  onAcknowledgeRuntimeNotice,
 }: AttentionCenterProps) {
-  const { t, text } = useI18n();
+  const { locale, t, text } = useI18n();
   const [pendingChoice, setPendingChoice] = useState<{
     requestId: string;
     revision: number;
@@ -42,15 +70,32 @@ export function AttentionCenter({
   } | null>(null);
   const [stale, setStale] = useState(false);
   const detailRef = useRef<HTMLElement | null>(null);
-  const listRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLElement | null>(null);
   const lastRequestIdRef = useRef<string | null>(null);
   const requestButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const openRequests = useMemo(() => openAttentionRequests(requests), [requests]);
+  const runtimeErrors = runtimeNotices.filter((notice) => notice.event.kind === "error");
+  const runtimeExits = runtimeNotices.filter((notice) => notice.event.kind === "exited");
+  const selectedRuntimeById = runtimeNotices.find((notice) => notice.id === selectedRequestId);
+  const selectedRequestById = requests.find((request) => request.id === selectedRequestId);
+  const defaultRuntime =
+    runtimeErrors[0] ?? (openRequests.length === 0 ? (runtimeExits[0] ?? null) : null);
+  const defaultRequest = runtimeErrors.length === 0 ? (openRequests[0] ?? null) : null;
+  const selectedRuntime =
+    selectedRequestId === null ? defaultRuntime : (selectedRuntimeById ?? null);
   const selectedRequest =
-    requests.find((request) => request.id === selectedRequestId) ?? openRequests[0] ?? null;
+    selectedRequestId === null
+      ? selectedRuntime
+        ? null
+        : defaultRequest
+      : (selectedRequestById ?? null);
+  const exactSelectionExists = Boolean(selectedRuntimeById || selectedRequestById);
+  const openCount = openRequests.length + runtimeNotices.length;
 
   const pendingChoiceId =
-    pendingChoice?.requestId === selectedRequest?.id &&
+    pendingChoice &&
+    selectedRequest &&
+    pendingChoice.requestId === selectedRequest.id &&
     pendingChoice.revision === selectedRequest.revision
       ? pendingChoice.choiceId
       : null;
@@ -61,6 +106,14 @@ export function AttentionCenter({
   useEffect(() => {
     if (selectedRequestId) detailRef.current?.focus();
   }, [selectedRequestId]);
+
+  useEffect(() => {
+    if (!selectedRequestId) return;
+    const stillExists =
+      requests.some((request) => request.id === selectedRequestId) ||
+      runtimeNotices.some((notice) => notice.id === selectedRequestId);
+    if (!stillExists) onSelectRequest(null);
+  }, [onSelectRequest, requests, runtimeNotices, selectedRequestId]);
 
   function selectRequest(requestId: string) {
     lastRequestIdRef.current = requestId;
@@ -78,32 +131,76 @@ export function AttentionCenter({
     });
   }
 
+  function acknowledgeRuntimeNotice(notice: RuntimeAttentionNotice) {
+    onAcknowledgeRuntimeNotice(notice);
+    returnToList();
+  }
+
+  function renderRuntimeNotice(notice: RuntimeAttentionNotice) {
+    const context = findContext(projects, notice);
+    const sessionTitle = context.session ? text(context.session.title) : notice.sessionId;
+    return (
+      <button
+        className="attention-card attention-card--runtime"
+        type="button"
+        key={notice.id}
+        data-testid="runtime-attention-card"
+        data-active={notice.id === selectedRuntime?.id}
+        data-runtime-kind={notice.event.kind}
+        aria-current={notice.id === selectedRuntime?.id ? "true" : undefined}
+        ref={(node) => {
+          if (node) requestButtonRefs.current.set(notice.id, node);
+          else requestButtonRefs.current.delete(notice.id);
+        }}
+        onClick={() => selectRequest(notice.id)}
+      >
+        <span className="attention-card__meta">
+          <span>
+            {notice.event.kind === "error"
+              ? t("attention.runtimeError")
+              : t("attention.runtimeExited")}
+          </span>
+          <span>{context.project?.name ?? notice.projectId}</span>
+          <time dateTime={notice.observedAt}>{formatAttentionTime(notice.observedAt, locale)}</time>
+        </span>
+        <strong>{runtimeNoticeTitle(notice, sessionTitle, t)}</strong>
+        <span className="attention-card__description">{runtimeNoticeDescription(notice, t)}</span>
+        <span className="attention-card__footer">
+          <span>{t("attention.runtimeEyebrow")}</span>
+          <span>{sessionTitle}</span>
+        </span>
+      </button>
+    );
+  }
+
   return (
     <section
       className="attention-center"
-      data-detail-open={Boolean(selectedRequestId)}
+      data-detail-open={selectedRequestId !== null && exactSelectionExists}
       aria-labelledby="attention-center-title"
     >
       <header className="attention-center__header">
         <span>{t("attention.centerEyebrow")}</span>
         <h1 id="attention-center-title">{t("attention.centerTitle")}</h1>
         <p>{t("attention.centerDescription")}</p>
-        <strong>{t("attention.openCount", { count: openRequests.length })}</strong>
+        <strong>{t("attention.openCount", { count: openCount })}</strong>
       </header>
 
       <div className="attention-center__layout">
-        <div
+        <nav
           className="attention-list"
+          data-testid="attention-list"
           aria-label={t("attention.listAria")}
           ref={listRef}
           tabIndex={-1}
         >
-          {openRequests.length === 0 ? (
+          {openCount === 0 ? (
             <div className="attention-empty">
               <Icon name="check" size={22} />
               <span>{t("attention.empty")}</span>
             </div>
           ) : null}
+          {runtimeErrors.map(renderRuntimeNotice)}
           {openRequests.map((request) => {
             const context = findContext(projects, request);
             return (
@@ -113,6 +210,7 @@ export function AttentionCenter({
                 key={request.id}
                 data-active={request.id === selectedRequest?.id}
                 data-risk={request.risk}
+                aria-current={request.id === selectedRequest?.id ? "true" : undefined}
                 ref={(node) => {
                   if (node) requestButtonRefs.current.set(request.id, node);
                   else requestButtonRefs.current.delete(request.id);
@@ -122,7 +220,9 @@ export function AttentionCenter({
                 <span className="attention-card__meta">
                   <span>{t(kindKeys[request.kind])}</span>
                   <span>{context.project?.name ?? request.projectId}</span>
-                  <time>{request.createdAt}</time>
+                  <time dateTime={request.createdAt}>
+                    {formatAttentionTime(request.createdAt, locale)}
+                  </time>
                 </span>
                 <strong>{request.title}</strong>
                 <span className="attention-card__description">{request.description}</span>
@@ -133,7 +233,8 @@ export function AttentionCenter({
               </button>
             );
           })}
-        </div>
+          {runtimeExits.map(renderRuntimeNotice)}
+        </nav>
 
         <article
           className="attention-detail"
@@ -141,7 +242,17 @@ export function AttentionCenter({
           ref={detailRef}
           tabIndex={-1}
         >
-          {selectedRequest ? (
+          {selectedRuntime ? (
+            <RuntimeAttentionDetail
+              notice={selectedRuntime}
+              projects={projects}
+              onBack={returnToList}
+              onOpenSession={() =>
+                onOpenRuntimeSession(selectedRuntime.projectId, selectedRuntime.sessionId)
+              }
+              onAcknowledge={() => acknowledgeRuntimeNotice(selectedRuntime)}
+            />
+          ) : selectedRequest ? (
             <AttentionDetail
               request={selectedRequest}
               projects={projects}
@@ -181,6 +292,92 @@ export function AttentionCenter({
       </div>
     </section>
   );
+}
+
+function RuntimeAttentionDetail({
+  notice,
+  projects,
+  onBack,
+  onOpenSession,
+  onAcknowledge,
+}: {
+  notice: RuntimeAttentionNotice;
+  projects: readonly Project[];
+  onBack: () => void;
+  onOpenSession: () => void;
+  onAcknowledge: () => void;
+}) {
+  const { t, text } = useI18n();
+  const context = findContext(projects, notice);
+  const sessionTitle = context.session ? text(context.session.title) : notice.sessionId;
+  return (
+    <>
+      <button className="attention-detail__back" type="button" onClick={onBack}>
+        <Icon name="arrow-left" size={18} />
+        {t("attention.back")}
+      </button>
+      <div className="attention-detail__meta">
+        <span>
+          {notice.event.kind === "error"
+            ? t("attention.runtimeError")
+            : t("attention.runtimeExited")}
+        </span>
+        <span>{t("attention.runtimeEyebrow")}</span>
+      </div>
+      <p className="attention-detail__context">
+        {context.project?.name ?? notice.projectId} / {sessionTitle}
+      </p>
+      <h2>{runtimeNoticeTitle(notice, sessionTitle, t)}</h2>
+      <p className="attention-detail__description">{runtimeNoticeDescription(notice, t)}</p>
+      <button
+        className="attention-detail__session"
+        type="button"
+        data-testid="open-runtime-terminal"
+        onClick={onOpenSession}
+      >
+        <Icon name="terminal" size={17} />
+        {t("attention.openTerminalLog")}
+        <Icon name="chevron" size={15} />
+      </button>
+      <button
+        className="attention-detail__acknowledge"
+        type="button"
+        data-testid="ack-runtime-notice"
+        onClick={onAcknowledge}
+      >
+        <Icon name="check" size={17} />
+        {t("attention.runtimeAcknowledge")}
+      </button>
+      <p className="attention-detail__notice">{t("attention.runtimeObserved")}</p>
+    </>
+  );
+}
+
+function runtimeNoticeTitle(
+  notice: RuntimeAttentionNotice,
+  sessionTitle: string,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  return notice.event.kind === "error"
+    ? t("attention.runtimeErrorTitle", { session: sessionTitle })
+    : t("attention.runtimeExitedTitle", { session: sessionTitle });
+}
+
+function runtimeNoticeDescription(
+  notice: RuntimeAttentionNotice,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  if (notice.event.kind === "error") {
+    return notice.event.fault
+      ? t("attention.runtimeErrorDescription", {
+          operation: t(runtimeOperationKeys[notice.event.fault.operation]),
+          message: notice.event.fault.message,
+        })
+      : t("attention.runtimeUnknownError");
+  }
+  return notice.event.exitCode === null
+    ? t("attention.runtimeExitedUnknown")
+    : t("attention.runtimeExitedCode", { code: notice.event.exitCode });
 }
 
 interface AttentionDetailProps {
@@ -293,10 +490,22 @@ function AttentionDetail({
   );
 }
 
-function findContext(projects: readonly Project[], request: AttentionRequest) {
+function findContext(
+  projects: readonly Project[],
+  request: Pick<AttentionRequest, "projectId" | "sessionId">,
+) {
   const project = projects.find((candidate) => candidate.id === request.projectId);
   return {
     project,
     session: project?.sessions.find((candidate) => candidate.id === request.sessionId),
   };
+}
+
+function formatAttentionTime(value: string, locale: Locale): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale === "ko" ? "ko-KR" : "en-US", {
+    dateStyle: "short",
+    timeStyle: "short",
+  }).format(date);
 }

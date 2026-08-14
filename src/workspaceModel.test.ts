@@ -13,6 +13,74 @@ describe("workspace model", () => {
       working: 1,
       needsInput: 1,
       ready: 0,
+      starting: 0,
+      running: 0,
+      stopping: 0,
+      exited: 0,
+      errors: 0,
+    });
+  });
+
+  it("counts observed PTY phases and faults without inferring task outcomes", () => {
+    const base = projects[0].sessions[0];
+    const observedAt = "2026-08-14T01:00:00.000Z";
+    const sessions = [
+      {
+        ...base,
+        id: "starting",
+        runtimeStatus: {
+          phase: "starting" as const,
+          runId: null,
+          exitCode: null,
+          termination: null,
+          fault: null,
+          observedAt,
+        },
+      },
+      {
+        ...base,
+        id: "running-error",
+        runtimeStatus: {
+          phase: "running" as const,
+          runId: 1,
+          exitCode: null,
+          termination: null,
+          fault: { operation: "write" as const, message: "broken pipe" },
+          observedAt,
+        },
+      },
+      {
+        ...base,
+        id: "stopping",
+        runtimeStatus: {
+          phase: "stopping" as const,
+          runId: 2,
+          exitCode: null,
+          termination: "requested-stop" as const,
+          fault: null,
+          observedAt,
+        },
+      },
+      {
+        ...base,
+        id: "exited",
+        runtimeStatus: {
+          phase: "exited" as const,
+          runId: 3,
+          exitCode: 7,
+          termination: "observed-exit" as const,
+          fault: null,
+          observedAt,
+        },
+      },
+    ];
+
+    expect(countSessions(sessions)).toMatchObject({
+      starting: 1,
+      running: 1,
+      stopping: 1,
+      exited: 1,
+      errors: 1,
     });
   });
 

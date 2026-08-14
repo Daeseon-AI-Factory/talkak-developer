@@ -9,7 +9,7 @@ interface CollectionViewProps {
 }
 
 export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
-  const { statusLabel, t, text } = useI18n();
+  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const rows = projects.flatMap((project) =>
     project.sessions.map((session) => ({ project, session })),
   );
@@ -51,8 +51,15 @@ export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
                 ? t("runtime.unconfigured")
                 : text(runtimeLabel(session))}
             </span>
-            <span className="state-badge" data-state={session.state}>
-              {statusLabel(session.state)}
+            <span
+              className="state-badge"
+              data-testid="session-runtime-status"
+              data-state={session.state}
+              data-runtime-phase={session.runtimeStatus?.phase}
+            >
+              {session.runtimeStatus
+                ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
+                : statusLabel(session.state)}
             </span>
             <span className="session-row__open">
               {t("sessions.open")} <Icon name="chevron" size={13} />

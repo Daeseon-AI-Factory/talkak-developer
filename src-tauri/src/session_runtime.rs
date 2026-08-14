@@ -34,6 +34,13 @@ pub(crate) struct SessionIdRequest {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub(crate) struct RunSessionRequest {
+    pub(crate) session_id: String,
+    pub(crate) run_id: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ReadSessionRequest {
     pub(crate) session_id: String,
     pub(crate) after: u64,
@@ -43,6 +50,7 @@ pub(crate) struct ReadSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct WriteSessionRequest {
     pub(crate) session_id: String,
+    pub(crate) run_id: u64,
     pub(crate) data: Vec<u8>,
 }
 
@@ -50,6 +58,7 @@ pub(crate) struct WriteSessionRequest {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ResizeSessionRequest {
     pub(crate) session_id: String,
+    pub(crate) run_id: u64,
     pub(crate) cols: u16,
     pub(crate) rows: u16,
 }
@@ -305,6 +314,7 @@ impl SessionRuntime {
 
     pub(crate) fn write(&self, request: WriteSessionRequest) -> Result<(), RuntimeError> {
         let process = self.session(&request.session_id)?;
+        validate_run_id(&process, request.run_id)?;
         process.refresh_status()?;
         if !lock(&process.status, "process status")?.running {
             return Err(RuntimeError::Process(
@@ -324,6 +334,7 @@ impl SessionRuntime {
     pub(crate) fn resize(&self, request: ResizeSessionRequest) -> Result<(), RuntimeError> {
         validate_size(request.cols, request.rows)?;
         let process = self.session(&request.session_id)?;
+        validate_run_id(&process, request.run_id)?;
         let master = lock(&process.master, "PTY master")?;
         let master = master
             .as_ref()
@@ -333,11 +344,24 @@ impl SessionRuntime {
             .map_err(|error| RuntimeError::Process(error.to_string()))
     }
 
-    pub(crate) fn kill(&self, request: SessionIdRequest) -> Result<SessionSnapshot, RuntimeError> {
+    pub(crate) fn kill(&self, request: RunSessionRequest) -> Result<SessionSnapshot, RuntimeError> {
         let process = self.session(&request.session_id)?;
-        lock(&process.child, "child process")?
-            .kill()
-            .map_err(|error| RuntimeError::Process(error.to_string()))?;
+        validate_run_id(&process, request.run_id)?;
+        process.refresh_status()?;
+        if !lock(&process.status, "process status")?.running {
+            return process.snapshot();
+        }
+        let kill_result = {
+            let mut child = lock(&process.child, "child process")?;
+            child.kill()
+        };
+        if let Err(error) = kill_result {
+            process.refresh_status()?;
+            if !lock(&process.status, "process status")?.running {
+                return process.snapshot();
+            }
+            return Err(RuntimeError::Process(error.to_string()));
+        }
         lock(&process.status, "process status")?.running = false;
         process.close_pty()?;
         process.snapshot()
@@ -614,6 +638,13 @@ fn validate_size(cols: u16, rows: u16) -> Result<(), RuntimeError> {
         ));
     }
     Ok(())
+}
+
+fn validate_run_id(process: &SessionProcess, run_id: u64) -> Result<(), RuntimeError> {
+    if process.run_id == run_id {
+        return Ok(());
+    }
+    Err(RuntimeError::Process("session run changed".into()))
 }
 
 fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {

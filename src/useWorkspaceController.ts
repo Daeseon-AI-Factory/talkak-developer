@@ -1,6 +1,6 @@
 import { type Dispatch, type SetStateAction, useEffect, useMemo, useRef, useState } from "react";
 import type { PresentationMode } from "./adaptiveLayout";
-import type { DevSession, Project, TerminalRuntimePhase } from "./domain";
+import type { DevSession, Project, TerminalRuntimeObservation } from "./domain";
 import {
   type LayoutNode,
   type SplitDirection,
@@ -13,7 +13,7 @@ import {
 } from "./layoutModel";
 import { browserProjectStorage } from "./projectStore";
 import { createWorkspaceSession } from "./sessionModel";
-import { applyRuntimePhase } from "./sessionRuntimeState";
+import { applyRuntimeObservationToProjects } from "./sessionRuntimeState";
 import {
   createInitialWorkspace,
   initialFocusedSessionId,
@@ -443,22 +443,8 @@ export function useWorkspaceController({
     );
   }
 
-  function updateRuntimePhase(sessionId: string, phase: TerminalRuntimePhase) {
-    if (phase === "checking" || phase === "starting") return;
-    setProjects((current) =>
-      current.map((project) => {
-        const session = project.sessions.find((candidate) => candidate.id === sessionId);
-        if (!session) return project;
-        const updated = applyRuntimePhase(session, phase);
-        if (updated === session) return project;
-        return {
-          ...project,
-          sessions: project.sessions.map((candidate) =>
-            candidate.id === sessionId ? updated : candidate,
-          ),
-        };
-      }),
-    );
+  function updateRuntimeObservation(sessionId: string, observation: TerminalRuntimeObservation) {
+    setProjects((current) => applyRuntimeObservationToProjects(current, sessionId, observation));
   }
 
   return {
@@ -487,7 +473,7 @@ export function useWorkspaceController({
     cyclePane,
     installProject,
     markLaunchHandled,
-    updateRuntimePhase,
+    updateRuntimeObservation,
   };
 }
 

@@ -1,11 +1,11 @@
-import type { Project, TerminalRuntimePhase } from "../domain";
+import type { Project, TerminalRuntimeObservation } from "../domain";
 import { SessionTerminal } from "./SessionTerminal";
 
 interface BackgroundSessionRuntimesProps {
   projects: readonly Project[];
   foregroundSessionIds: ReadonlySet<string>;
   onLaunchHandled: (sessionId: string) => void;
-  onPhaseChange: (sessionId: string, phase: TerminalRuntimePhase) => void;
+  onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
 const ignoreRuntimeAttachment = () => {};
@@ -14,7 +14,7 @@ export function BackgroundSessionRuntimes({
   projects,
   foregroundSessionIds,
   onLaunchHandled,
-  onPhaseChange,
+  onRuntimeObservation,
 }: BackgroundSessionRuntimesProps) {
   return projects
     .filter((project) => project.source === "local")
@@ -30,7 +30,7 @@ export function BackgroundSessionRuntimes({
             background
             onRuntimeAttached={ignoreRuntimeAttachment}
             onLaunchHandled={onLaunchHandled}
-            onPhaseChange={onPhaseChange}
+            onRuntimeObservation={onRuntimeObservation}
           />
         )),
     );

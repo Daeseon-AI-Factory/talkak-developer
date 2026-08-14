@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import type { DevSession, Project } from "../domain";
 import { useI18n } from "../i18n";
+import { TerminalLogView } from "./TerminalLogView";
 
 export type MobileSessionTab = "conversation" | "terminal" | "summary";
 
@@ -44,7 +45,7 @@ export function MobileSessionView({
   onEditDraft,
   onOpenSettings,
 }: MobileSessionViewProps) {
-  const { statusLabel, t, text } = useI18n();
+  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const visibleReview = reviewedDraft === draft ? reviewedDraft : null;
 
   function updateDraft(value: string) {
@@ -69,8 +70,14 @@ export function MobileSessionView({
           <h1>{session ? text(session.title) : t("mobile.noSession")}</h1>
         </div>
         {session ? (
-          <span className="state-badge" data-state={session.state}>
-            {statusLabel(session.state)}
+          <span
+            className="state-badge"
+            data-state={session.state}
+            data-runtime-phase={session.runtimeStatus?.phase}
+          >
+            {session.runtimeStatus
+              ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
+              : statusLabel(session.state)}
           </span>
         ) : null}
       </header>
@@ -87,7 +94,11 @@ export function MobileSessionView({
             onClick={() => onSelectSession(candidate.id)}
           >
             <strong>{text(candidate.title)}</strong>
-            <span>{statusLabel(candidate.state)}</span>
+            <span>
+              {candidate.runtimeStatus
+                ? runtimePhaseLabel(candidate.runtimeStatus.phase, candidate.runtimeStatus.exitCode)
+                : statusLabel(candidate.state)}
+            </span>
           </button>
         ))}
       </nav>
@@ -126,7 +137,9 @@ export function MobileSessionView({
             }
           >
             {activeTab === "conversation" ? <ConversationTab session={session} /> : null}
-            {activeTab === "terminal" ? <TerminalTab session={session} /> : null}
+            {activeTab === "terminal" ? (
+              <TerminalTab session={session} local={project.source === "local"} />
+            ) : null}
             {activeTab === "summary" ? <SummaryTab session={session} /> : null}
           </div>
         </>
@@ -251,8 +264,9 @@ function ConversationTab({ session }: { session: DevSession }) {
   );
 }
 
-function TerminalTab({ session }: { session: DevSession }) {
+function TerminalTab({ session, local }: { session: DevSession; local: boolean }) {
   const { text } = useI18n();
+  if (local) return <TerminalLogView sessionId={session.id} />;
   return (
     <div className="mobile-terminal" aria-live="off">
       {session.lines.map((line) => (

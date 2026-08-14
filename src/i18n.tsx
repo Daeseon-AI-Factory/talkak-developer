@@ -1,14 +1,16 @@
 import { type ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
-import type { SessionState } from "./domain";
+import type { SessionState, TerminalRuntimePhase } from "./domain";
 import { type LocalizedText, resolveLocalizedText } from "./localizedText";
+import { runtimeMessages } from "./runtimeMessages";
 
 export type Locale = "ko" | "en";
 
 const ko = {
+  ...runtimeMessages.ko,
   "nav.workspace": "작업공간",
   "nav.workspaceHint": "터미널과 세션",
   "nav.attention": "확인함",
-  "nav.attentionHint": "결정과 검토 요청",
+  "nav.attentionHint": "작업 요청과 PTY 상태",
   "nav.sessions": "세션",
   "nav.sessionsHint": "전체 결과와 상태",
   "nav.activity": "활동",
@@ -89,13 +91,14 @@ const ko = {
   "attention.description": "멈춘 에이전트를 먼저 확인해 작업 흐름을 다시 이어가세요.",
   "attention.open": "대기 세션 열기",
   "attention.centerEyebrow": "통합 확인함",
-  "attention.centerTitle": "내 판단이 필요한 작업",
-  "attention.centerDescription": "프로젝트를 넘나들며 결정·검토·권한 요청을 한곳에서 처리합니다.",
-  "attention.openCount": "미처리 {count}건",
-  "attention.empty": "현재 확인할 요청이 없습니다.",
-  "attention.listAria": "확인이 필요한 요청 목록",
-  "attention.detailAria": "선택한 요청 상세",
-  "attention.back": "요청 목록",
+  "attention.centerTitle": "확인할 작업과 PTY 상태",
+  "attention.centerDescription":
+    "프로젝트를 넘나들며 결정 요청과 관찰된 PTY 오류·종료를 한곳에서 확인합니다.",
+  "attention.openCount": "확인 항목 {count}건",
+  "attention.empty": "현재 확인할 항목이 없습니다.",
+  "attention.listAria": "확인할 항목 목록",
+  "attention.detailAria": "선택한 확인 항목 상세",
+  "attention.back": "확인 목록",
   "attention.kind.question": "질문",
   "attention.kind.approval": "승인",
   "attention.kind.result": "결과 검토",
@@ -297,10 +300,11 @@ const ko = {
 type MessageKey = keyof typeof ko;
 
 const en: Record<MessageKey, string> = {
+  ...runtimeMessages.en,
   "nav.workspace": "Workspace",
   "nav.workspaceHint": "Terminals and sessions",
   "nav.attention": "Attention",
-  "nav.attentionHint": "Decisions and review requests",
+  "nav.attentionHint": "Work requests and PTY status",
   "nav.sessions": "Sessions",
   "nav.sessionsHint": "Results and status",
   "nav.activity": "Activity",
@@ -381,14 +385,14 @@ const en: Record<MessageKey, string> = {
   "attention.description": "Review blocked agents first and get work moving again.",
   "attention.open": "Open waiting session",
   "attention.centerEyebrow": "ATTENTION INBOX",
-  "attention.centerTitle": "Work that needs your judgment",
+  "attention.centerTitle": "Work and PTY status to review",
   "attention.centerDescription":
-    "Handle decisions, reviews, and permission requests across projects in one place.",
-  "attention.openCount": "{count} open",
-  "attention.empty": "There are no requests to review.",
-  "attention.listAria": "Requests that need attention",
-  "attention.detailAria": "Selected request details",
-  "attention.back": "Request list",
+    "Review decision requests and observed PTY errors or exits across projects in one place.",
+  "attention.openCount": "Items to review: {count}",
+  "attention.empty": "There are no items to review.",
+  "attention.listAria": "Items needing attention",
+  "attention.detailAria": "Selected item details",
+  "attention.back": "Item list",
   "attention.kind.question": "Question",
   "attention.kind.approval": "Approval",
   "attention.kind.result": "Result review",
@@ -595,6 +599,7 @@ interface I18nValue {
   t: (key: MessageKey, values?: Record<string, string | number>) => string;
   text: (value: LocalizedText) => string;
   statusLabel: (state: SessionState) => string;
+  runtimePhaseLabel: (phase: TerminalRuntimePhase, exitCode?: number | null) => string;
 }
 
 const I18nContext = createContext<I18nValue | null>(null);
@@ -651,6 +656,19 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       t,
       text: (text) => formatLocalizedText(locale, text),
       statusLabel: (state) => t(statusKeys[state]),
+      runtimePhaseLabel: (phase, exitCode) => {
+        if (phase === "starting") return t("terminal.starting");
+        if (phase === "running") return t("terminal.running");
+        if (phase === "stopping") return t("terminal.stopping");
+        if (phase === "exited") {
+          return exitCode === null || exitCode === undefined
+            ? t("terminal.exited")
+            : t("terminal.exitedCode", { code: exitCode });
+        }
+        if (phase === "error") return t("terminal.runtimeError");
+        if (phase === "unavailable") return t("terminal.ptyDisconnected");
+        return t("terminal.readyToStart");
+      },
     };
   }, [locale]);
 

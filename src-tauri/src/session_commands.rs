@@ -1,6 +1,6 @@
 use crate::session_runtime::{
-    ReadSessionRequest, ResizeSessionRequest, SessionIdRequest, SessionRead, SessionRuntime,
-    SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+    ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
+    SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 use tauri::State;
 
@@ -47,7 +47,7 @@ pub(crate) fn session_resize(
 #[tauri::command]
 pub(crate) fn session_kill(
     runtime: State<'_, SessionRuntime>,
-    request: SessionIdRequest,
+    request: RunSessionRequest,
 ) -> Result<SessionSnapshot, String> {
     runtime.kill(request).map_err(|error| error.to_string())
 }

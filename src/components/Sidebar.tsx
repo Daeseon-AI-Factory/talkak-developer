@@ -6,6 +6,7 @@ interface SidebarProps {
   projects: readonly Project[];
   activeProjectId: string;
   activeSection: AppSection;
+  attentionCount: number;
   mode: SidebarMode;
   onSelectProject: (projectId: string) => void;
   onSelectSection: (section: AppSection) => void;
@@ -18,6 +19,7 @@ export function Sidebar({
   projects,
   activeProjectId,
   activeSection,
+  attentionCount,
   mode,
   onSelectProject,
   onSelectSection,
@@ -52,12 +54,24 @@ export function Sidebar({
           <button
             className="nav-item"
             data-active={activeSection === section.id}
+            data-testid={`nav-${section.id}`}
             key={section.id}
             type="button"
+            aria-current={activeSection === section.id ? "page" : undefined}
+            aria-label={
+              section.id === "attention" && attentionCount > 0
+                ? `${section.label}, ${t("attention.openCount", { count: attentionCount })}`
+                : undefined
+            }
             onClick={() => onSelectSection(section.id)}
           >
             <span className="nav-item__icon">
               <Icon name={section.icon} />
+              {section.id === "attention" && attentionCount > 0 ? (
+                <span className="nav-item__badge" aria-hidden="true">
+                  {attentionCount}
+                </span>
+              ) : null}
             </span>
             <span>
               <strong>{section.label}</strong>
@@ -135,6 +149,7 @@ export function Sidebar({
         className="sidebar-action"
         type="button"
         data-active={activeSection === "settings"}
+        aria-current={activeSection === "settings" ? "page" : undefined}
         onClick={() => onSelectSection("settings")}
       >
         <Icon name="settings" />

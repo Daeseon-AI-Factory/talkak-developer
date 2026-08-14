@@ -313,6 +313,7 @@
     min-width: 18px;
     height: 18px;
     place-items: center;
+    padding: 0 4px;
     border: 2px solid var(--bg);
     border-radius: 999px;
     background: var(--warning);
@@ -427,6 +428,11 @@
       calc(12px + env(safe-area-inset-left));
     overflow: auto;
     background: rgba(2, 8, 10, 0.42);
+  }
+
+  .mobile-session-view__content > .terminal-log {
+    height: 100%;
+    padding: 0;
   }
 
   .mobile-conversation-list,

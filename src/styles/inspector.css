@@ -119,6 +119,16 @@
   color: var(--accent);
 }
 
+.state-badge[data-runtime-phase="error"] {
+  border-color: rgba(255, 157, 92, 0.3);
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.state-badge[data-runtime-phase="exited"] {
+  color: var(--text-dim);
+}
+
 .summary-hero h2 {
   margin: 14px 0 15px;
   font-size: 15px;

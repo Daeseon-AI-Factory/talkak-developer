@@ -453,6 +453,16 @@
   box-shadow: 0 0 8px rgba(95, 226, 237, 0.48);
 }
 
+.terminal-pane[data-runtime-phase="error"] .terminal-pane__status {
+  background: var(--warning);
+  box-shadow: 0 0 8px rgba(255, 157, 92, 0.45);
+}
+
+.terminal-pane[data-runtime-phase="exited"] .terminal-pane__status {
+  background: var(--text-dim);
+  box-shadow: none;
+}
+
 .terminal-pane__profile {
   overflow: hidden;
   color: var(--text-dim);
@@ -508,6 +518,10 @@
 
 .terminal-pane__meta [data-state="ready"] {
   color: var(--accent);
+}
+
+.terminal-pane__meta [data-runtime-phase="error"] {
+  color: var(--warning);
 }
 
 .terminal-pane__body {

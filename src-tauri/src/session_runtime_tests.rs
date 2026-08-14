@@ -1,7 +1,7 @@
 use crate::session_runtime::{
     InitialCursorPositionQuery, OutputBuffer, ReadSessionRequest, ResizeSessionRequest,
-    RuntimeError, SessionIdRequest, SessionRuntime, SpawnSessionRequest, WriteSessionRequest,
-    MAX_OUTPUT_BYTES,
+    RunSessionRequest, RuntimeError, SessionIdRequest, SessionRuntime, SpawnSessionRequest,
+    WriteSessionRequest, MAX_OUTPUT_BYTES,
 };
 use std::sync::mpsc;
 use std::thread;
@@ -81,6 +81,7 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
     runtime
         .write(WriteSessionRequest {
             session_id: "round-trip".into(),
+            run_id: started.run_id,
             data: setup,
         })
         .expect("PTY should accept shell setup input");
@@ -89,6 +90,7 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
     runtime
         .write(WriteSessionRequest {
             session_id: "round-trip".into(),
+            run_id: started.run_id,
             data: input,
         })
         .expect("PTY should accept input");
@@ -96,18 +98,20 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
     runtime
         .resize(ResizeSessionRequest {
             session_id: "round-trip".into(),
+            run_id: started.run_id,
             cols: 100,
             rows: 40,
         })
         .expect("PTY should resize");
 
     let stopped = runtime
-        .kill(SessionIdRequest {
+        .kill(RunSessionRequest {
             session_id: "round-trip".into(),
+            run_id: started.run_id,
         })
         .expect("PTY should stop");
     assert!(!stopped.running);
-    wait_for_read_closed(&runtime, "round-trip");
+    let _ = wait_for_read_closed(&runtime, "round-trip");
 }
 
 #[test]
@@ -115,7 +119,7 @@ fn native_pty_closes_after_command_exits_without_kill() {
     let runtime = SessionRuntime::default();
     let cwd = std::env::current_dir().expect("test working directory should resolve");
     let (command, args) = natural_exit_fixture();
-    runtime
+    let started = runtime
         .spawn(SpawnSessionRequest {
             session_id: "natural-exit".into(),
             cwd: Some(cwd.to_string_lossy().into_owned()),
@@ -126,7 +130,65 @@ fn native_pty_closes_after_command_exits_without_kill() {
         })
         .expect("short-lived PTY command should spawn");
 
-    wait_for_read_closed(&runtime, "natural-exit");
+    assert_eq!(wait_for_read_closed(&runtime, "natural-exit"), Some(7));
+    let stopped = runtime
+        .kill(RunSessionRequest {
+            session_id: "natural-exit".into(),
+            run_id: started.run_id,
+        })
+        .expect("stopping an already exited PTY should be idempotent");
+    assert!(!stopped.running);
+    assert_eq!(stopped.exit_code, Some(7));
+}
+
+#[test]
+fn stale_run_mutations_are_rejected() {
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let started = runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "stale-mutation".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: None,
+            args: vec![],
+            cols: 80,
+            rows: 24,
+        })
+        .expect("PTY should spawn");
+    let stale_run_id = started.run_id + 1;
+
+    assert!(matches!(
+        runtime.write(WriteSessionRequest {
+            session_id: "stale-mutation".into(),
+            run_id: stale_run_id,
+            data: b"ignored".to_vec(),
+        }),
+        Err(RuntimeError::Process(message)) if message == "session run changed"
+    ));
+    assert!(matches!(
+        runtime.resize(ResizeSessionRequest {
+            session_id: "stale-mutation".into(),
+            run_id: stale_run_id,
+            cols: 100,
+            rows: 40,
+        }),
+        Err(RuntimeError::Process(message)) if message == "session run changed"
+    ));
+    assert!(matches!(
+        runtime.kill(RunSessionRequest {
+            session_id: "stale-mutation".into(),
+            run_id: stale_run_id,
+        }),
+        Err(RuntimeError::Process(message)) if message == "session run changed"
+    ));
+
+    runtime
+        .kill(RunSessionRequest {
+            session_id: "stale-mutation".into(),
+            run_id: started.run_id,
+        })
+        .expect("PTY should stop");
+    let _ = wait_for_read_closed(&runtime, "stale-mutation");
 }
 
 #[test]
@@ -159,7 +221,7 @@ fn dropping_a_runtime_with_a_live_session_returns() {
 fn discard_rejects_a_running_session() {
     let runtime = SessionRuntime::default();
     let cwd = std::env::current_dir().expect("test working directory should resolve");
-    runtime
+    let started = runtime
         .spawn(SpawnSessionRequest {
             session_id: "discard-running".into(),
             cwd: Some(cwd.to_string_lossy().into_owned()),
@@ -178,8 +240,9 @@ fn discard_rejects_a_running_session() {
     assert!(matches!(error, RuntimeError::RunningSession(_)));
 
     runtime
-        .kill(SessionIdRequest {
+        .kill(RunSessionRequest {
             session_id: "discard-running".into(),
+            run_id: started.run_id,
         })
         .expect("PTY should stop");
 }
@@ -198,8 +261,9 @@ fn discard_allows_an_exited_session_id_to_start_again() {
     };
     let first = runtime.spawn(request.clone()).expect("PTY should spawn");
     runtime
-        .kill(SessionIdRequest {
+        .kill(RunSessionRequest {
             session_id: request.session_id.clone(),
+            run_id: first.run_id,
         })
         .expect("PTY should stop");
     runtime
@@ -220,8 +284,9 @@ fn discard_allows_an_exited_session_id_to_start_again() {
     assert!(restarted.running);
     assert_ne!(restarted.run_id, first.run_id);
     runtime
-        .kill(SessionIdRequest {
-            session_id: restarted.session_id,
+        .kill(RunSessionRequest {
+            session_id: restarted.session_id.clone(),
+            run_id: restarted.run_id,
         })
         .expect("restarted PTY should stop");
 }
@@ -255,7 +320,7 @@ fn wait_for_output(runtime: &SessionRuntime, session_id: &str, after: u64, needl
     );
 }
 
-fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) {
+fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) -> Option<u32> {
     let deadline = Instant::now() + Duration::from_secs(5);
     while Instant::now() < deadline {
         let read = runtime
@@ -267,7 +332,7 @@ fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) {
         if read.read_closed {
             assert!(!read.running);
             assert!(read.read_error.is_none());
-            return;
+            return read.exit_code;
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -285,7 +350,7 @@ fn default_shell_fixture() -> (Vec<u8>, Vec<u8>, &'static [u8]) {
 
 #[cfg(unix)]
 fn natural_exit_fixture() -> (&'static str, Vec<String>) {
-    ("/bin/sh", vec!["-c".into(), "exit 0".into()])
+    ("/bin/sh", vec!["-c".into(), "exit 7".into()])
 }
 
 #[cfg(windows)]
@@ -301,6 +366,6 @@ fn default_shell_fixture() -> (Vec<u8>, Vec<u8>, &'static [u8]) {
 fn natural_exit_fixture() -> (&'static str, Vec<String>) {
     (
         "cmd.exe",
-        vec!["/D".into(), "/S".into(), "/C".into(), "exit /B 0".into()],
+        vec!["/D".into(), "/S".into(), "/C".into(), "exit /B 7".into()],
     )
 }

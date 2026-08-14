@@ -4,13 +4,15 @@ import { Key } from "webdriverio";
 
 const marker = "TALKAK_WINDOWS_PTY_OK";
 const markerCommand = "echo TALKAK_WINDOWS_PTY_^OK";
+const attentionMarker = "TALKAK_ATTENTION_LOG_OK";
+const attentionMarkerCommand = "echo TALKAK_ATTENTION_LOG_^OK";
 const projectPath = process.env.TALKAK_WINDOWS_PROJECT;
 if (!projectPath || !isAbsolute(projectPath)) {
   throw new Error("TALKAK_WINDOWS_PROJECT must be an absolute external test directory.");
 }
 
 describe("installed Windows product path", () => {
-  it("creates a project, starts a session, exchanges PTY data, splits, and adds a page", async () => {
+  it("exercises PTYs, pages, runtime status, and the real terminal-log attention path", async () => {
     await browser.execute(() => {
       localStorage.clear();
     });
@@ -52,10 +54,55 @@ describe("installed Windows product path", () => {
     assert.equal((await $$('[data-testid="page-tab"]')).length, 2);
     assert.equal((await $$('[data-testid="live-terminal"]')).length, 1);
 
-    await stopVisibleSessions();
+    await pasteTerminalCommand(attentionMarkerCommand);
+    await browser.waitUntil(async () => (await terminalText()).includes(attentionMarker), {
+      timeout: 20_000,
+      timeoutMsg: `PTY did not echo ${attentionMarker}`,
+    });
+    await exitVisibleSession();
+    await (await $('[data-testid="nav-attention"]')).click();
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="runtime-attention-card"]')).length === 1,
+      { timeout: 20_000, timeoutMsg: "The observed PTY exit did not reach Attention" },
+    );
+    await (await $('[data-testid="runtime-attention-card"]')).click();
+    await (await $('[data-testid="open-runtime-terminal"]')).click();
+    const terminalLog = await $('[data-testid="terminal-log-view"]');
+    await terminalLog.waitForExist();
+    await (await terminalLog.$('[data-phase="exited"]')).waitForExist({ timeout: 20_000 });
+    await browser.waitUntil(
+      async () => (await terminalLogText(terminalLog)).includes(attentionMarker),
+      {
+        timeout: 20_000,
+        timeoutMsg: `Terminal log did not retain ${attentionMarker}`,
+      },
+    );
+
     await (await $$('[data-testid="page-tab"]'))[0].click();
     await waitForRunningTerminalCount(2);
     await stopVisibleSessions();
+
+    await (await $('[data-testid="nav-sessions"]')).click();
+    await browser.waitUntil(
+      async () =>
+        (await $$('[data-testid="session-runtime-status"][data-runtime-phase="exited"]')).length ===
+        3,
+      { timeout: 20_000, timeoutMsg: "Sessions did not retain three exited PTY statuses" },
+    );
+    await (await $('[data-testid="nav-attention"]')).click();
+    const remainingNotice = await $$('[data-testid="runtime-attention-card"]');
+    assert.equal(remainingNotice.length, 1);
+    await remainingNotice[0].click();
+    const attentionList = await $('[data-testid="attention-list"]');
+    await (await $('[data-testid="ack-runtime-notice"]')).click();
+    await browser.waitUntil(
+      async () => (await $$('[data-testid="runtime-attention-card"]')).length === 0,
+      { timeout: 20_000, timeoutMsg: "The reviewed PTY notice did not leave Attention" },
+    );
+    await browser.waitUntil(async () => attentionList.isFocused(), {
+      timeout: 20_000,
+      timeoutMsg: "Attention focus did not return to the item list after review",
+    });
   });
 });
 
@@ -80,8 +127,25 @@ async function stopVisibleSessions() {
   }
 }
 
+async function exitVisibleSession() {
+  const phase = await $('[data-testid="runtime-phase"]');
+  const terminalScreen = await $('[data-testid="live-terminal"] .xterm-screen');
+  await terminalScreen.click();
+  await pasteTerminalCommand("exit");
+  await browser.waitUntil(async () => (await phase.getAttribute("data-phase")) === "exited", {
+    timeout: 20_000,
+    timeoutMsg: "A naturally exited PTY did not report its final runtime status",
+  });
+}
+
 async function terminalText() {
   const rows = await $$('[data-testid="live-terminal"] .xterm-rows');
+  const text = await rows.map((row) => row.getText());
+  return text.join("\n");
+}
+
+async function terminalLogText(terminalLog) {
+  const rows = await terminalLog.$$(".terminal-log__host .xterm-rows");
   const text = await rows.map((row) => row.getText());
   return text.join("\n");
 }

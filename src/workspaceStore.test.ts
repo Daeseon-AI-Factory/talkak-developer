@@ -51,6 +51,14 @@ describe("workspace storage", () => {
   it("round-trips page layout and excludes runtime content and launch configuration", () => {
     const storage = memoryStorage();
     const project = localProject();
+    project.sessions[0].runtimeStatus = {
+      phase: "error",
+      runId: 2,
+      exitCode: null,
+      termination: null,
+      fault: { operation: "read", message: "SECRET_RUNTIME_ERROR" },
+      observedAt: "2026-08-14T01:00:00.000Z",
+    };
     const pageWithExtras = {
       id: "page-1",
       title: "Page 1",
@@ -73,6 +81,7 @@ describe("workspace storage", () => {
     expect(serialized).not.toContain("SECRET_ARGUMENT");
     expect(serialized).not.toContain("SECRET_OUTPUT");
     expect(serialized).not.toContain("SECRET_SUMMARY");
+    expect(serialized).not.toContain("SECRET_RUNTIME_ERROR");
     expect(serialized).not.toContain("SECRET_PAGE_DIAGNOSTIC");
     expect(serialized).not.toContain("SECRET_PANE_OUTPUT");
 
@@ -191,6 +200,7 @@ describe("workspace storage", () => {
       }),
     );
     expect(hydrated[0].sessions[0]?.launchRequested).toBe(false);
+    expect(hydrated[0].sessions[0]?.runtimeStatus).toBeNull();
   });
 
   it("reads a legacy v1 snapshot without overwriting or deleting it", () => {
