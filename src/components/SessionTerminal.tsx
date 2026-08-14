@@ -186,6 +186,7 @@ export function SessionTerminal({
           cursorBlink: true,
           fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
           fontSize: 12,
+          screenReaderMode: true,
           scrollback: 5000,
           theme: {
             background: "#071216",

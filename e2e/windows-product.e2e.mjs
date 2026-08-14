@@ -31,10 +31,7 @@ describe("installed Windows product path", () => {
     await startSession.click();
     await waitForRunningTerminalCount(1);
 
-    const terminalScreen = await $('[data-testid="live-terminal"] .xterm-screen');
-    await terminalScreen.waitForClickable();
-    await terminalScreen.click();
-    await pasteTerminalCommand(markerCommand);
+    await typeTerminalCommand(markerCommand);
 
     await browser.waitUntil(async () => (await terminalText()).includes(marker), {
       timeout: 20_000,
@@ -54,7 +51,7 @@ describe("installed Windows product path", () => {
     assert.equal((await $$('[data-testid="page-tab"]')).length, 2);
     assert.equal((await $$('[data-testid="live-terminal"]')).length, 1);
 
-    await pasteTerminalCommand(attentionMarkerCommand);
+    await typeTerminalCommand(attentionMarkerCommand);
     await browser.waitUntil(async () => (await terminalText()).includes(attentionMarker), {
       timeout: 20_000,
       timeoutMsg: `PTY did not echo ${attentionMarker}`,
@@ -129,9 +126,7 @@ async function stopVisibleSessions() {
 
 async function exitVisibleSession() {
   const phase = await $('[data-testid="runtime-phase"]');
-  const terminalScreen = await $('[data-testid="live-terminal"] .xterm-screen');
-  await terminalScreen.click();
-  await pasteTerminalCommand("exit");
+  await typeTerminalCommand("exit");
   await browser.waitUntil(async () => (await phase.getAttribute("data-phase")) === "exited", {
     timeout: 20_000,
     timeoutMsg: "A naturally exited PTY did not report its final runtime status",
@@ -150,9 +145,10 @@ async function terminalLogText(terminalLog) {
   return text.join("\n");
 }
 
-async function pasteTerminalCommand(command) {
-  const input = await $('[data-testid="live-terminal"] .xterm-helper-textarea');
-  await input.waitForExist();
-  await input.addValue(command);
+async function typeTerminalCommand(command) {
+  const terminalScreen = await $('[data-testid="live-terminal"] .xterm-screen');
+  await terminalScreen.waitForClickable();
+  await terminalScreen.click();
+  await browser.keys(command);
   await browser.keys(Key.Enter);
 }
