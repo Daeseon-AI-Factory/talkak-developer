@@ -64,7 +64,7 @@
       calc(12px + env(safe-area-inset-left));
   }
 
-  .app-utilitybar__leading > .shell-control,
+  .app-utilitybar__leading > .shell-control--sidebar-toggle,
   .app-utilitybar__actions > .shell-control--label,
   .preview-mode {
     display: none;

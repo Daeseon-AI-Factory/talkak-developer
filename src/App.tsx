@@ -256,7 +256,7 @@ export default function App() {
         <div className="app-utilitybar">
           <div className="app-utilitybar__leading">
             <button
-              className="shell-control"
+              className="shell-control shell-control--sidebar-toggle"
               type="button"
               aria-label={t("shell.toggleSidebar")}
               title={t("shell.toggleSidebar")}
