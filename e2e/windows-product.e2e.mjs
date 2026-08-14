@@ -1,11 +1,13 @@
 import { strict as assert } from "node:assert";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
 
 const marker = "TALKAK_WINDOWS_PTY_OK";
 const markerCommand = "echo TALKAK_WINDOWS_PTY_^OK";
-const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const projectPath = process.env.TALKAK_WINDOWS_PROJECT;
+if (!projectPath || !isAbsolute(projectPath)) {
+  throw new Error("TALKAK_WINDOWS_PROJECT must be an absolute external test directory.");
+}
 
 describe("installed Windows product path", () => {
   it("creates a project, starts a session, exchanges PTY data, splits, and adds a page", async () => {
@@ -19,7 +21,7 @@ describe("installed Windows product path", () => {
     await addProject.click();
 
     await (await $('[data-testid="project-name"]')).setValue("Windows CI");
-    await (await $('[data-testid="project-path"]')).setValue(repositoryRoot);
+    await (await $('[data-testid="project-path"]')).setValue(projectPath);
     await (await $('[data-testid="save-project"]')).click();
 
     const startSession = await $('[data-testid="start-session-in-page"]');

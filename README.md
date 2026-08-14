@@ -28,9 +28,11 @@ product default. Output replay is memory-bounded and process state is currently 
 After a PTY has fully exited, an explicit restart discards its old replay buffer before reusing the
 session ID. A running session cannot be discarded. The Terminal Log inspector follows each runtime
 run separately and reads only the backend's memory-bounded replay; it does not persist output.
-Persistence, transcript adapters, session recovery, remote access, voice recognition, and message
-sending are not claimed yet. The seeded projects, summaries, attention requests, and conversation
-logs remain visibly preview data.
+Local projects, page layouts, pane focus, generated session metadata, and the active project persist
+without storing terminal output or launch arguments in the workspace snapshot. Running PTY process
+recovery, transcript adapters, remote access, voice recognition, and message sending are not claimed
+yet. The seeded projects, summaries, attention requests, and conversation logs remain visibly preview
+data.
 
 ## Run
 
@@ -74,11 +76,13 @@ the workflow. Pull requests always use ephemeral GitHub-hosted runners so PR cod
 a persistent developer machine.
 
 Both jobs run the renderer checks, Rust lint, and the native PTY round-trip tests. The macOS job
-builds an unsigned `.app`. The Windows job exercises the Windows `cmd.exe`/ConPTY fixture, builds an
-unsigned NSIS installer, and installs it into a clean runner profile. WebdriverIO then drives that
-installed executable through project creation, one-click session start, PTY input/output, split,
-and page creation. The script stops its sessions, runs the NSIS uninstaller, and removes only the
-Windows-CI-specific WebView profile. It never deletes a pre-existing installation or user profile.
+builds an unsigned `.app`. The Windows job first builds the ordinary unsigned NSIS installer,
+clean-installs it, and confirms the installed release process stays running. It then builds a
+separate CI-instrumented NSIS installer. WebdriverIO drives that installed executable through
+project creation in a fresh empty directory outside the checkout, one-click session start, PTY
+input/output, split, and page creation. The scripts stop their sessions, run the NSIS uninstaller,
+and remove only profiles and test directories created by that run. They never delete a pre-existing
+installation or user profile.
 
 The installed-app test uses Tauri's WebdriverIO service and embedded WebDriver plugins behind the
 non-default `webdriver-ci` Cargo feature. Its matching frontend adapter is compiled only in the

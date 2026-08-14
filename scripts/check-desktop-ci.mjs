@@ -23,12 +23,14 @@ const windowsCiConfig = readFileSync(
   resolve(repositoryRoot, "src-tauri/tauri.windows-ci.conf.json"),
   "utf8",
 );
+const windowsE2e = readFileSync(resolve(repositoryRoot, "e2e/windows-product.e2e.mjs"), "utf8");
 const errors = validateDesktopCi(
   workflow,
   smokeScript,
   webdriverConfig,
   webdriverBoundary,
   windowsCiConfig,
+  windowsE2e,
 );
 
 if (errors.length > 0) {

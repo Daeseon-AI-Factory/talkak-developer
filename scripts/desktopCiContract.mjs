@@ -4,6 +4,12 @@ const REQUIRED_TRIGGERS = ["push", "pull_request", "workflow_dispatch"];
 const FORBIDDEN_EVENT_FILTERS = ["branches-ignore", "paths", "paths-ignore", "tags", "tags-ignore"];
 const MAIN_BRANCH_ONLY = ["main"];
 const CONCURRENCY_GROUP = "${{ github.workflow }}-${{ github.ref }}";
+const PINNED_ACTIONS = [
+  "actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+  "pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86",
+  "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+  "dtolnay/rust-toolchain@a5f673d0ba8626c3977bb416a1612774bc82181b",
+];
 
 const JOBS = {
   "macos-product": {
@@ -36,6 +42,8 @@ const JOBS = {
       "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
       "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
       "cargo test --manifest-path src-tauri/Cargo.toml --lib --locked",
+      "pnpm tauri build --bundles nsis --no-sign --ci",
+      "./scripts/verify-windows-package.ps1 -ReleaseSmoke",
       "pnpm tauri build --features webdriver-ci --bundles nsis --no-sign --ci --config src-tauri/tauri.windows-ci.conf.json",
       "./scripts/verify-windows-package.ps1",
     ],
@@ -48,6 +56,7 @@ export function validateDesktopCi(
   webdriverConfigSource = "",
   webdriverBoundarySource = "",
   windowsCiConfigSource = "",
+  windowsE2eSource = "",
 ) {
   const document = parseDocument(workflowSource);
   if (document.errors.length > 0) {
@@ -113,12 +122,45 @@ export function validateDesktopCi(
       if (job["continue-on-error"] === true) errors.push(`${jobId} must remain merge-blocking.`);
 
       const steps = Array.isArray(job.steps) ? job.steps : [];
+      let previousActionIndex = -1;
+      for (const action of PINNED_ACTIONS) {
+        const actionIndexes = steps.flatMap((candidate, index) =>
+          candidate?.uses === action ? [index] : [],
+        );
+        if (actionIndexes.length !== 1) {
+          errors.push(`${jobId} must use pinned action exactly once: ${action}`);
+          continue;
+        }
+        const [actionIndex] = actionIndexes;
+        if (actionIndex <= previousActionIndex) {
+          errors.push(`${jobId} uses pinned actions out of contract order: ${action}`);
+        }
+        previousActionIndex = actionIndex;
+      }
+      for (const step of steps) {
+        if (typeof step?.uses !== "string" || step.uses.startsWith("./")) continue;
+        if (step.uses.startsWith("docker://")) {
+          if (!/^docker:\/\/[^@\s]+@sha256:[0-9a-f]{64}$/u.test(step.uses)) {
+            errors.push(`${jobId} uses a mutable Docker action reference: ${step.uses}`);
+          }
+        } else if (!/@[0-9a-f]{40}$/u.test(step.uses)) {
+          errors.push(`${jobId} uses a mutable action reference: ${step.uses}`);
+        }
+      }
+      let previousCommandIndex = -1;
       for (const command of contract.commands) {
-        const step = steps.find((candidate) => normalizeCommand(candidate?.run) === command);
-        if (!step) {
+        const commandIndex = steps.findIndex(
+          (candidate) => normalizeCommand(candidate?.run) === command,
+        );
+        if (commandIndex < 0) {
           errors.push(`${jobId} is missing command: ${command}`);
           continue;
         }
+        if (commandIndex <= previousCommandIndex) {
+          errors.push(`${jobId} runs commands out of contract order: ${command}`);
+        }
+        previousCommandIndex = commandIndex;
+        const step = steps[commandIndex];
         if (Object.hasOwn(step, "if")) errors.push(`${jobId} conditionally skips: ${command}`);
         if (step["continue-on-error"] === true) {
           errors.push(`${jobId} allows failure for: ${command}`);
@@ -133,8 +175,16 @@ export function validateDesktopCi(
     '"uninstall.exe"',
     '"/S"',
     "TALKAK_WINDOWS_APP",
+    "TALKAK_WINDOWS_PROJECT",
+    "RUNNER_TEMP",
+    "$runnerTempRoot = [System.IO.Path]::GetFullPath($env:RUNNER_TEMP)",
+    "$projectDirectory = [System.IO.Path]::GetFullPath((Join-Path $runnerTempRoot",
+    "$projectDirectory.StartsWith($runnerTempRoot",
+    "$env:TALKAK_WINDOWS_PROJECT = $projectDirectory",
     '"main/talkak-windows-ci"',
+    '"dev.talkak.desktop"',
     "pnpm e2e:windows",
+    "WINDOWS_RELEASE_INSTALL_LAUNCH_OK",
     "WINDOWS_PRODUCT_E2E_OK",
   ];
   for (const fragment of smokeFragments) {
@@ -147,6 +197,17 @@ export function validateDesktopCi(
   for (const fragment of webdriverFragments) {
     if (!webdriverConfigSource.includes(fragment)) {
       errors.push(`Windows WebDriver config is missing: ${fragment}`);
+    }
+  }
+
+  for (const fragment of [
+    'import { isAbsolute } from "node:path";',
+    "process.env.TALKAK_WINDOWS_PROJECT",
+    "!projectPath || !isAbsolute(projectPath)",
+    "setValue(projectPath)",
+  ]) {
+    if (!windowsE2eSource.includes(fragment)) {
+      errors.push(`Windows product E2E is missing: ${fragment}`);
     }
   }
 
