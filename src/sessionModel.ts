@@ -6,6 +6,7 @@ export interface CreateWorkspaceSessionInput {
   title: LocalizedText;
   profile: LocalizedText;
   launchProfile: LaunchProfile;
+  branch: string;
   createdAt: string;
   lastActivity: LocalizedText;
   intro: LocalizedText | null;
@@ -26,7 +27,7 @@ export function createWorkspaceSession(input: CreateWorkspaceSessionInput): DevS
     launchRequested: input.launchRequested,
     state: "idle",
     runtime: { kind: "unconfigured", label: input.profile, shell: "—" },
-    branch: "main",
+    branch: input.branch,
     startedAt: input.createdAt,
     lastActivity: input.lastActivity,
     lines: input.intro ? [{ id: `${input.id}-intro`, tone: "muted", text: input.intro }] : [],

@@ -16,7 +16,7 @@ describe("installed Windows product path", () => {
     });
     await browser.refresh();
 
-    const addProject = await $('[data-testid="add-project"]');
+    const addProject = await $('[data-testid="add-project-global"]');
     await addProject.waitForClickable();
     await addProject.click();
 

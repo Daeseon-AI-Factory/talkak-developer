@@ -503,6 +503,7 @@ function makeSession(
     title: { kind: "session-title", index },
     profile,
     launchProfile: project.launchProfile,
+    branch: project.branch,
     createdAt: new Date().toISOString(),
     lastActivity: { kind: "session-created" },
     intro: { kind: "ready-intro" },

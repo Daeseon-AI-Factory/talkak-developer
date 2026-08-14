@@ -43,6 +43,7 @@ export default function App() {
         title: metadata.title,
         profile: project.launchProfile.label || { kind: "default-profile" },
         launchProfile: project.launchProfile,
+        branch: project.branch,
         createdAt: metadata.createdAt,
         lastActivity: { kind: "session-restored" },
         intro: { kind: "restored-intro" },
@@ -262,6 +263,26 @@ export default function App() {
               onClick={cycleSidebar}
             >
               <Icon name="panel" size={16} />
+            </button>
+            <button
+              className="shell-control"
+              type="button"
+              data-testid="add-project-global"
+              aria-label={t("sidebar.addProject")}
+              title={t("sidebar.addProject")}
+              onClick={projectRegistry.openProjectCreator}
+            >
+              <Icon name="plus" size={16} />
+            </button>
+            <button
+              className="shell-control"
+              type="button"
+              aria-label={t("sidebar.editProject")}
+              title={t("sidebar.editProject")}
+              disabled={activeProject.source !== "local"}
+              onClick={() => projectRegistry.openProjectEditor(activeProject.id)}
+            >
+              <Icon name="settings" size={15} />
             </button>
             <button
               className="command-search"

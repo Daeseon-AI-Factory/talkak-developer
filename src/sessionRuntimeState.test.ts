@@ -7,6 +7,7 @@ const session = createWorkspaceSession({
   title: "Session 1",
   profile: "Default terminal",
   launchProfile: { label: "Local shell", command: null, args: [] },
+  branch: "—",
   createdAt: "2026-08-10T00:00:00.000Z",
   lastActivity: "Created now",
   intro: "",
