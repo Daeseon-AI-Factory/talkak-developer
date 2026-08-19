@@ -208,7 +208,7 @@ describe("session client", () => {
     expect(second).toEqual(restarted);
   });
 
-  it("keeps an exited session while its output reader is still draining", async () => {
+  it("keeps an exited session until its output buffer was observed drained", async () => {
     const draining: SessionSnapshot = {
       sessionId: "session-1",
       runId: 1,
@@ -239,6 +239,58 @@ describe("session client", () => {
     });
 
     expect(result).toEqual(draining);
+  });
+
+  it("restarts a draining session after its output buffer was observed empty", async () => {
+    const draining: SessionSnapshot = {
+      sessionId: "session-1",
+      runId: 1,
+      processId: 42,
+      running: false,
+      exitCode: 0,
+      readClosed: false,
+      readError: null,
+    };
+    const restarted: SessionSnapshot = {
+      sessionId: "session-1",
+      runId: 2,
+      processId: 84,
+      running: true,
+      exitCode: null,
+      readClosed: false,
+      readError: null,
+    };
+    const operations: string[] = [];
+    const client = {
+      available: () => true,
+      snapshot: async () => draining,
+      spawn: async () => {
+        operations.push("spawn");
+        return restarted;
+      },
+      read: async () => uncalled("read"),
+      write: async () => uncalled("write"),
+      resize: async () => uncalled("resize"),
+      kill: async () => uncalled("kill"),
+      discard: async () => {
+        operations.push("discard");
+      },
+    } satisfies SessionClient;
+
+    const result = await createSessionStarter(client)(
+      {
+        sessionId: "session-1",
+        cwd: "/project",
+        command: null,
+        args: [],
+        cols: 80,
+        rows: 24,
+      },
+      true,
+    );
+
+    expect(operations).toEqual(["discard", "spawn"]);
+    expect(result).toEqual(restarted);
   });
 });
 

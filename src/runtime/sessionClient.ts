@@ -83,14 +83,14 @@ export const sessionClient = createSessionClient(invoke, isTauri);
 
 export function createSessionStarter(client: SessionClient) {
   const pending = new Map<string, Promise<SessionSnapshot>>();
-  return (request: SpawnSessionInput): Promise<SessionSnapshot> => {
+  return (request: SpawnSessionInput, replaceDrainingSession = false): Promise<SessionSnapshot> => {
     const current = pending.get(request.sessionId);
     if (current) return current;
     const attempt = client
       .snapshot(request.sessionId)
       .then(async (snapshot) => {
         if (!snapshot) return client.spawn(request);
-        if (snapshot.running || !snapshot.readClosed) return snapshot;
+        if (snapshot.running || (!snapshot.readClosed && !replaceDrainingSession)) return snapshot;
         await client.discard(request.sessionId);
         return client.spawn(request);
       })

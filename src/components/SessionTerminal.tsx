@@ -20,7 +20,13 @@ import {
 } from "../runtime/runtimeOperationGuard";
 import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
-import { partitionTerminalOutput, terminalPollingEnabled } from "../runtime/terminalReplay";
+import {
+  partitionTerminalOutput,
+  terminalOutputDrained,
+  terminalPollingEnabled,
+  terminalReadShouldContinue,
+  terminalRuntimePhase,
+} from "../runtime/terminalReplay";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
 
 const POLL_INTERVAL_MS = 75;
@@ -67,6 +73,7 @@ export function SessionTerminal({
   const [cwd, setCwd] = useState(projectPath);
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
+  const [restartReady, setRestartReady] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const cursorRef = useRef(0);
@@ -104,6 +111,7 @@ export function SessionTerminal({
     setPhase(storedStatus?.phase ?? "checking");
     setError(storedStatus?.fault?.message ?? null);
     setExitCode(storedStatus?.exitCode ?? null);
+    setRestartReady(false);
     cursorRef.current = 0;
     replayThroughRef.current = 0;
     if (!sessionClient.available()) {
@@ -131,16 +139,14 @@ export function SessionTerminal({
           return;
         }
         prepareRuntimeReplay(session.id, snapshot.runId);
+        setRestartReady(!snapshot.running && snapshot.readClosed);
         const previous = currentRuntimeStatus("checking");
         const sameRun = previous.runId === snapshot.runId;
-        const active = snapshot.running || !snapshot.readClosed;
-        const nextPhase = snapshot.readError
-          ? "error"
-          : active
-            ? sameRun && previous.phase === "stopping"
-              ? "stopping"
-              : "running"
-            : "exited";
+        const nextPhase = terminalRuntimePhase(
+          sameRun ? previous.phase : "checking",
+          snapshot.running,
+          snapshot.readError,
+        );
         reportRuntimeStatus(shouldLaunch ? "runtime-event" : "passive-probe", {
           phase: nextPhase,
           runId: snapshot.runId,
@@ -368,14 +374,14 @@ export function SessionTerminal({
           if (!pollIsCurrent()) return;
         }
         const output = Uint8Array.from(read.bytes);
-        const replayThrough =
-          !read.running && read.readClosed ? Number.POSITIVE_INFINITY : replayThroughRef.current;
+        const replayThrough = read.running ? replayThroughRef.current : Number.POSITIVE_INFINITY;
         for (const chunk of partitionTerminalOutput(output, read.start, replayThrough)) {
           if (!pollIsCurrent()) return;
           await writeOutput(chunk.bytes, chunk.suppressProtocolInput);
           if (!pollIsCurrent()) return;
         }
         cursorRef.current = read.next;
+        setRestartReady(terminalOutputDrained(read.running, read.bytes.length));
         observedRuntimeCursors.set(session.id, { runId: read.runId, next: read.next });
         const previous = currentRuntimeStatus(phase);
         const fault = read.readError
@@ -383,35 +389,24 @@ export function SessionTerminal({
           : previous.fault?.operation === "read"
             ? null
             : previous.fault;
-        if (!read.running && read.readClosed) {
-          if (read.bytes.length > 0 && !read.readError) {
-            reportRuntimeStatus("runtime-event", {
-              phase: previous.phase === "stopping" ? "stopping" : "running",
-              runId: read.runId,
-              exitCode: read.exitCode,
-              termination: previous.termination,
-              fault,
-            });
-            timer = window.setTimeout(poll, 0);
-            return;
-          }
-          reportRuntimeStatus("runtime-event", {
-            phase: read.readError ? "error" : "exited",
-            runId: read.runId,
-            exitCode: read.exitCode,
-            termination: previous.termination ?? "observed-exit",
-            fault,
-          });
-          return;
-        }
+        const nextPhase = terminalRuntimePhase(previous.phase, read.running, read.readError);
         reportRuntimeStatus("runtime-event", {
-          phase: previous.phase === "stopping" ? "stopping" : "running",
+          phase: nextPhase,
           runId: read.runId,
           exitCode: read.exitCode,
-          termination: previous.phase === "stopping" ? "requested-stop" : null,
+          termination: !read.running
+            ? (previous.termination ?? "observed-exit")
+            : nextPhase === "stopping"
+              ? "requested-stop"
+              : null,
           fault,
         });
-        timer = window.setTimeout(poll, POLL_INTERVAL_MS);
+        if (terminalReadShouldContinue(read.running, read.readClosed, read.bytes.length)) {
+          timer = window.setTimeout(
+            poll,
+            !read.running && read.bytes.length > 0 ? 0 : POLL_INTERVAL_MS,
+          );
+        }
       } catch (cause: unknown) {
         if (!pollIsCurrent()) return;
         reportRuntimeFault("read", cause, "error");
@@ -489,21 +484,23 @@ export function SessionTerminal({
 
   async function start() {
     const operationEpoch = advanceRuntimeEpoch();
+    setRestartReady(false);
     reportRuntimeStatus("explicit-action", emptyRuntimeStatus("starting"));
     cursorRef.current = 0;
     replayThroughRef.current = 0;
     try {
       const snapshot = await ensureSessionStarted(
         createSessionSpawnInput(session.id, cwd, session.launchProfile),
+        restartReady,
       );
       if (runtimeOperationsRef.current.epoch !== operationEpoch) return;
       prepareRuntimeReplay(session.id, snapshot.runId);
-      const active = snapshot.running || !snapshot.readClosed;
+      const nextPhase = terminalRuntimePhase("starting", snapshot.running, snapshot.readError);
       reportRuntimeStatus("runtime-event", {
-        phase: snapshot.readError ? "error" : active ? "running" : "exited",
+        phase: nextPhase,
         runId: snapshot.runId,
         exitCode: snapshot.exitCode,
-        termination: active ? null : "observed-exit",
+        termination: snapshot.running ? null : "observed-exit",
         fault: snapshot.readError ? { operation: "read", message: snapshot.readError } : null,
       });
     } catch (cause: unknown) {
@@ -526,8 +523,9 @@ export function SessionTerminal({
     try {
       const snapshot = await sessionClient.kill(session.id, runId);
       if (runtimeOperationsRef.current.epoch !== operationEpoch) return;
+      setRestartReady(!snapshot.running && snapshot.readClosed);
       reportRuntimeStatus("runtime-event", {
-        phase: snapshot.readError ? "error" : snapshot.readClosed ? "exited" : "stopping",
+        phase: terminalRuntimePhase("stopping", snapshot.running, snapshot.readError),
         runId: snapshot.runId,
         exitCode: snapshot.exitCode,
         termination: "requested-stop",
@@ -648,8 +646,14 @@ export function SessionTerminal({
           </button>
         ) : null}
         {phase === "exited" ? (
-          <button className="terminal-restart" type="button" onClick={() => void start()}>
-            {t("terminal.restart")}
+          <button
+            className="terminal-restart"
+            type="button"
+            disabled={!restartReady}
+            title={restartReady ? undefined : t("terminal.finishingOutput")}
+            onClick={() => void start()}
+          >
+            {t(restartReady ? "terminal.restart" : "terminal.finishingOutput")}
           </button>
         ) : null}
       </footer>

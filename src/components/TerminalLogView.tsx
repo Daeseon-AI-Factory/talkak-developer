@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { errorMessage, sessionClient } from "../runtime/sessionClient";
 import { initialSessionLogCursor, readSessionLogFrame } from "../runtime/sessionLogModel";
+import { terminalReadShouldContinue } from "../runtime/terminalReplay";
 
 // Exact internal polling intervals, not product latency guarantees.
 const LOG_LIVE_POLL_MS = 200;
@@ -85,9 +86,13 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
             cursor = next.cursor;
             if (next.bytes.length > 0) terminal.write(Uint8Array.from(next.bytes));
             setError(next.readError);
-            const active = next.running || !next.readClosed;
-            setPhase(active ? "running" : "exited");
-            delay = active ? LOG_LIVE_POLL_MS : LOG_IDLE_POLL_MS;
+            setPhase(next.running ? "running" : "exited");
+            const draining = terminalReadShouldContinue(
+              next.running,
+              next.readClosed,
+              next.bytes.length,
+            );
+            delay = draining ? LOG_LIVE_POLL_MS : LOG_IDLE_POLL_MS;
           } catch (cause: unknown) {
             if (disposed) return;
             setError(errorMessage(cause));

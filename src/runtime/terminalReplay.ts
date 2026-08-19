@@ -9,6 +9,28 @@ export function terminalPollingEnabled(phase: TerminalRuntimePhase, background: 
   return phase === "running" || phase === "stopping" || (phase === "exited" && !background);
 }
 
+export function terminalRuntimePhase(
+  previousPhase: TerminalRuntimePhase,
+  running: boolean,
+  readError: string | null,
+): TerminalRuntimePhase {
+  if (readError) return "error";
+  if (!running) return "exited";
+  return previousPhase === "stopping" ? "stopping" : "running";
+}
+
+export function terminalReadShouldContinue(
+  running: boolean,
+  readClosed: boolean,
+  bytesLength: number,
+): boolean {
+  return running || !readClosed || bytesLength > 0;
+}
+
+export function terminalOutputDrained(running: boolean, bytesLength: number): boolean {
+  return !running && bytesLength === 0;
+}
+
 export function partitionTerminalOutput(
   bytes: Uint8Array,
   start: number,

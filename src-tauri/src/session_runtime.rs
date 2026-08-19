@@ -362,8 +362,6 @@ impl SessionRuntime {
             }
             return Err(RuntimeError::Process(error.to_string()));
         }
-        lock(&process.status, "process status")?.running = false;
-        process.close_pty()?;
         process.snapshot()
     }
 

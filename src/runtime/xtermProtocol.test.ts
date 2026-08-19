@@ -1,6 +1,12 @@
 import { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
-import { partitionTerminalOutput, terminalPollingEnabled } from "./terminalReplay";
+import {
+  partitionTerminalOutput,
+  terminalOutputDrained,
+  terminalPollingEnabled,
+  terminalReadShouldContinue,
+  terminalRuntimePhase,
+} from "./terminalReplay";
 
 describe("xterm protocol handling", () => {
   it("answers a cursor-position query with the emulator's actual cursor", async () => {
@@ -43,5 +49,20 @@ describe("xterm protocol handling", () => {
     expect(terminalPollingEnabled("exited", false)).toBe(true);
     expect(terminalPollingEnabled("exited", true)).toBe(false);
     expect(terminalPollingEnabled("idle", false)).toBe(false);
+  });
+
+  it("separates process exit from output-reader drain completion", () => {
+    expect(terminalRuntimePhase("running", false, null)).toBe("exited");
+    expect(terminalRuntimePhase("stopping", false, null)).toBe("exited");
+    expect(terminalRuntimePhase("stopping", true, null)).toBe("stopping");
+    expect(terminalRuntimePhase("running", true, "reader failed")).toBe("error");
+
+    expect(terminalReadShouldContinue(false, false, 0)).toBe(true);
+    expect(terminalReadShouldContinue(false, true, 1)).toBe(true);
+    expect(terminalReadShouldContinue(false, true, 0)).toBe(false);
+    expect(terminalReadShouldContinue(true, false, 0)).toBe(true);
+    expect(terminalOutputDrained(false, 0)).toBe(true);
+    expect(terminalOutputDrained(false, 1)).toBe(false);
+    expect(terminalOutputDrained(true, 0)).toBe(false);
   });
 });

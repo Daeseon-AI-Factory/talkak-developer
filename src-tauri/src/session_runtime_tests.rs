@@ -104,13 +104,13 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
         })
         .expect("PTY should resize");
 
-    let stopped = runtime
+    runtime
         .kill(RunSessionRequest {
             session_id: "round-trip".into(),
             run_id: started.run_id,
         })
         .expect("PTY should stop");
-    assert!(!stopped.running);
+    assert!(wait_for_process_exit(&runtime, "round-trip").is_some());
     let _ = wait_for_read_closed(&runtime, "round-trip");
 }
 
@@ -139,6 +139,32 @@ fn native_pty_closes_after_command_exits_without_kill() {
         .expect("stopping an already exited PTY should be idempotent");
     assert!(!stopped.running);
     assert_eq!(stopped.exit_code, Some(7));
+}
+
+#[test]
+fn native_interactive_shell_reports_exit_without_waiting_for_reader_close() {
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let started = runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "interactive-exit".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: None,
+            args: vec![],
+            cols: 80,
+            rows: 24,
+        })
+        .expect("interactive PTY should spawn");
+
+    runtime
+        .write(WriteSessionRequest {
+            session_id: "interactive-exit".into(),
+            run_id: started.run_id,
+            data: b"exit\r\n".to_vec(),
+        })
+        .expect("interactive PTY should accept exit input");
+
+    assert!(wait_for_process_exit(&runtime, "interactive-exit").is_some());
 }
 
 #[test]
@@ -266,6 +292,7 @@ fn discard_allows_an_exited_session_id_to_start_again() {
             run_id: first.run_id,
         })
         .expect("PTY should stop");
+    assert!(wait_for_process_exit(&runtime, &request.session_id).is_some());
     runtime
         .discard(SessionIdRequest {
             session_id: request.session_id.clone(),
@@ -337,6 +364,23 @@ fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) -> Option<u3
         thread::sleep(Duration::from_millis(10));
     }
     panic!("timed out waiting for stopped PTY reader to close");
+}
+
+fn wait_for_process_exit(runtime: &SessionRuntime, session_id: &str) -> Option<u32> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        let read = runtime
+            .read(ReadSessionRequest {
+                session_id: session_id.into(),
+                after: 0,
+            })
+            .expect("interactive PTY status should remain readable");
+        if !read.running {
+            return read.exit_code;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("timed out waiting for interactive PTY process to exit");
 }
 
 #[cfg(unix)]
