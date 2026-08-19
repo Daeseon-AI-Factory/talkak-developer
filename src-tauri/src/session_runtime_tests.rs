@@ -3,6 +3,7 @@ use crate::session_runtime::{
     RunSessionRequest, RuntimeError, SessionIdRequest, SessionRuntime, SpawnSessionRequest,
     WriteSessionRequest, MAX_OUTPUT_BYTES,
 };
+use crate::session_store::SessionStore;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -381,6 +382,77 @@ fn wait_for_process_exit(runtime: &SessionRuntime, session_id: &str) -> Option<u
         thread::sleep(Duration::from_millis(10));
     }
     panic!("timed out waiting for interactive PTY process to exit");
+}
+
+/// The machine-restart guarantee, on both platforms: a new runtime process over the same store
+/// root finds the previous session's definition and its output. Nothing here reuses the first
+/// runtime's memory — dropping it is what a restart does to the old process.
+#[test]
+fn a_recorded_session_and_its_output_survive_a_new_runtime_over_the_same_root() {
+    let root = std::env::temp_dir().join(format!(
+        "talkak-runtime-restart-{}-{:?}",
+        std::process::id(),
+        thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let (setup, probe, needle) = default_shell_fixture();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+
+    let started = {
+        let runtime = SessionRuntime::with_store(SessionStore::at(&root));
+        assert!(runtime.persists(), "store root should be writable");
+        let started = runtime
+            .spawn(SpawnSessionRequest {
+                session_id: "restart-me".into(),
+                cwd: Some(cwd.to_string_lossy().into_owned()),
+                command: None,
+                args: vec![],
+                cols: 80,
+                rows: 24,
+            })
+            .expect("PTY should spawn");
+        for chunk in [setup, probe] {
+            runtime
+                .write(WriteSessionRequest {
+                    session_id: "restart-me".into(),
+                    run_id: started.run_id,
+                    data: chunk,
+                })
+                .expect("PTY should accept input");
+            thread::sleep(Duration::from_millis(100));
+        }
+        wait_for_output(&runtime, "restart-me", 0, needle);
+        let _ = runtime.kill(RunSessionRequest {
+            session_id: "restart-me".into(),
+            run_id: started.run_id,
+        });
+        started
+    };
+    assert!(started.run_id > 0);
+
+    // A brand-new runtime, exactly as a restarted app would build one.
+    let restarted = SessionRuntime::with_store(SessionStore::at(&root));
+    let restorable = restarted.restorable();
+    assert_eq!(restorable.len(), 1, "one session should be restorable");
+    assert_eq!(restorable[0].session.session_id, "restart-me");
+    assert_eq!(
+        restorable[0].session.cwd.as_deref(),
+        Some(cwd.to_string_lossy().as_ref()),
+        "the working directory must come back so the session can be relaunched in place"
+    );
+    let stored = restarted.stored_output("restart-me");
+    assert!(
+        stored.windows(needle.len()).any(|window| window == needle),
+        "stored output should contain the probe result"
+    );
+
+    // Discarding is the explicit throw-away, so a later restart must not offer it again.
+    restarted
+        .discard(SessionIdRequest {
+            session_id: "restart-me".into(),
+        })
+        .expect_err("a session absent from this runtime cannot be discarded");
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[cfg(unix)]

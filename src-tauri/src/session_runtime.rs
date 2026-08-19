@@ -1,3 +1,4 @@
+use crate::session_store::{now_ms, RestorableSession, SessionStore, StoredSession};
 use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
@@ -123,6 +124,33 @@ impl std::error::Error for RuntimeError {}
 pub(crate) struct SessionRuntime {
     sessions: Mutex<HashMap<String, Arc<SessionProcess>>>,
     next_run_id: Mutex<u64>,
+    store: Arc<SessionStore>,
+}
+
+impl SessionRuntime {
+    /// A runtime whose sessions are recorded under `root`, so a machine restart can bring the
+    /// workspace back. `SessionRuntime::default()` keeps nothing, which is what tests want.
+    pub(crate) fn with_store(store: SessionStore) -> Self {
+        Self {
+            store: Arc::new(store),
+            ..Self::default()
+        }
+    }
+
+    /// Sessions a restart could bring back, newest first.
+    pub(crate) fn restorable(&self) -> Vec<RestorableSession> {
+        self.store.restorable()
+    }
+
+    /// The output kept on disk for a session id, oldest first.
+    pub(crate) fn stored_output(&self, session_id: &str) -> Vec<u8> {
+        self.store.output(session_id)
+    }
+
+    /// Whether session records are being written at all.
+    pub(crate) fn persists(&self) -> bool {
+        self.store.enabled()
+    }
 }
 
 struct SessionProcess {
@@ -251,12 +279,25 @@ impl SessionRuntime {
             running: true,
             ..ProcessStatus::default()
         }));
+        // Recorded before the reader starts so no output can be appended to a session that has no
+        // definition on disk. A store failure must not stop a session the user asked for.
+        let _ = self.store.record(&StoredSession {
+            session_id: request.session_id.clone(),
+            cwd: request.cwd.clone(),
+            command: request.command.clone(),
+            args: request.args.clone(),
+            cols: request.cols,
+            rows: request.rows,
+            started_at_ms: now_ms(),
+        });
+
         if let Err(error) = spawn_reader_thread(
             request.session_id.clone(),
             reader,
             Arc::clone(&output),
             Arc::clone(&status),
             Arc::clone(&writer),
+            Arc::clone(&self.store),
         ) {
             let _ = child.kill();
             return Err(error);
@@ -378,6 +419,9 @@ impl SessionRuntime {
             sessions.remove(&request.session_id)
         };
         drop(removed);
+        // Discard is the explicit "this run is over for good", so its record goes too. A restart
+        // must not offer to bring back a session the user deliberately threw away.
+        self.store.forget(&request.session_id);
         Ok(())
     }
 
@@ -541,6 +585,7 @@ fn spawn_reader_thread(
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
     writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
+    store: Arc<SessionStore>,
 ) -> Result<(), RuntimeError> {
     thread::Builder::new()
         .name(format!("talkak-pty-reader-{session_id}"))
@@ -563,6 +608,9 @@ fn spawn_reader_thread(
                                 }
                             }
                         }
+                        // Recorded before the in-memory append so the on-disk log is never behind
+                        // what the live terminal already showed.
+                        store.append_output(&session_id, &observation.output);
                         if let Ok(mut buffer) = output.lock() {
                             buffer.append(&observation.output);
                         } else {
@@ -581,6 +629,7 @@ fn spawn_reader_thread(
             }
             let trailing = inherited_cursor_query.finish();
             if !trailing.is_empty() {
+                store.append_output(&session_id, &trailing);
                 if let Ok(mut buffer) = output.lock() {
                     buffer.append(&trailing);
                 }
