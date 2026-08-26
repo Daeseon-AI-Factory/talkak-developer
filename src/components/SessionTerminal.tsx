@@ -153,7 +153,10 @@ export function SessionTerminal({
     setError(storedStatus?.fault?.message ?? null);
     setExitCode(storedStatus?.exitCode ?? null);
     setRestartReady(false);
-    cursorRef.current = 0;
+    // Restore the retained cursor HERE, synchronously: the poll loop's first read fires before
+    // any async attach work resolves, and a read sent with cursor 0 replays the whole buffer
+    // into an emulator that already shows it — the exact crawl retention exists to remove.
+    cursorRef.current = retainedTerminal(session.id)?.cursor ?? 0;
     replayThroughRef.current = 0;
     if (!sessionClient.available()) {
       reportRuntimeStatus("passive-probe", emptyRuntimeStatus("unavailable"));
@@ -176,8 +179,16 @@ export function SessionTerminal({
         if (cancelled || runtimeOperationsRef.current.epoch !== snapshotEpoch) return;
         if (!snapshot) {
           observedRuntimeCursors.delete(session.id);
+          releaseTerminal(session.id);
           reportRuntimeStatus("passive-probe", emptyRuntimeStatus("idle"));
           return;
+        }
+        // A retained buffer from another run must not sit under this one: drop it and rewind, so
+        // the new run paints from its own byte zero into a fresh emulator.
+        const kept = retainedTerminal(session.id);
+        if (kept && kept.runId !== null && kept.runId !== snapshot.runId) {
+          releaseTerminal(session.id);
+          cursorRef.current = 0;
         }
         prepareRuntimeReplay(session.id, snapshot.runId, snapshot.next);
         setRestartReady(!snapshot.running && snapshot.readClosed);
@@ -243,7 +254,8 @@ export function SessionTerminal({
           terminal = kept.terminal;
           fitAddon = kept.fitAddon;
           hostRef.current.appendChild(kept.terminal.element);
-          cursorRef.current = kept.cursor;
+          // The cursor was already restored synchronously at mount; touching it here would race
+          // a poll that has since advanced past it and duplicate the delta.
         } else {
           if (kept) releaseTerminal(session.id);
           terminal = new Terminal({
