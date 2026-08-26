@@ -9,3 +9,5 @@ src-tauri/icons/ios/
 .env
 .env.*
 !.env.example
+src-tauri/binaries/
+session-broker/target/
