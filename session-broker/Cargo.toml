@@ -2,18 +2,26 @@
 name = "talkak-dev-broker"
 version = "0.1.0"
 edition = "2021"
-description = "Talkak cross-platform persistent terminal session broker — owns PTYs in a detached process so terminal sessions survive the app closing, and serves spawn/attach/write/resize/capture/kill over a local transport. macOS unix socket first; Windows named pipe + ConPTY next (portable-pty already abstracts both). See docs/design-windows-session-broker-2026-07-06.md."
+description = "Talkak Dev persistent terminal session broker — the app's session engine (PTY runtime + on-disk store) hosted in a detached process, so terminal sessions and the agents in them survive the app closing. The app talks to it over a unix socket (macOS/Linux) or named pipe (Windows) using the engine's own request/response structs."
 
 [[bin]]
 name = "talkak-dev-broker"
 path = "src/main.rs"
+required-features = ["server"]
 
 [lib]
 name = "session_broker"
 path = "src/lib.rs"
 
+[features]
+default = ["server"]
+server = ["dep:tokio"]
+
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "sync", "time"] }
 portable-pty = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "net", "sync", "time"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"

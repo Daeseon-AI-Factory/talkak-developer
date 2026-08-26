@@ -1,12 +1,18 @@
-//! Broker binary entrypoint. Runs the transport server against a fresh `Broker`.
+//! Broker binary entrypoint.
 //!
-//! Usage: `talkak-dev-broker [endpoint]` — a unix socket path (macOS/Unix) or a named-pipe name
-//! (Windows). The app launches this DETACHED (`detach::spawn_detached`) so sessions survive the app.
+//! Usage: `talkak-dev-broker [endpoint] [store_dir]` — endpoint is a unix socket path
+//! (macOS/Linux) or a named-pipe name (Windows); store_dir is where session records and output
+//! logs are written (the app passes its own app-data sessions directory, so the broker continues
+//! the exact store the app used in-process). The app launches this DETACHED
+//! (`detach::spawn_detached`) so sessions survive the app.
 
+use session_broker::runtime::SessionRuntime;
+use session_broker::store::SessionStore;
 use std::sync::Arc;
 
 fn main() {
     let endpoint = std::env::args().nth(1).unwrap_or_else(default_endpoint);
+    let store_dir = std::env::args().nth(2);
 
     // Unix needs the socket's parent dir; a Windows pipe name has no filesystem parent.
     #[cfg(unix)]
@@ -14,27 +20,36 @@ fn main() {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    let runtime = match tokio::runtime::Runtime::new() {
+    let runtime = match &store_dir {
+        Some(dir) => SessionRuntime::with_store(SessionStore::at(std::path::PathBuf::from(dir))),
+        None => SessionRuntime::default(),
+    };
+
+    let tokio_runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("session-broker: failed to start runtime: {e}");
             std::process::exit(1);
         }
     };
-    let broker = Arc::new(session_broker::Broker::new());
+    let runtime = Arc::new(runtime);
     eprintln!(
-        "session-broker {} listening on {endpoint}",
+        "talkak-dev-broker {} listening on {endpoint}",
         env!("CARGO_PKG_VERSION")
     );
 
     let result = {
         #[cfg(unix)]
         {
-            runtime.block_on(session_broker::server::serve_unix(&endpoint, broker))
+            tokio_runtime.block_on(session_broker::server::serve_unix(
+                &endpoint, runtime, store_dir,
+            ))
         }
         #[cfg(windows)]
         {
-            runtime.block_on(session_broker::server::serve_pipe(&endpoint, broker))
+            tokio_runtime.block_on(session_broker::server::serve_pipe(
+                &endpoint, runtime, store_dir,
+            ))
         }
     };
     if let Err(e) = result {

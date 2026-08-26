@@ -1,86 +1,61 @@
-//! Wire protocol — line-delimited JSON over the transport (unix socket on macOS, named pipe on
-//! Windows). Ids are app-supplied stable pane/session ids so they survive reattach.
+//! Wire protocol: newline-delimited JSON, strict request→response lockstep on one connection.
+//!
+//! The messages ARE the engine's own request/response structs, so the contract the renderer
+//! already depends on (run_id validation, read start/next/truncated replay, exit codes) crosses
+//! the process boundary without translation — the app client forwards, the broker executes.
 
+use crate::runtime::{
+    ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
+    SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+};
+use crate::store::RestorableSession;
 use serde::{Deserialize, Serialize};
 
-/// Client → broker. `method` tags the variant. Serialize (client sends) + Deserialize (broker reads).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "method", rename_all = "snake_case")]
+pub const PROTOCOL_VERSION: u32 = 1;
+
+// Adjacent tagging: internal tagging cannot represent variants whose payload is not a map
+// (Option, Vec, bool) — serialization fails at runtime, which read as a dropped connection.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum Request {
-    /// Handshake; the broker replies with its version + pid.
-    Hello { proto_version: u32 },
-    /// Create a session (no-op if `session_id` is already live → idempotent reattach).
-    Spawn {
-        session_id: String,
-        program: String,
-        #[serde(default)]
-        args: Vec<String>,
-        #[serde(default)]
-        cwd: Option<String>,
-        #[serde(default)]
-        env: Vec<(String, String)>,
-        #[serde(default)]
-        cols: u16,
-        #[serde(default)]
-        rows: u16,
+    /// First request on a connection. The broker answers with its identity so a client can refuse
+    /// a stale broker left over from a previous app version.
+    Hello {
+        protocol_version: u32,
     },
-    /// Subscribe this connection to a session's output. Buffered scrollback is replayed first.
-    Attach { session_id: String },
-    /// Write bytes (as a UTF-8 string) to the session's PTY.
-    Write { session_id: String, data: String },
-    /// Resize the session's PTY.
-    Resize {
-        session_id: String,
-        cols: u16,
-        rows: u16,
-    },
-    /// List live sessions (the introspection surface that replaces tmux `list-sessions`/`pane_pid`).
-    List,
-    /// Return the last `lines` of a session's scrollback (replaces tmux `capture-pane`). `0` = all.
-    Capture { session_id: String, lines: usize },
-    /// Terminate a session and drop it from the registry.
-    Kill { session_id: String },
+    Spawn(SpawnSessionRequest),
+    Snapshot(SessionIdRequest),
+    Read(ReadSessionRequest),
+    Write(WriteSessionRequest),
+    Resize(ResizeSessionRequest),
+    Kill(RunSessionRequest),
+    Discard(SessionIdRequest),
+    Restorable,
+    StoredOutput(SessionIdRequest),
+    Persists,
+    /// Ask the broker to exit once this connection closes, sessions or not. The upgrade path:
+    /// a client that finds a protocol mismatch shuts the old broker down and spawns its own.
+    Shutdown,
 }
 
-/// Broker → client. `type` tags the variant. Serialize (broker sends) + Deserialize (client reads).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "body", rename_all = "snake_case")]
 pub enum Response {
     Hello {
+        protocol_version: u32,
         broker_version: String,
         pid: u32,
+        store_dir: Option<String>,
     },
-    Spawned {
-        session_id: String,
-        child_pid: Option<u32>,
-    },
-    Ok,
-    /// A chunk of session output (streamed after `attach`).
-    Output {
-        session_id: String,
-        data: String,
-    },
-    /// The session's PTY reached EOF / was killed.
-    Closed {
-        session_id: String,
-    },
-    List {
-        sessions: Vec<SessionInfo>,
-    },
-    /// Scrollback tail for a `Capture` request.
-    Captured {
-        session_id: String,
-        text: String,
-    },
+    Snapshot(SessionSnapshot),
+    MaybeSnapshot(Option<SessionSnapshot>),
+    Read(SessionRead),
+    Restorable(Vec<RestorableSession>),
+    Bytes(Vec<u8>),
+    Persists(bool),
+    Unit,
+    ShuttingDown,
     Error {
         message: String,
     },
-}
-
-/// One row of `List` — the introspection data consumers need (pid, running command, liveness).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionInfo {
-    pub session_id: String,
-    pub child_pid: Option<u32>,
-    pub alive: bool,
 }

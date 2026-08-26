@@ -1,235 +1,139 @@
-//! macOS/Unix transport: a unix-domain-socket server. Each connection is full-duplex — the client
-//! streams requests (spawn/attach/write/resize/kill) in, and the broker streams responses + live
-//! session output back. Windows will add a named-pipe transport behind the same request loop.
+//! Transport server: newline-delimited JSON in strict request→response lockstep.
+//!
+//! The renderer POLLS `read(after)` — there is no push stream — so every connection is a plain
+//! request/response loop and the named-pipe hazard the original broker had to design around
+//! (a blocking reader starving a concurrent writer on one pipe object) cannot occur: the client
+//! never reads and writes at the same time.
+//!
+//! Exit policy: when a connection closes and no child is running, the broker exits. The app
+//! reconnects (or respawns the broker) on its next command, so an empty broker never outlives
+//! its usefulness; one with live sessions survives any number of app restarts.
 
-use crate::broker::Broker;
-use crate::protocol::{Request, Response};
-use crate::session::SpawnSpec;
+use crate::protocol::{Request, Response, PROTOCOL_VERSION};
+use crate::runtime::SessionRuntime;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::sync::mpsc;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
-pub const BROKER_VERSION: &str = env!("CARGO_PKG_VERSION");
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// macOS/Unix transport. Serve until cancelled. `socket_path` must not already exist (a stale one
-/// is unlinked first). `handle_connection` is transport-agnostic, so Windows reuses it verbatim.
-#[cfg(unix)]
-pub async fn serve_unix(socket_path: &str, broker: Arc<Broker>) -> std::io::Result<()> {
-    let _ = std::fs::remove_file(socket_path); // clear a stale socket from a prior run
-    let listener = tokio::net::UnixListener::bind(socket_path)?;
-    loop {
-        let (stream, _addr) = listener.accept().await?;
-        let broker = broker.clone();
-        tokio::spawn(async move {
-            let _ = handle_connection(stream, broker).await;
-        });
+pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&str>) -> Response {
+    fn reply<T>(
+        result: Result<T, crate::runtime::RuntimeError>,
+        ok: impl FnOnce(T) -> Response,
+    ) -> Response {
+        match result {
+            Ok(value) => ok(value),
+            Err(error) => Response::Error {
+                message: error.to_string(),
+            },
+        }
+    }
+
+    match request {
+        Request::Hello {
+            protocol_version: _,
+        } => Response::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            broker_version: env!("CARGO_PKG_VERSION").to_string(),
+            pid: std::process::id(),
+            store_dir: store_dir.map(str::to_string),
+        },
+        Request::Spawn(spawn) => reply(runtime.spawn(spawn), Response::Snapshot),
+        Request::Snapshot(id) => reply(runtime.snapshot(id), Response::MaybeSnapshot),
+        Request::Read(read) => reply(runtime.read(read), Response::Read),
+        Request::Write(write) => reply(runtime.write(write), |()| Response::Unit),
+        Request::Resize(resize) => reply(runtime.resize(resize), |()| Response::Unit),
+        Request::Kill(run) => reply(runtime.kill(run), Response::Snapshot),
+        Request::Discard(id) => reply(runtime.discard(id), |()| Response::Unit),
+        Request::Restorable => Response::Restorable(runtime.restorable()),
+        Request::StoredOutput(id) => Response::Bytes(runtime.stored_output(&id.session_id)),
+        Request::Persists => Response::Persists(runtime.persists()),
+        Request::Shutdown => {
+            SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
+            Response::ShuttingDown
+        }
     }
 }
 
-/// Windows transport — a named pipe. Each accepted client instance is handed to the SAME
-/// `handle_connection` (it's generic over `AsyncRead + AsyncWrite`); a fresh server instance is
-/// created for the next client. `pipe_name` is like `\\.\pipe\talkak-broker-<user>`.
-#[cfg(windows)]
-pub async fn serve_pipe(pipe_name: &str, broker: Arc<Broker>) -> std::io::Result<()> {
-    use tokio::net::windows::named_pipe::ServerOptions;
-    let mut server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(pipe_name)?;
-    loop {
-        // Wait for a client to connect to THIS instance.
-        server.connect().await?;
-        let connected = server;
-        // Pre-create the next instance so a new client is never rejected while we handle this one.
-        server = ServerOptions::new().create(pipe_name)?;
-        let broker = broker.clone();
-        tokio::spawn(async move {
-            let _ = handle_connection(connected, broker).await;
-        });
-    }
-}
-
-/// One client connection. Reads line-delimited JSON requests; a single writer task serializes all
-/// responses (RPC replies + attached output frames) back so writes never interleave.
-pub async fn handle_connection<S>(stream: S, broker: Arc<Broker>) -> std::io::Result<()>
+async fn serve_connection<S>(stream: S, runtime: Arc<SessionRuntime>, store_dir: Option<String>)
 where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + 'static,
+    S: AsyncRead + AsyncWrite + Unpin,
 {
     let (read_half, mut write_half) = tokio::io::split(stream);
-    let (to_client, mut from_tasks) = mpsc::channel::<Response>(1024);
-
-    // Single writer: everything the broker sends this client goes through here.
-    let writer = tokio::spawn(async move {
-        while let Some(resp) = from_tasks.recv().await {
-            let mut line = match serde_json::to_string(&resp) {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            line.push('\n');
-            if write_half.write_all(line.as_bytes()).await.is_err() {
-                break;
-            }
-            let _ = write_half.flush().await;
-        }
-    });
-
     let mut lines = BufReader::new(read_half).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         if line.trim().is_empty() {
             continue;
         }
-        let req: Request = match serde_json::from_str(&line) {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = to_client
-                    .send(Response::Error {
-                        message: format!("bad request: {e}"),
-                    })
-                    .await;
-                continue;
-            }
+        let response = match serde_json::from_str::<Request>(&line) {
+            Ok(request) => dispatch(request, &runtime, store_dir.as_deref()),
+            Err(error) => Response::Error {
+                message: format!("bad request: {error}"),
+            },
         };
-        dispatch(req, &broker, &to_client).await;
+        let mut encoded = serde_json::to_vec(&response).unwrap_or_else(|error| {
+            // An unencodable reply must surface as an error the client can read, never as a
+            // silently dropped connection.
+            format!(r#"{{"type":"error","body":{{"message":"unencodable response: {error}"}}}}"#)
+                .into_bytes()
+        });
+        encoded.push(b'\n');
+        if write_half.write_all(&encoded).await.is_err() {
+            break;
+        }
+        let _ = write_half.flush().await;
     }
-
-    drop(to_client);
-    let _ = writer.await;
-    Ok(())
 }
 
-async fn dispatch(req: Request, broker: &Arc<Broker>, to_client: &mpsc::Sender<Response>) {
-    match req {
-        Request::Hello { .. } => {
-            let _ = to_client
-                .send(Response::Hello {
-                    broker_version: BROKER_VERSION.to_string(),
-                    pid: std::process::id(),
-                })
-                .await;
-        }
-        Request::Spawn {
-            session_id,
-            program,
-            args,
-            cwd,
-            env,
-            cols,
-            rows,
-        } => {
-            let spec = SpawnSpec {
-                session_id: session_id.clone(),
-                program,
-                args,
-                cwd,
-                env,
-                cols,
-                rows,
-            };
-            match broker.spawn(spec) {
-                Ok(s) => {
-                    let _ = to_client
-                        .send(Response::Spawned {
-                            session_id,
-                            child_pid: s.child_pid,
-                        })
-                        .await;
-                }
-                Err(message) => {
-                    let _ = to_client.send(Response::Error { message }).await;
-                }
-            }
-        }
-        Request::Attach { session_id } => match broker.get(&session_id) {
-            Some(session) => {
-                let (scrollback, mut rx) = session.attach();
-                if !scrollback.is_empty() {
-                    let _ = to_client
-                        .send(Response::Output {
-                            session_id: session_id.clone(),
-                            data: scrollback,
-                        })
-                        .await;
-                }
-                let to_client = to_client.clone();
-                tokio::spawn(async move {
-                    loop {
-                        match rx.recv().await {
-                            Ok(data) => {
-                                if to_client
-                                    .send(Response::Output {
-                                        session_id: session_id.clone(),
-                                        data,
-                                    })
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
-                                }
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                            Err(_) => {
-                                let _ = to_client
-                                    .send(Response::Closed {
-                                        session_id: session_id.clone(),
-                                    })
-                                    .await;
-                                break;
-                            }
-                        }
-                    }
-                });
-            }
-            None => {
-                let _ = to_client
-                    .send(Response::Error {
-                        message: format!("no such session: {session_id}"),
-                    })
-                    .await;
-            }
-        },
-        // Write/Resize are FIRE-AND-FORGET (no reply). This lets the client's write connection be
-        // write-only — critical on Windows, where a synchronous named-pipe handle deadlocks if it has
-        // a concurrent blocking read (for a reply) + write (2026-07-08 audit 1B). A failed write just
-        // means an unresponsive pane, which is self-evident.
-        Request::Write { session_id, data } => {
-            if let Some(s) = broker.get(&session_id) {
-                let _ = s.write(data.as_bytes());
-            }
-        }
-        Request::Resize {
-            session_id,
-            cols,
-            rows,
-        } => {
-            if let Some(s) = broker.get(&session_id) {
-                let _ = s.resize(cols, rows);
-            }
-        }
-        Request::List => {
-            let _ = to_client
-                .send(Response::List {
-                    sessions: broker.list(),
-                })
-                .await;
-        }
-        Request::Capture { session_id, lines } => {
-            let resp = match broker.get(&session_id) {
-                Some(s) => Response::Captured {
-                    session_id,
-                    text: s.capture(lines),
-                },
-                None => Response::Error {
-                    message: format!("no such session: {session_id}"),
-                },
-            };
-            let _ = to_client.send(resp).await;
-        }
-        Request::Kill { session_id } => {
-            let _ = to_client
-                .send(match broker.kill(&session_id) {
-                    Ok(()) => Response::Closed { session_id },
-                    Err(message) => Response::Error { message },
-                })
-                .await;
-        }
+fn exit_if_idle(runtime: &SessionRuntime) {
+    if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) || !runtime.has_running_sessions() {
+        std::process::exit(0);
+    }
+}
+
+#[cfg(unix)]
+pub async fn serve_unix(
+    socket_path: &str,
+    runtime: Arc<SessionRuntime>,
+    store_dir: Option<String>,
+) -> std::io::Result<()> {
+    // Refuse to steal a live broker's endpoint: only unlink when nothing answers it.
+    if tokio::net::UnixStream::connect(socket_path).await.is_ok() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "another broker is already serving this socket",
+        ));
+    }
+    let _ = std::fs::remove_file(socket_path);
+    let listener = tokio::net::UnixListener::bind(socket_path)?;
+    loop {
+        let (stream, _) = listener.accept().await?;
+        serve_connection(stream, Arc::clone(&runtime), store_dir.clone()).await;
+        exit_if_idle(&runtime);
+    }
+}
+
+#[cfg(windows)]
+pub async fn serve_pipe(
+    pipe_name: &str,
+    runtime: Arc<SessionRuntime>,
+    store_dir: Option<String>,
+) -> std::io::Result<()> {
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    // first_pipe_instance makes the bind race explicit: the second broker process errors out
+    // instead of silently splitting the session namespace.
+    let mut server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(pipe_name)?;
+    loop {
+        server.connect().await?;
+        let connected = server;
+        // The next instance exists before this connection is served, so a client arriving
+        // mid-conversation is queued by the OS instead of rejected.
+        server = ServerOptions::new().create(pipe_name)?;
+        serve_connection(connected, Arc::clone(&runtime), store_dir.clone()).await;
+        exit_if_idle(&runtime);
     }
 }
