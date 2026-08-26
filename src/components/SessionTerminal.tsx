@@ -1,3 +1,4 @@
+import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import type {
@@ -33,6 +34,13 @@ import {
 } from "../runtime/terminalReplay";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
 import { attachTerminalClipboard } from "../terminalClipboard";
+import {
+  releaseTerminal,
+  resetRetainedRun,
+  retainTerminal,
+  retainedTerminal,
+  updateRetainedCursor,
+} from "../terminalInstances";
 import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
 
 const POLL_INTERVAL_MS = 75;
@@ -91,6 +99,9 @@ export function SessionTerminal({
   const outputWriterRef = useRef<TerminalOutputWriter | null>(null);
   const suppressProtocolInputRef = useRef(false);
   const terminalAttachFailedRef = useRef(false);
+  // Wakes the poll loop right after a write lands, so a keystroke's echo pays one RPC round-trip
+  // instead of waiting out the poll interval — typing latency, not throughput.
+  const pollKickRef = useRef<(() => void) | null>(null);
   const focusedRef = useRef(focused);
   const launchRequestedRef = useRef(session.launchRequested === true);
   const launchHandledRef = useRef(onLaunchHandled);
@@ -217,18 +228,38 @@ export function SessionTerminal({
     void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
       .then(([{ Terminal }, { FitAddon }]) => {
         if (disposed || !hostRef.current) return;
-        const terminal = new Terminal({
-          convertEol: false,
-          cursorBlink: true,
-          fontFamily: TERMINAL_FONT_FAMILY,
-          fontSize: 12,
-          screenReaderMode: true,
-          scrollback: 5000,
-          theme: TERMINAL_THEME,
-        });
-        const fitAddon = new FitAddon();
-        terminal.loadAddon(fitAddon);
-        terminal.open(hostRef.current);
+        // Reuse the retained emulator when its buffer belongs to the current run: the pane comes
+        // back exactly as it looked and reads only the bytes that arrived while it was away —
+        // no replay, no crawl. A different (or unknown-yet-different) run starts clean.
+        const kept = retainedTerminal(session.id);
+        const currentRunId = runtimeStatusRef.current?.runId ?? null;
+        let terminal: XTerm;
+        let fitAddon: FitAddon;
+        const reusable =
+          kept !== undefined &&
+          kept.terminal.element != null &&
+          (currentRunId === null || kept.runId === currentRunId);
+        if (kept && reusable && kept.terminal.element) {
+          terminal = kept.terminal;
+          fitAddon = kept.fitAddon;
+          hostRef.current.appendChild(kept.terminal.element);
+          cursorRef.current = kept.cursor;
+        } else {
+          if (kept) releaseTerminal(session.id);
+          terminal = new Terminal({
+            convertEol: false,
+            cursorBlink: true,
+            fontFamily: TERMINAL_FONT_FAMILY,
+            fontSize: 12,
+            screenReaderMode: true,
+            scrollback: 5000,
+            theme: TERMINAL_THEME,
+          });
+          fitAddon = new FitAddon();
+          terminal.loadAddon(fitAddon);
+          terminal.open(hostRef.current);
+          retainTerminal(session.id, { terminal, fitAddon, runId: currentRunId, cursor: 0 });
+        }
         attachTerminalClipboard(terminal, platformFromUserAgent(navigator.userAgent));
         terminalRef.current = terminal;
         let writeChain = Promise.resolve();
@@ -267,6 +298,8 @@ export function SessionTerminal({
             JSON.stringify([session.id, runId, "write"]),
             async () => {
               await sessionClient.write(session.id, runId, bytes);
+              // The echo is already in the engine buffer; read it now, not a poll tick later.
+              pollKickRef.current?.();
             },
             (cause) => {
               if (
@@ -345,7 +378,9 @@ export function SessionTerminal({
           observer.disconnect();
           sendInput.dispose();
           sendResize.dispose();
-          terminal.dispose();
+          // Detach, never dispose: the emulator and its buffer stay retained for this session so
+          // the pane returns without replaying. releaseTerminal() is the only place that disposes.
+          terminal.element?.remove();
           terminalRef.current = null;
         };
       })
@@ -383,12 +418,15 @@ export function SessionTerminal({
     if (!terminalPollingEnabled(phase, background)) return;
     let cancelled = false;
     let timer: number | undefined;
+    let inFlight = false;
+    let kicked = false;
     const pollEpoch = runtimeOperationsRef.current.epoch;
 
     const pollIsCurrent = () => !cancelled && runtimeOperationsRef.current.epoch === pollEpoch;
 
     const poll = async () => {
-      if (!pollIsCurrent()) return;
+      if (!pollIsCurrent() || inFlight) return;
+      inFlight = true;
       try {
         const read = await sessionClient.read(session.id, cursorRef.current);
         if (!pollIsCurrent()) return;
@@ -407,6 +445,7 @@ export function SessionTerminal({
           if (!pollIsCurrent()) return;
         }
         cursorRef.current = read.next;
+        updateRetainedCursor(session.id, read.runId, read.next);
         setRestartReady(terminalOutputDrained(read.running, read.bytes.length));
         observedRuntimeCursors.set(session.id, { runId: read.runId, next: read.next });
         const previous = currentRuntimeStatus(phase);
@@ -428,20 +467,34 @@ export function SessionTerminal({
           fault,
         });
         if (terminalReadShouldContinue(read.running, read.readClosed, read.bytes.length)) {
-          timer = window.setTimeout(
-            poll,
-            nextReadDelayMs(read.running, read.bytes.length, POLL_INTERVAL_MS),
-          );
+          const delay = kicked
+            ? 0
+            : nextReadDelayMs(read.running, read.bytes.length, POLL_INTERVAL_MS);
+          kicked = false;
+          timer = window.setTimeout(poll, delay);
         }
       } catch (cause: unknown) {
         if (!pollIsCurrent()) return;
         reportRuntimeFault("read", cause, "error");
+      } finally {
+        inFlight = false;
       }
+    };
+
+    pollKickRef.current = () => {
+      if (!pollIsCurrent()) return;
+      if (inFlight) {
+        kicked = true;
+        return;
+      }
+      if (timer !== undefined) window.clearTimeout(timer);
+      void poll();
     };
 
     void poll();
     return () => {
       cancelled = true;
+      if (pollKickRef.current) pollKickRef.current = null;
       if (timer !== undefined) window.clearTimeout(timer);
     };
   }, [background, phase, session.id, t]);
@@ -525,6 +578,10 @@ export function SessionTerminal({
         restartReady,
       );
       if (runtimeOperationsRef.current.epoch !== operationEpoch) return;
+      // A fresh run must not append below the previous run's screen: clear the retained emulator
+      // and rewind its cursor before the new run's bytes arrive.
+      terminalRef.current?.reset();
+      resetRetainedRun(session.id, snapshot.runId);
       prepareRuntimeReplay(session.id, snapshot.runId, snapshot.next);
       const nextPhase = terminalRuntimePhase("starting", snapshot.running, snapshot.readError);
       reportRuntimeStatus("runtime-event", {
