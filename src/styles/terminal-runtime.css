@@ -35,6 +35,11 @@
   display: grid;
   align-content: center;
   gap: 12px;
+  /* This element also carries .terminal-pane__body, which is fixed-width because it normally holds
+     terminal output. The launcher holds none: it is a form with labels, a button and a sentence,
+     and Korean prose in a fixed-width face reads as evenly spaced rubble. The working-directory
+     input, the profile name and the command below keep --mono, because those are paths and code. */
+  font-family: var(--sans);
 }
 
 .terminal-launcher__preview {
@@ -52,7 +57,7 @@
   color: var(--text-dim);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.03em;
+  letter-spacing: calc(0.03em * var(--tracking));
 }
 
 .terminal-launcher__target {
@@ -70,7 +75,7 @@
 
 .terminal-launcher__target strong {
   color: var(--text-secondary);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
 }
 
@@ -139,10 +144,10 @@
 
 .live-label {
   color: var(--success);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 7px;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: calc(0.1em * var(--tracking));
 }
 
 .terminal-stop {

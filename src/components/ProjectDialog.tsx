@@ -80,14 +80,23 @@ function ProjectDialogForm({ project, onClose, onSave }: Omit<ProjectDialogProps
     setBusy(true);
     setError(null);
     try {
+      const normalizedCommand = command.trim() || null;
       if (desktopAvailable) {
         const validation = await projectClient.validatePath(nextPath);
         if (!validation.valid) {
           setError(pathIssueMessage(validation.reason, t));
           return;
         }
+        // The command is checked here for the same reason the folder is: an executable that
+        // resolves nowhere must fail in this dialog, not as a raw OS error inside a pane.
+        if (normalizedCommand) {
+          const commandValidation = await projectClient.validateCommand(normalizedCommand);
+          if (!commandValidation.valid) {
+            setError(t("projectDialog.commandNotFound"));
+            return;
+          }
+        }
       }
-      const normalizedCommand = command.trim() || null;
       onSave({
         name: nextName,
         description: description.trim(),

@@ -7,7 +7,7 @@ import {
   listPanes,
 } from "../layoutModel";
 import type { DesktopPlatform } from "../platform";
-import { shortcutDisplay } from "../shortcutRegistry";
+import { shortcutDisplay, shortcutPairDisplay } from "../shortcutRegistry";
 import { countSessions } from "../workspaceModel";
 import { Icon } from "./Icon";
 import { Inspector } from "./Inspector";
@@ -131,8 +131,7 @@ export function Workspace({
             onClosePage={onClosePage}
             onMovePaneToPage={onMovePaneToPage}
             addShortcut={shortcutDisplay(platform, "newPage")}
-            previousShortcut={shortcutDisplay(platform, "previousPage")}
-            nextShortcut={shortcutDisplay(platform, "nextPage")}
+            switchShortcut={shortcutPairDisplay(platform, "previousPage", "nextPage")}
           />
           <div className="workspace-toolbar__actions">
             <span className="pane-count">

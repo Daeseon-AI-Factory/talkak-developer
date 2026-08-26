@@ -9,10 +9,10 @@
 
 .collection-header > span {
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.15em;
+  letter-spacing: calc(0.15em * var(--tracking));
 }
 
 .collection-header h1 {
@@ -51,9 +51,9 @@
   padding: 0 16px;
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
-  letter-spacing: 0.1em;
+  letter-spacing: calc(0.1em * var(--tracking));
 }
 
 .session-row {
@@ -185,7 +185,7 @@
   align-items: center;
   gap: 7px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
 }
 

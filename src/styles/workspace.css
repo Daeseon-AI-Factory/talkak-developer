@@ -51,7 +51,7 @@
   border-radius: 9px;
   background: var(--warning-soft);
   color: var(--warning);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 13px;
   font-weight: 800;
 }
@@ -64,10 +64,10 @@
 
 .attention-strip__copy small {
   color: var(--warning);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 7px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: calc(0.12em * var(--tracking));
 }
 
 .attention-strip__copy strong {
@@ -99,10 +99,10 @@
   gap: 8px;
   margin-bottom: 8px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.13em;
+  letter-spacing: calc(0.13em * var(--tracking));
   text-transform: uppercase;
 }
 
@@ -137,13 +137,18 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.025);
   color: var(--text-secondary);
-  font-family: var(--mono);
   white-space: nowrap;
 }
 
+/* A branch name is an identifier; a runtime chip says "실행 중" or "종료됨". */
 .branch-chip {
   padding: 5px 8px;
+  font-family: var(--mono);
   font-size: 9px;
+}
+
+.runtime-chip {
+  font-family: var(--sans);
 }
 
 .workspace-header__path {
@@ -183,7 +188,7 @@
 }
 
 .session-stats dt {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 14px;
   font-weight: 700;
 }
@@ -502,7 +507,7 @@
   padding: 0 12px;
   border-bottom: 1px solid rgba(135, 211, 220, 0.07);
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
 }
 
@@ -599,8 +604,8 @@
 
 .preview-label {
   color: var(--warning);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 7px;
   font-weight: 700;
-  letter-spacing: 0.1em;
+  letter-spacing: calc(0.1em * var(--tracking));
 }

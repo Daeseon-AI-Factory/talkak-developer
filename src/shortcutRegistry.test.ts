@@ -5,6 +5,7 @@ import {
   matchesShortcut,
   shortcutChord,
   shortcutDisplay,
+  shortcutPairDisplay,
 } from "./shortcutRegistry";
 
 const event = (overrides: Partial<KeyboardEvent> = {}) =>
@@ -52,6 +53,30 @@ describe("shortcut registry", () => {
         expect(seen.has(key), `${platform} duplicate ${definition.id}`).toBe(false);
         seen.add(key);
       }
+    }
+  });
+});
+
+describe("paired shortcut display", () => {
+  it("says a shared Windows modifier once instead of twice", () => {
+    // "Ctrl+Shift+PgUp · Ctrl+Shift+PgDn" overflowed the page hint and was cut mid-word.
+    expect(shortcutPairDisplay("windows", "previousPage", "nextPage")).toBe("Ctrl+Shift+PgUp/PgDn");
+    expect(shortcutPairDisplay("windows", "previousPane", "nextPane")).toBe("Ctrl+Shift+[/]");
+  });
+
+  it("leaves the macOS symbols alone, having no modifier text to share", () => {
+    expect(shortcutPairDisplay("macos", "previousPage", "nextPage")).toBe("⌘⌥← · ⌘⌥→");
+    expect(shortcutPairDisplay("macos", "previousPane", "nextPane")).toBe("⌘[ · ⌘]");
+  });
+
+  it("never renders wider than spelling both chords out", () => {
+    for (const platform of ["macos", "windows"] as const) {
+      const paired = shortcutPairDisplay(platform, "previousPage", "nextPage");
+      const spelled = `${shortcutDisplay(platform, "previousPage")} · ${shortcutDisplay(
+        platform,
+        "nextPage",
+      )}`;
+      expect(paired.length).toBeLessThanOrEqual(spelled.length);
     }
   });
 });

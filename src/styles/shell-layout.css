@@ -114,6 +114,32 @@
   font-size: 8px;
 }
 
+/* An icon-only control has no room for a key beside the glyph, so the key covers it on hover or
+   keyboard focus. The control never changes size. */
+.shell-control--sidebar-toggle {
+  position: relative;
+}
+
+.shell-control--sidebar-toggle kbd {
+  position: absolute;
+  display: grid;
+  border-radius: inherit;
+  background: var(--surface-raised);
+  font-family: var(--mono);
+  font-size: 7px;
+  inset: 0;
+  opacity: 0;
+  place-items: center;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.shell-control--sidebar-toggle:hover kbd,
+.shell-control--sidebar-toggle:focus-visible kbd {
+  color: var(--accent);
+  opacity: 1;
+}
+
 .workspace-toolbar--pages {
   gap: 8px;
   padding-left: 8px;
@@ -195,7 +221,7 @@
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 7px;
 }
 
@@ -230,20 +256,12 @@
   font-weight: 700;
 }
 
-.page-tabs__switch-hint {
-  flex: 0 0 auto;
-  color: var(--text-dim);
-  font-family: var(--mono);
-  font-size: 7px;
-  white-space: nowrap;
-}
-
 .pane-count {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
   white-space: nowrap;
 }
@@ -379,16 +397,36 @@
   opacity: 0.25;
 }
 
+/* The summary, terminal log and conversation exist to be read: the floating form is a large
+   centred modal, not a 370px strip down the edge. Pinning docks it beside the panes for anyone
+   who wants both at once. Pure layout — identical on every platform. */
+.inspector-backdrop {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 8, 10, 0.62);
+  backdrop-filter: blur(3px);
+  inset: 0;
+}
+
 .inspector[data-pinned="false"] {
-  position: absolute;
-  z-index: 7;
-  top: 8px;
-  right: 8px;
-  bottom: 8px;
-  width: min(370px, calc(100% - 32px));
+  width: min(1080px, 100%);
+  height: min(820px, calc(100vh - 72px));
   border: 1px solid var(--border-strong);
-  border-radius: 12px;
-  box-shadow: -20px 0 44px rgba(0, 0, 0, 0.32), var(--shadow);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+}
+
+.inspector[data-pinned="false"] .inspector__content {
+  padding: 22px 28px;
+}
+
+/* Prose reads at prose width in the wide modal; the terminal log uses all of it. */
+.inspector[data-pinned="false"] .inspector__content:not(.terminal-log) > * {
+  max-width: 780px;
+  margin-inline: auto;
 }
 
 .inspector[data-pinned="true"] {
@@ -494,9 +532,33 @@
     display: none;
   }
 
-  .page-tabs__switch-hint,
+  /* The key used to vanish here, which is where it is needed most: the toolbar is tight, so this
+     is exactly when someone should be learning the keyboard instead of hunting for the button.
+     It leaves the flow instead — no button grows — and covers the button face on hover or
+     keyboard focus. Staying inside the button matters: .workspace-toolbar__actions scrolls on the
+     x axis, and anything positioned outside it would be clipped. */
+  .workspace-toolbar__actions .toolbar-button {
+    position: relative;
+  }
+
   .workspace-toolbar__actions .toolbar-button kbd {
-    display: none;
+    position: absolute;
+    z-index: 2;
+    display: grid;
+    padding: 0;
+    border-radius: inherit;
+    background: var(--surface-raised);
+    inset: 0;
+    opacity: 0;
+    place-items: center;
+    pointer-events: none;
+    transition: opacity 120ms ease;
+  }
+
+  .workspace-toolbar__actions .toolbar-button:hover kbd,
+  .workspace-toolbar__actions .toolbar-button:focus-visible kbd {
+    color: var(--accent);
+    opacity: 1;
   }
 }
 

@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import "@xterm/xterm/css/xterm.css";
 import App from "./App";
 import { I18nProvider } from "./i18n";
+// Ahead of every other sheet so the bundled faces are declared before anything asks for them.
+import "./styles/fonts.css";
 import "./styles/foundation.css";
 import "./styles/workspace.css";
 import "./styles/terminal-runtime.css";

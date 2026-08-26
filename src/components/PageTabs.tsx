@@ -13,8 +13,7 @@ interface PageTabsProps {
   onClosePage: (pageId: string) => void;
   onMovePaneToPage: (paneId: string, pageId: string) => void;
   addShortcut: string;
-  previousShortcut: string;
-  nextShortcut: string;
+  switchShortcut: string;
 }
 
 export function PageTabs({
@@ -25,8 +24,7 @@ export function PageTabs({
   onClosePage,
   onMovePaneToPage,
   addShortcut,
-  previousShortcut,
-  nextShortcut,
+  switchShortcut,
 }: PageTabsProps) {
   const { t, text } = useI18n();
 
@@ -63,6 +61,9 @@ export function PageTabs({
               data-testid="page-tab"
               role="tab"
               aria-selected={active}
+              // The toolbar no longer carries a standing hint — it never had room and was always
+              // cut off. The keys live in the shortcut guide, and here on the thing they act on.
+              title={t("pages.switchHint", { shortcuts: switchShortcut })}
               onClick={() => onSelectPage(page.id)}
             >
               <span>{pageTitle}</span>
@@ -93,9 +94,6 @@ export function PageTabs({
         <span>{t("pages.addVisible")}</span>
         <kbd>{addShortcut}</kbd>
       </button>
-      <span className="page-tabs__switch-hint">
-        {t("pages.switchHint", { previous: previousShortcut, next: nextShortcut })}
-      </span>
     </div>
   );
 }

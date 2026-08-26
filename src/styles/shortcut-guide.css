@@ -29,10 +29,10 @@
 
 .shortcut-guide > header span {
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
   font-weight: 800;
-  letter-spacing: 0.14em;
+  letter-spacing: calc(0.14em * var(--tracking));
 }
 
 .shortcut-guide h2,

@@ -16,10 +16,10 @@
 .attention-center__header > span,
 .settings-panel__header > span {
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
   font-weight: 800;
-  letter-spacing: 0.15em;
+  letter-spacing: calc(0.15em * var(--tracking));
 }
 
 .attention-center__header h1,
@@ -49,7 +49,7 @@
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
 }
 
@@ -114,7 +114,7 @@
   align-items: center;
   gap: 7px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
 }
 
@@ -168,7 +168,7 @@
 .attention-detail__context {
   margin: 18px 0 8px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
 }
 
@@ -222,9 +222,9 @@
 .attention-choices h3 {
   margin: 0 0 10px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
-  letter-spacing: 0.09em;
+  letter-spacing: calc(0.09em * var(--tracking));
   text-transform: uppercase;
 }
 

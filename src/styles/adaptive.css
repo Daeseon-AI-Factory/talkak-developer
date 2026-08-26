@@ -344,7 +344,7 @@
 
   .mobile-session-view__project {
     color: var(--accent);
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 9px;
   }
 

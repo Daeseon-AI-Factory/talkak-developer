@@ -100,6 +100,7 @@ export default function App() {
   const platform = platformFromUserAgent(navigator.userAgent);
   const commandShortcut = shortcutDisplay(platform, "palette");
   const guideShortcut = shortcutDisplay(platform, "guide");
+  const sidebarShortcut = shortcutDisplay(platform, "toggleSidebar");
   const observedRuntimeNotices = useMemo(() => runtimeAttentionNotices(projects), [projects]);
   const runtimeNotices = useMemo(
     () =>
@@ -262,6 +263,7 @@ export default function App() {
         setShortcutsOpen(true);
       },
       settings: () => setActiveSection("settings"),
+      toggleSidebar: cycleSidebar,
       newPage: workspace.createWorkspacePage,
       splitRight: () => activePane && workspace.splitActivePane(activePane.id, "horizontal"),
       splitDown: () => activePane && workspace.splitActivePane(activePane.id, "vertical"),
@@ -309,10 +311,13 @@ export default function App() {
               className="shell-control shell-control--sidebar-toggle"
               type="button"
               aria-label={t("shell.toggleSidebar")}
-              title={t("shell.toggleSidebar")}
+              title={`${t("shell.toggleSidebar")} · ${sidebarShortcut}`}
               onClick={cycleSidebar}
             >
               <Icon name="panel" size={16} />
+              {/* Covers the icon on hover instead of sitting beside it, so a 32px control stays
+                  32px and the key is still there to be learned. */}
+              <kbd>{sidebarShortcut}</kbd>
             </button>
             <button
               className="shell-control shell-control--project"

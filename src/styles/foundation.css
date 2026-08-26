@@ -1,6 +1,6 @@
 :root {
   color-scheme: dark;
-  font-family: Inter, Pretendard, "SF Pro Display", "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-family: var(--sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --bg: #050b0e;
@@ -24,8 +24,29 @@
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
-  --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+  /* Both stacks lead with a bundled face (styles/fonts.css) so macOS and Windows render the same
+     product. The system names after them are a safety net, not the design. */
+  --sans: "Pretendard Variable", Pretendard, ui-sans-serif, system-ui, "Segoe UI",
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --mono: "JetBrains Mono", D2Coding, ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas,
+    "Apple SD Gothic Neo", "Malgun Gothic", monospace;
+  /* Positive tracking is Latin eyebrow styling. Hangul is already evenly spaced by design, so the
+     same value pulls a Korean label apart and reads as a rendering fault. Every positive
+     letter-spacing is multiplied by this, so the Latin design survives untouched and Korean gets
+     its natural spacing back. Negative tracking on large headings is left alone — it suits both. */
+  --tracking: 1;
   --shadow: 0 24px 70px rgba(0, 0, 0, 0.32);
+}
+
+:root:lang(ko) {
+  --tracking: 0;
+}
+
+/* These read as Latin whatever the interface language is, so they keep their tracking. */
+.brand span,
+kbd,
+code {
+  --tracking: 1;
 }
 
 * {
@@ -126,7 +147,7 @@ textarea:focus-visible {
   font-family: var(--mono);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.18em;
+  letter-spacing: calc(0.18em * var(--tracking));
 }
 
 .primary-nav {
@@ -241,10 +262,10 @@ textarea:focus-visible {
   justify-content: space-between;
   margin: 26px 10px 9px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.16em;
+  letter-spacing: calc(0.16em * var(--tracking));
 }
 
 .sidebar__section-heading button {
@@ -482,7 +503,7 @@ textarea:focus-visible {
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
 }
 
@@ -497,10 +518,10 @@ textarea:focus-visible {
   border-radius: 6px;
   background: rgba(95, 226, 237, 0.05);
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
   font-weight: 700;
-  letter-spacing: 0.12em;
+  letter-spacing: calc(0.12em * var(--tracking));
 }
 
 .app-utilitybar__actions > button {
@@ -586,8 +607,16 @@ textarea:focus-visible {
 .command-palette__header kbd,
 .command-palette footer {
   color: var(--text-dim);
-  font-family: var(--mono);
   font-size: 8px;
+}
+
+/* The key stays fixed-width; the footer beside it is a sentence. */
+.command-palette__header kbd {
+  font-family: var(--mono);
+}
+
+.command-palette footer {
+  font-family: var(--sans);
 }
 
 .command-palette__header kbd {

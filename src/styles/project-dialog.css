@@ -47,10 +47,10 @@
 .project-dialog__header > div > span,
 .project-dialog__section-heading span {
   color: var(--accent);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
   font-weight: 800;
-  letter-spacing: 0.15em;
+  letter-spacing: calc(0.15em * var(--tracking));
 }
 
 .project-dialog__header h1,
@@ -193,7 +193,7 @@
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-dim);
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-size: 8px;
   white-space: nowrap;
 }

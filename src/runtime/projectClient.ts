@@ -8,9 +8,17 @@ export interface ProjectPathValidation {
   reason: ProjectPathIssue | null;
 }
 
+export type LaunchCommandIssue = "notFound";
+
+export interface LaunchCommandValidation {
+  valid: boolean;
+  reason: LaunchCommandIssue | null;
+}
+
 export interface ProjectClient {
   available: () => boolean;
   validatePath: (path: string) => Promise<ProjectPathValidation>;
+  validateCommand: (command: string) => Promise<LaunchCommandValidation>;
 }
 
 export function createProjectClient(
@@ -20,6 +28,8 @@ export function createProjectClient(
   return {
     available,
     validatePath: (path) => invokeCommand<ProjectPathValidation>("project_validate_path", { path }),
+    validateCommand: (command) =>
+      invokeCommand<LaunchCommandValidation>("project_validate_command", { command }),
   };
 }
 

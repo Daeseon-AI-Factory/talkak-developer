@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { DevSession, InspectorMode } from "../domain";
 import { useI18n } from "../i18n";
 import { runtimeLabel } from "../workspaceModel";
@@ -22,7 +23,19 @@ export function Inspector({
   onClose,
 }: InspectorProps) {
   const { t, text } = useI18n();
-  return (
+
+  // The floating form is a modal, so it closes the way every modal here closes. A window listener
+  // rather than onKeyDown on the panel: focus usually sits inside xterm, not on the dialog.
+  useEffect(() => {
+    if (pinned) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [pinned, onClose]);
+
+  const panel = (
     <aside className="inspector" data-pinned={pinned} aria-label={t("inspector.aria")}>
       <header className="inspector__header">
         <div>
@@ -83,6 +96,19 @@ export function Inspector({
       {mode === "terminal" ? <TerminalLogView sessionId={session.id} /> : null}
       {mode === "conversation" ? <ConversationView session={session} /> : null}
     </aside>
+  );
+
+  if (pinned) return panel;
+  return (
+    <div
+      className="inspector-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      {panel}
+    </div>
   );
 }
 

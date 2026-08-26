@@ -94,7 +94,9 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .inspector {
+  /* Only the DOCKED form floats when the side column collapses; the unpinned form is already a
+     fixed modal and must not be shrunk back into a corner here. */
+  .inspector[data-pinned="true"] {
     position: absolute;
     right: 18px;
     bottom: 44px;

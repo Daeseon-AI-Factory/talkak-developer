@@ -2,6 +2,7 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import type {
   DevSession,
+  LaunchProfile,
   TerminalRuntimeObservation,
   TerminalRuntimeObservationOrigin,
   TerminalRuntimeOperation,
@@ -9,6 +10,8 @@ import type {
   TerminalRuntimeStatus,
 } from "../domain";
 import { useI18n } from "../i18n";
+import { platformFromUserAgent } from "../platform";
+import { projectClient } from "../runtime/projectClient";
 import {
   beginRuntimeOperation,
   createRuntimeMutationQueue,
@@ -28,6 +31,8 @@ import {
   terminalRuntimePhase,
 } from "../runtime/terminalReplay";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
+import { attachTerminalClipboard } from "../terminalClipboard";
+import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
 
 const POLL_INTERVAL_MS = 75;
 
@@ -74,6 +79,9 @@ export function SessionTerminal({
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
   const [restartReady, setRestartReady] = useState(false);
+  // A saved profile can name an executable that no longer resolves. Knowing that before the user
+  // presses anything is what keeps this launcher down to one honest button.
+  const [commandMissing, setCommandMissing] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const cursorRef = useRef(0);
@@ -94,6 +102,27 @@ export function SessionTerminal({
   launchHandledRef.current = onLaunchHandled;
   runtimeObservationRef.current = onRuntimeObservation;
   storedRuntimeStatusRef.current = session.runtimeStatus;
+
+  useEffect(() => {
+    if (!launchCommand || !projectClient.available()) {
+      setCommandMissing(false);
+      return;
+    }
+    let cancelled = false;
+    void projectClient
+      .validateCommand(launchCommand)
+      .then((result) => {
+        if (!cancelled) setCommandMissing(!result.valid);
+      })
+      // A failed check must not accuse a working profile; the spawn itself stays the real answer.
+      .catch(() => {
+        if (!cancelled) setCommandMissing(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [launchCommand]);
+
   const terminalAttached = phase === "running" || phase === "stopping" || phase === "exited";
   const shouldAttachTerminal = background
     ? phase === "running" || phase === "stopping"
@@ -190,20 +219,16 @@ export function SessionTerminal({
         const terminal = new Terminal({
           convertEol: false,
           cursorBlink: true,
-          fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
+          fontFamily: TERMINAL_FONT_FAMILY,
           fontSize: 12,
           screenReaderMode: true,
           scrollback: 5000,
-          theme: {
-            background: "#071216",
-            foreground: "#c4dadd",
-            cursor: "#86f3f7",
-            selectionBackground: "#23454d",
-          },
+          theme: TERMINAL_THEME,
         });
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
         terminal.open(hostRef.current);
+        attachTerminalClipboard(terminal, platformFromUserAgent(navigator.userAgent));
         terminalRef.current = terminal;
         let writeChain = Promise.resolve();
         const activeWrites = new Set<() => void>();
@@ -482,7 +507,9 @@ export function SessionTerminal({
     reportRuntimeStatus("runtime-event", { ...current, fault: null });
   }
 
-  async function start() {
+  // `profileOverride` exists so a saved profile whose executable no longer resolves is one click
+  // away from a working terminal, instead of requiring the user to go and edit the project first.
+  async function start(profileOverride?: LaunchProfile) {
     const operationEpoch = advanceRuntimeEpoch();
     setRestartReady(false);
     reportRuntimeStatus("explicit-action", emptyRuntimeStatus("starting"));
@@ -490,7 +517,7 @@ export function SessionTerminal({
     replayThroughRef.current = 0;
     try {
       const snapshot = await ensureSessionStarted(
-        createSessionSpawnInput(session.id, cwd, session.launchProfile),
+        createSessionSpawnInput(session.id, cwd, profileOverride ?? session.launchProfile),
         restartReady,
       );
       if (runtimeOperationsRef.current.epoch !== operationEpoch) return;
@@ -592,10 +619,25 @@ export function SessionTerminal({
             className="button button--primary terminal-launcher__start"
             type="button"
             disabled={phase === "checking" || phase === "starting" || phase === "unavailable"}
-            onClick={() => void start()}
+            onClick={() =>
+              void start(
+                commandMissing
+                  ? { label: session.launchProfile.label, command: null, args: [] }
+                  : undefined,
+              )
+            }
           >
-            {phase === "starting" ? t("terminal.starting") : t("terminal.startShell")}
+            {phase === "starting"
+              ? t("terminal.starting")
+              : commandMissing
+                ? t("terminal.startDefaultShell")
+                : t("terminal.startShell")}
           </button>
+          {commandMissing ? (
+            <output className="terminal-launcher__notice">
+              {t("terminal.launchCommandMissing")}
+            </output>
+          ) : null}
           {phase === "unavailable" ? (
             <p className="terminal-launcher__notice">{t("terminal.desktopOnly")}</p>
           ) : null}

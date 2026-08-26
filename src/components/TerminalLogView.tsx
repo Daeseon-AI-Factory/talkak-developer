@@ -1,9 +1,12 @@
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
+import { platformFromUserAgent } from "../platform";
 import { errorMessage, sessionClient } from "../runtime/sessionClient";
 import { initialSessionLogCursor, readSessionLogFrame } from "../runtime/sessionLogModel";
 import { terminalReadShouldContinue } from "../runtime/terminalReplay";
+import { attachTerminalClipboard } from "../terminalClipboard";
+import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
 
 // Exact internal polling intervals, not product latency guarantees.
 const LOG_LIVE_POLL_MS = 200;
@@ -40,18 +43,15 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
           cursorBlink: false,
           disableStdin: true,
           screenReaderMode: true,
-          fontFamily: '"SFMono-Regular", "Cascadia Code", Consolas, monospace',
+          fontFamily: TERMINAL_FONT_FAMILY,
           fontSize: 11,
           scrollback: 5000,
-          theme: {
-            background: "#071216",
-            foreground: "#c4dadd",
-            selectionBackground: "#23454d",
-          },
+          theme: TERMINAL_THEME,
         });
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
         terminal.open(hostRef.current);
+        attachTerminalClipboard(terminal, platformFromUserAgent(navigator.userAgent));
 
         const fit = () => {
           if (

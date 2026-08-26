@@ -6,6 +6,7 @@ export type ShortcutCommandId =
   | "palette"
   | "guide"
   | "settings"
+  | "toggleSidebar"
   | "newPage"
   | "splitRight"
   | "splitDown"
@@ -77,6 +78,13 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     scope: "global",
     macos: mac("Comma", ","),
     windows: windows("Comma", ","),
+    repeat: false,
+  },
+  {
+    id: "toggleSidebar",
+    scope: "global",
+    macos: mac("KeyB", "B"),
+    windows: windows("KeyB", "B"),
     repeat: false,
   },
   {
@@ -177,6 +185,27 @@ export function shortcutDisplay(platform: DesktopPlatform, id: ShortcutCommandId
   ]
     .filter(Boolean)
     .join("+");
+}
+
+/**
+ * Two related chords as one label. Windows spells its modifiers out, so a naive pair reads
+ * "Ctrl+Shift+PgUp · Ctrl+Shift+PgDn" — three times the width of the macOS "⌥← · ⌥→" the page hint
+ * was sized around, and it was being cut off mid-word. When both chords share a modifier prefix,
+ * say it once.
+ */
+export function shortcutPairDisplay(
+  platform: DesktopPlatform,
+  first: ShortcutCommandId,
+  second: ShortcutCommandId,
+): string {
+  const a = shortcutDisplay(platform, first);
+  const b = shortcutDisplay(platform, second);
+  const cut = a.lastIndexOf("+");
+  const prefix = cut > 0 ? a.slice(0, cut + 1) : "";
+  if (prefix && b.startsWith(prefix) && b.length > prefix.length) {
+    return `${a}/${b.slice(prefix.length)}`;
+  }
+  return `${a} · ${b}`;
 }
 
 export function matchesShortcut(event: ShortcutEvent, chord: ShortcutChord): boolean {
