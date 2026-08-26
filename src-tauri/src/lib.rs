@@ -10,7 +10,7 @@ mod project_commands_tests;
 #[cfg(test)]
 mod session_runtime_tests;
 
-use project_commands::project_validate_path;
+use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
     session_discard, session_kill, session_read, session_resize, session_restorable,
     session_snapshot, session_spawn, session_stored_output, session_write,
@@ -62,6 +62,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             host_info,
             project_validate_path,
+            project_validate_command,
             session_spawn,
             session_snapshot,
             session_read,

@@ -1,12 +1,194 @@
 use crate::session_runtime::{
-    InitialCursorPositionQuery, OutputBuffer, ReadSessionRequest, ResizeSessionRequest,
-    RunSessionRequest, RuntimeError, SessionIdRequest, SessionRuntime, SpawnSessionRequest,
-    WriteSessionRequest, MAX_OUTPUT_BYTES,
+    command_for_request, InitialCursorPositionQuery, OutputBuffer, ReadSessionRequest,
+    ResizeSessionRequest, RunSessionRequest, RuntimeError, SessionIdRequest, SessionRuntime,
+    SpawnSessionRequest, WriteSessionRequest, MAX_OUTPUT_BYTES,
 };
 use crate::session_store::SessionStore;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[cfg(windows)]
+#[test]
+fn the_default_windows_shell_is_a_powershell_when_one_is_installed() {
+    // cmd.exe answers a developer's first `ls` with "not recognized"; PowerShell aliases it.
+    let command = command_for_request(&SpawnSessionRequest {
+        session_id: "default-shell".into(),
+        cwd: None,
+        command: None,
+        args: Vec::new(),
+        cols: 80,
+        rows: 24,
+    });
+    let argv = command.get_argv();
+    let program = argv[0].to_string_lossy().to_ascii_lowercase();
+    assert!(
+        program.ends_with("pwsh.exe") || program.ends_with("powershell.exe"),
+        "expected a PowerShell default, got {program:?}"
+    );
+    assert!(
+        argv.iter().any(|argument| argument == "-NoLogo"),
+        "the banner should be suppressed: {argv:?}"
+    );
+}
+
+#[test]
+fn a_spawn_tells_the_child_it_is_talking_to_a_colour_terminal() {
+    // A Windows GUI process inherits neither variable, so without this every colour-capable CLI
+    // in a pane fell back to monochrome. The renderer is xterm.js on both platforms.
+    let command = command_for_request(&SpawnSessionRequest {
+        session_id: "colour".into(),
+        cwd: None,
+        command: None,
+        args: Vec::new(),
+        cols: 80,
+        rows: 24,
+    });
+    let environment = command.iter_full_env_as_str().collect::<Vec<_>>();
+    assert!(
+        environment.contains(&("TERM", "xterm-256color")),
+        "TERM missing from {environment:?}"
+    );
+    assert!(
+        environment.contains(&("COLORTERM", "truecolor")),
+        "COLORTERM missing from {environment:?}"
+    );
+}
+
+#[test]
+fn a_real_child_process_reads_the_colour_terminal_variables_back() {
+    // The builder assertion above only proves intent. This spawns through the same path a pane
+    // uses and reads what the child actually saw.
+    let runtime = SessionRuntime::default();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let (command, args) = if cfg!(windows) {
+        (
+            "cmd.exe",
+            vec![
+                "/D".to_string(),
+                "/S".to_string(),
+                "/C".to_string(),
+                "echo TERM=%TERM% COLORTERM=%COLORTERM%".to_string(),
+            ],
+        )
+    } else {
+        (
+            "/bin/sh",
+            vec![
+                "-c".to_string(),
+                "echo TERM=$TERM COLORTERM=$COLORTERM".to_string(),
+            ],
+        )
+    };
+    runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "colour-echo".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: Some(command.into()),
+            args,
+            cols: 80,
+            rows: 24,
+        })
+        .expect("the echo command should spawn");
+    let _ = wait_for_read_closed(&runtime, "colour-echo");
+    let read = runtime
+        .read(ReadSessionRequest {
+            session_id: "colour-echo".into(),
+            after: 0,
+        })
+        .expect("the finished session should stay readable");
+    let output = String::from_utf8_lossy(&read.bytes);
+    assert!(
+        output.contains("TERM=xterm-256color"),
+        "child did not see TERM; output was {output:?}"
+    );
+    assert!(
+        output.contains("COLORTERM=truecolor"),
+        "child did not see COLORTERM; output was {output:?}"
+    );
+}
+
+#[test]
+fn eight_panes_run_at_once_without_reading_each_other() {
+    // The product is panes and pages side by side, and every other PTY test here uses one session.
+    // This holds eight open at the same time, gives each a marker only it is told, and checks that
+    // each pane sees its own and none of the others.
+    const PANES: usize = 8;
+    let runtime = SessionRuntime::default();
+    let (setup, _input, _expected) = default_shell_fixture();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let ids = (0..PANES).map(|n| format!("pane-{n}")).collect::<Vec<_>>();
+    let mut runs = Vec::new();
+
+    for id in &ids {
+        let started = runtime
+            .spawn(SpawnSessionRequest {
+                session_id: id.clone(),
+                cwd: Some(cwd.to_string_lossy().into_owned()),
+                command: None,
+                args: vec![],
+                cols: 80,
+                rows: 24,
+            })
+            .unwrap_or_else(|error| panic!("{id} should spawn: {error}"));
+        assert!(started.running, "{id} should be running");
+        runs.push(started.run_id);
+    }
+
+    for (id, run_id) in ids.iter().zip(&runs) {
+        runtime
+            .write(WriteSessionRequest {
+                session_id: id.clone(),
+                run_id: *run_id,
+                data: setup.clone(),
+            })
+            .unwrap_or_else(|error| panic!("{id} should accept shell setup: {error}"));
+    }
+    // Exact test settling interval; it is not a product latency guarantee.
+    thread::sleep(Duration::from_millis(200));
+
+    for (index, (id, run_id)) in ids.iter().zip(&runs).enumerate() {
+        let line = format!("echo talkak-pane-{index}\r\n");
+        runtime
+            .write(WriteSessionRequest {
+                session_id: id.clone(),
+                run_id: *run_id,
+                data: line.into_bytes(),
+            })
+            .unwrap_or_else(|error| panic!("{id} should accept input: {error}"));
+    }
+
+    for (index, id) in ids.iter().enumerate() {
+        wait_for_output(&runtime, id, 0, format!("talkak-pane-{index}").as_bytes());
+    }
+
+    // Isolation: no pane may carry another pane's marker.
+    for (index, id) in ids.iter().enumerate() {
+        let read = runtime
+            .read(ReadSessionRequest {
+                session_id: id.clone(),
+                after: 0,
+            })
+            .unwrap_or_else(|error| panic!("{id} should stay readable: {error}"));
+        let seen = String::from_utf8_lossy(&read.bytes).into_owned();
+        for other in (0..PANES).filter(|other| *other != index) {
+            assert!(
+                !seen.contains(&format!("talkak-pane-{other}")),
+                "{id} saw pane {other}'s output: {seen:?}"
+            );
+        }
+    }
+
+    for (id, run_id) in ids.iter().zip(&runs) {
+        let stopped = runtime
+            .kill(RunSessionRequest {
+                session_id: id.clone(),
+                run_id: *run_id,
+            })
+            .unwrap_or_else(|error| panic!("{id} should stop: {error}"));
+        assert!(!stopped.running, "{id} should report stopped");
+    }
+}
 
 #[test]
 fn output_buffer_keeps_a_bounded_replay_window() {
@@ -471,8 +653,9 @@ fn natural_exit_fixture() -> (&'static str, Vec<String>) {
 
 #[cfg(windows)]
 fn default_shell_fixture() -> (Vec<u8>, Vec<u8>, &'static [u8]) {
+    // `cd .` is a quiet no-op in PowerShell (the default now) and in cmd (the fallback).
     (
-        b"@echo off\r\n".to_vec(),
+        b"cd .\r\n".to_vec(),
         b"echo talkak-result\r\n".to_vec(),
         b"talkak-result",
     )

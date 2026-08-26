@@ -694,16 +694,53 @@ fn validate_run_id(process: &SessionProcess, run_id: u64) -> Result<(), RuntimeE
     Err(RuntimeError::Process("session run changed".into()))
 }
 
-fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
+pub(crate) fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
     let mut command = match request.command.as_deref() {
         Some(program) => CommandBuilder::new(program),
-        None => CommandBuilder::new_default_prog(),
+        None => default_shell_command(),
     };
     command.args(&request.args);
     if let Some(cwd) = request.cwd.as_deref() {
         command.cwd(cwd);
     }
+    // portable-pty inherits this process's environment, and a Windows GUI process carries neither
+    // variable, so every colour-capable CLI fell back to monochrome. The renderer is xterm.js on
+    // both platforms, so tell the child exactly what it is talking to.
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
     command
+}
+
+/// The shell a pane boots when the project names no command. portable-pty's default on Windows is
+/// %COMSPEC% — cmd.exe — where a developer's first `ls` answers "not recognized". A developer
+/// workspace boots a developer shell: pwsh if installed, Windows PowerShell otherwise, and cmd only
+/// when neither resolves. Unix keeps the login shell portable-pty already picks.
+#[cfg(windows)]
+pub(crate) fn default_shell_command() -> CommandBuilder {
+    for shell in ["pwsh.exe", "powershell.exe"] {
+        if resolves_on_path(shell) {
+            let mut command = CommandBuilder::new(shell);
+            // Skip the copyright banner; the user's profile still loads.
+            command.args(["-NoLogo"]);
+            return command;
+        }
+    }
+    CommandBuilder::new_default_prog()
+}
+
+#[cfg(not(windows))]
+pub(crate) fn default_shell_command() -> CommandBuilder {
+    CommandBuilder::new_default_prog()
+}
+
+#[cfg(windows)]
+fn resolves_on_path(program: &str) -> bool {
+    let Some(search_path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&search_path)
+        .filter(|directory| !directory.as_os_str().is_empty())
+        .any(|directory| directory.join(program).is_file())
 }
 
 fn pty_size(cols: u16, rows: u16) -> PtySize {
