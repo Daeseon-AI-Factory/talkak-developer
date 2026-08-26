@@ -3269,14 +3269,24 @@ dependencies = [
 name = "talkak-dev"
 version = "0.1.0"
 dependencies = [
- "portable-pty",
  "serde",
  "serde_json",
+ "talkak-dev-broker",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-wdio",
  "tauri-plugin-wdio-webdriver",
+ "tempfile",
+]
+
+[[package]]
+name = "talkak-dev-broker"
+version = "0.1.0"
+dependencies = [
+ "portable-pty",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

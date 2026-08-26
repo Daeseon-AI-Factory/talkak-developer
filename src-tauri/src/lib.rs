@@ -3,12 +3,11 @@ use serde::Serialize;
 mod project_commands;
 mod session_commands;
 mod session_runtime;
-mod session_store;
 
 #[cfg(test)]
 mod project_commands_tests;
 #[cfg(test)]
-mod session_runtime_tests;
+mod session_client_tests;
 
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
@@ -16,7 +15,6 @@ use session_commands::{
     session_snapshot, session_spawn, session_stored_output, session_write,
 };
 use session_runtime::SessionRuntime;
-use session_store::SessionStore;
 use tauri::Manager;
 
 #[derive(Debug, Serialize)]
@@ -41,15 +39,11 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // The OS application-data directory on both platforms, so session records survive a
-            // machine restart without depending on where this repository sits.
-            let runtime = match app.path().app_data_dir() {
-                Ok(data_dir) => {
-                    SessionRuntime::with_store(SessionStore::at(data_dir.join("sessions")))
-                }
-                Err(_) => SessionRuntime::default(),
-            };
-            app.manage(runtime);
+            // The client of the detached session broker. Sessions and their records live in the
+            // broker process under the OS application-data directory, so both a machine restart
+            // AND an app restart bring the workspace back — with still-running sessions attached
+            // live, exactly as they were left.
+            app.manage(SessionRuntime::attach(app.path().app_data_dir().ok()));
             Ok(())
         });
 

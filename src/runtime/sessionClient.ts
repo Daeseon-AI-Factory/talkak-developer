@@ -17,6 +17,8 @@ export interface SessionSnapshot {
   exitCode: number | null;
   readClosed: boolean;
   readError: string | null;
+  /** Output high-water mark; replay up to here is history, not fresh output. */
+  next: number;
 }
 
 export interface SessionRead {

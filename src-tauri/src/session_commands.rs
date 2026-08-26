@@ -1,8 +1,8 @@
+use crate::session_runtime::RestorableSession;
 use crate::session_runtime::{
     ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
     SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
-use crate::session_store::RestorableSession;
 use tauri::State;
 
 /// What a machine restart can bring back. `persisted` is false when no store is writable, so the

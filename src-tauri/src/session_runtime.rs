@@ -1,759 +1,373 @@
-use crate::session_store::{now_ms, RestorableSession, SessionStore, StoredSession};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
-use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, VecDeque};
+//! Client for the detached session broker.
+//!
+//! The engine that used to live here (PTY runtime + on-disk store) now runs inside
+//! `talkak-dev-broker`, a detached process that outlives this app — that is what lets a terminal
+//! session, and the agent working in it, survive an app restart or reinstall. This module keeps
+//! the exact same ten call signatures and forwards them over a local transport (unix socket /
+//! named pipe) as newline-delimited JSON in strict request→response lockstep, so
+//! `session_commands.rs` and the renderer are unchanged.
+
+pub(crate) use session_broker::runtime::{
+    ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
+    SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+};
+pub(crate) use session_broker::store::RestorableSession;
+use session_broker::{Request, Response, PROTOCOL_VERSION};
 use std::fmt;
-use std::io::{Read, Write};
-use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread;
+use std::io::{BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-// Exact internal safety limits, not product promises.
-pub(crate) const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
-const MAX_READ_BYTES: usize = 64 * 1024;
-const MAX_SESSION_ID_BYTES: usize = 128;
-const CURSOR_POSITION_QUERY: &[u8] = b"\x1b[6n";
-const INHERITED_CURSOR_POSITION_REPORT: &[u8] = b"\x1b[1;1R";
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SpawnSessionRequest {
-    pub(crate) session_id: String,
-    pub(crate) cwd: Option<String>,
-    pub(crate) command: Option<String>,
-    #[serde(default)]
-    pub(crate) args: Vec<String>,
-    pub(crate) cols: u16,
-    pub(crate) rows: u16,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SessionIdRequest {
-    pub(crate) session_id: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RunSessionRequest {
-    pub(crate) session_id: String,
-    pub(crate) run_id: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ReadSessionRequest {
-    pub(crate) session_id: String,
-    pub(crate) after: u64,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct WriteSessionRequest {
-    pub(crate) session_id: String,
-    pub(crate) run_id: u64,
-    pub(crate) data: Vec<u8>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ResizeSessionRequest {
-    pub(crate) session_id: String,
-    pub(crate) run_id: u64,
-    pub(crate) cols: u16,
-    pub(crate) rows: u16,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SessionSnapshot {
-    pub(crate) session_id: String,
-    pub(crate) run_id: u64,
-    pub(crate) process_id: Option<u32>,
-    pub(crate) running: bool,
-    pub(crate) exit_code: Option<u32>,
-    pub(crate) read_closed: bool,
-    pub(crate) read_error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct SessionRead {
-    pub(crate) session_id: String,
-    pub(crate) run_id: u64,
-    pub(crate) start: u64,
-    pub(crate) next: u64,
-    pub(crate) bytes: Vec<u8>,
-    pub(crate) truncated: bool,
-    pub(crate) running: bool,
-    pub(crate) exit_code: Option<u32>,
-    pub(crate) read_closed: bool,
-    pub(crate) read_error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum RuntimeError {
-    InvalidRequest(String),
-    DuplicateSession(String),
-    RunningSession(String),
-    MissingSession(String),
-    Process(String),
-    Internal(String),
-}
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidRequest(message) => {
-                write!(formatter, "invalid session request: {message}")
-            }
-            Self::DuplicateSession(id) => write!(formatter, "session already exists: {id}"),
-            Self::RunningSession(id) => {
-                write!(formatter, "cannot discard running session: {id}")
-            }
-            Self::MissingSession(id) => write!(formatter, "session not found: {id}"),
-            Self::Process(message) => write!(formatter, "session process error: {message}"),
-            Self::Internal(message) => write!(formatter, "session runtime error: {message}"),
-        }
-    }
-}
-
-impl std::error::Error for RuntimeError {}
-
-#[derive(Default)]
-pub(crate) struct SessionRuntime {
-    sessions: Mutex<HashMap<String, Arc<SessionProcess>>>,
-    next_run_id: Mutex<u64>,
-    store: Arc<SessionStore>,
-}
-
-impl SessionRuntime {
-    /// A runtime whose sessions are recorded under `root`, so a machine restart can bring the
-    /// workspace back. `SessionRuntime::default()` keeps nothing, which is what tests want.
-    pub(crate) fn with_store(store: SessionStore) -> Self {
-        Self {
-            store: Arc::new(store),
-            ..Self::default()
-        }
-    }
-
-    /// Sessions a restart could bring back, newest first.
-    pub(crate) fn restorable(&self) -> Vec<RestorableSession> {
-        self.store.restorable()
-    }
-
-    /// The output kept on disk for a session id, oldest first.
-    pub(crate) fn stored_output(&self, session_id: &str) -> Vec<u8> {
-        self.store.output(session_id)
-    }
-
-    /// Whether session records are being written at all.
-    pub(crate) fn persists(&self) -> bool {
-        self.store.enabled()
-    }
-}
-
-struct SessionProcess {
-    id: String,
-    run_id: u64,
-    process_id: Option<u32>,
-    master: Mutex<Option<Box<dyn MasterPty + Send>>>,
-    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
-    child: Mutex<Box<dyn Child + Send + Sync>>,
-    output: Arc<Mutex<OutputBuffer>>,
-    status: Arc<Mutex<ProcessStatus>>,
-}
-
-#[derive(Debug, Default)]
-struct ProcessStatus {
-    running: bool,
-    exit_code: Option<u32>,
-    read_closed: bool,
-    read_error: Option<String>,
-}
-
+/// Broker errors surface as their message: the engine already prefixes them
+/// ("invalid session request: …", "session process error: …") and the renderer shows the text.
 #[derive(Debug)]
-pub(crate) struct InitialCursorPositionQuery {
-    enabled: bool,
-    answered: bool,
-    pending: Vec<u8>,
-}
+pub(crate) struct BrokerError(String);
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct CursorQueryObservation {
-    pub(crate) output: Vec<u8>,
-    pub(crate) should_respond: bool,
-}
-
-impl InitialCursorPositionQuery {
-    pub(crate) fn new(enabled: bool) -> Self {
-        Self {
-            enabled,
-            answered: false,
-            pending: Vec::new(),
-        }
-    }
-
-    pub(crate) fn observe(&mut self, bytes: &[u8]) -> CursorQueryObservation {
-        if !self.enabled || self.answered {
-            return CursorQueryObservation {
-                output: bytes.to_vec(),
-                should_respond: false,
-            };
-        }
-
-        let mut output = Vec::with_capacity(self.pending.len() + bytes.len());
-        for (index, byte) in bytes.iter().enumerate() {
-            if *byte == CURSOR_POSITION_QUERY[self.pending.len()] {
-                self.pending.push(*byte);
-                if self.pending.len() == CURSOR_POSITION_QUERY.len() {
-                    self.pending.clear();
-                    self.answered = true;
-                    output.extend_from_slice(&bytes[index + 1..]);
-                    break;
-                }
-                continue;
-            }
-
-            output.append(&mut self.pending);
-            if *byte == CURSOR_POSITION_QUERY[0] {
-                self.pending.push(*byte);
-            } else {
-                output.push(*byte);
-            }
-        }
-
-        CursorQueryObservation {
-            output,
-            should_respond: self.answered,
-        }
-    }
-
-    pub(crate) fn finish(&mut self) -> Vec<u8> {
-        std::mem::take(&mut self.pending)
+impl fmt::Display for BrokerError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.0)
     }
 }
 
-#[derive(Debug, Default)]
-pub(crate) struct OutputBuffer {
-    start: u64,
-    next: u64,
-    bytes: VecDeque<u8>,
+impl std::error::Error for BrokerError {}
+
+type BrokerResult<T> = Result<T, BrokerError>;
+
+#[cfg(unix)]
+type Stream = std::os::unix::net::UnixStream;
+#[cfg(windows)]
+type Stream = std::fs::File;
+
+struct Connection {
+    writer: Stream,
+    reader: BufReader<Stream>,
+}
+
+pub(crate) struct SessionRuntime {
+    endpoint: String,
+    store_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    connection: Mutex<Option<Connection>>,
 }
 
 impl SessionRuntime {
-    pub(crate) fn spawn(
-        &self,
-        request: SpawnSessionRequest,
-    ) -> Result<SessionSnapshot, RuntimeError> {
-        validate_spawn_request(&request)?;
-        if self.contains(&request.session_id)? {
-            return Err(RuntimeError::DuplicateSession(request.session_id));
+    /// A client bound to this app's data directory: the broker writes session records to the same
+    /// `sessions` store the app used when the engine was in-process, so nothing already recorded
+    /// is lost across this migration.
+    pub(crate) fn attach(data_dir: Option<PathBuf>) -> Self {
+        Self::at_endpoint(default_endpoint(), data_dir)
+    }
+
+    /// Tests bind their own endpoint so they never adopt — or disturb — the user's real broker.
+    pub(crate) fn at_endpoint(endpoint: String, data_dir: Option<PathBuf>) -> Self {
+        Self {
+            endpoint,
+            store_dir: data_dir.as_ref().map(|dir| dir.join("sessions")),
+            data_dir,
+            connection: Mutex::new(None),
         }
-        let run_id = self.next_run_id()?;
+    }
 
-        let pty_system = native_pty_system();
-        let pair = pty_system
-            .openpty(pty_size(request.cols, request.rows))
-            .map_err(|error| RuntimeError::Process(error.to_string()))?;
-        let reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| RuntimeError::Process(error.to_string()))?;
-        let writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| RuntimeError::Process(error.to_string()))?;
-        let writer = Arc::new(Mutex::new(Some(writer)));
-
-        let command = command_for_request(&request);
-        let mut child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| RuntimeError::Process(error.to_string()))?;
-        let process_id = child.process_id();
-        drop(pair.slave);
-
-        let output = Arc::new(Mutex::new(OutputBuffer::default()));
-        let status = Arc::new(Mutex::new(ProcessStatus {
-            running: true,
-            ..ProcessStatus::default()
-        }));
-        // Recorded before the reader starts so no output can be appended to a session that has no
-        // definition on disk. A store failure must not stop a session the user asked for.
-        let _ = self.store.record(&StoredSession {
-            session_id: request.session_id.clone(),
-            cwd: request.cwd.clone(),
-            command: request.command.clone(),
-            args: request.args.clone(),
-            cols: request.cols,
-            rows: request.rows,
-            started_at_ms: now_ms(),
-        });
-
-        if let Err(error) = spawn_reader_thread(
-            request.session_id.clone(),
-            reader,
-            Arc::clone(&output),
-            Arc::clone(&status),
-            Arc::clone(&writer),
-            Arc::clone(&self.store),
-        ) {
-            let _ = child.kill();
-            return Err(error);
+    pub(crate) fn spawn(&self, request: SpawnSessionRequest) -> BrokerResult<SessionSnapshot> {
+        match self.request(&Request::Spawn(request))? {
+            Response::Snapshot(snapshot) => Ok(snapshot),
+            other => Err(unexpected(other)),
         }
-
-        let process = Arc::new(SessionProcess {
-            id: request.session_id.clone(),
-            run_id,
-            process_id,
-            master: Mutex::new(Some(pair.master)),
-            writer,
-            child: Mutex::new(child),
-            output,
-            status,
-        });
-
-        let mut sessions = lock(&self.sessions, "session registry")?;
-        if sessions.contains_key(&request.session_id) {
-            return Err(RuntimeError::DuplicateSession(request.session_id));
-        }
-        sessions.insert(request.session_id, Arc::clone(&process));
-        drop(sessions);
-        process.snapshot()
     }
 
     pub(crate) fn snapshot(
         &self,
         request: SessionIdRequest,
-    ) -> Result<Option<SessionSnapshot>, RuntimeError> {
-        let process = {
-            let sessions = lock(&self.sessions, "session registry")?;
-            sessions.get(&request.session_id).cloned()
-        };
-        process.map(|session| session.snapshot()).transpose()
-    }
-
-    pub(crate) fn read(&self, request: ReadSessionRequest) -> Result<SessionRead, RuntimeError> {
-        let process = self.session(&request.session_id)?;
-        process.refresh_status()?;
-        let status = lock(&process.status, "process status")?;
-        let read = lock(&process.output, "output buffer")?.read(request.after);
-        Ok(SessionRead {
-            session_id: process.id.clone(),
-            run_id: process.run_id,
-            start: read.start,
-            next: read.next,
-            bytes: read.bytes,
-            truncated: read.truncated,
-            running: status.running,
-            exit_code: status.exit_code,
-            read_closed: status.read_closed,
-            read_error: status.read_error.clone(),
-        })
-    }
-
-    pub(crate) fn write(&self, request: WriteSessionRequest) -> Result<(), RuntimeError> {
-        let process = self.session(&request.session_id)?;
-        validate_run_id(&process, request.run_id)?;
-        process.refresh_status()?;
-        if !lock(&process.status, "process status")?.running {
-            return Err(RuntimeError::Process(
-                "cannot write to an exited session".into(),
-            ));
-        }
-        let mut writer = lock(&process.writer, "PTY writer")?;
-        let writer = writer
-            .as_mut()
-            .ok_or_else(|| RuntimeError::Process("PTY input is closed".into()))?;
-        writer
-            .write_all(&request.data)
-            .and_then(|()| writer.flush())
-            .map_err(|error| RuntimeError::Process(error.to_string()))
-    }
-
-    pub(crate) fn resize(&self, request: ResizeSessionRequest) -> Result<(), RuntimeError> {
-        validate_size(request.cols, request.rows)?;
-        let process = self.session(&request.session_id)?;
-        validate_run_id(&process, request.run_id)?;
-        let master = lock(&process.master, "PTY master")?;
-        let master = master
-            .as_ref()
-            .ok_or_else(|| RuntimeError::Process("PTY is closed".into()))?;
-        master
-            .resize(pty_size(request.cols, request.rows))
-            .map_err(|error| RuntimeError::Process(error.to_string()))
-    }
-
-    pub(crate) fn kill(&self, request: RunSessionRequest) -> Result<SessionSnapshot, RuntimeError> {
-        let process = self.session(&request.session_id)?;
-        validate_run_id(&process, request.run_id)?;
-        process.refresh_status()?;
-        if !lock(&process.status, "process status")?.running {
-            return process.snapshot();
-        }
-        let kill_result = {
-            let mut child = lock(&process.child, "child process")?;
-            child.kill()
-        };
-        if let Err(error) = kill_result {
-            process.refresh_status()?;
-            if !lock(&process.status, "process status")?.running {
-                return process.snapshot();
-            }
-            return Err(RuntimeError::Process(error.to_string()));
-        }
-        process.snapshot()
-    }
-
-    pub(crate) fn discard(&self, request: SessionIdRequest) -> Result<(), RuntimeError> {
-        let removed = {
-            let mut sessions = lock(&self.sessions, "session registry")?;
-            let process = sessions
-                .get(&request.session_id)
-                .cloned()
-                .ok_or_else(|| RuntimeError::MissingSession(request.session_id.clone()))?;
-            if process.snapshot()?.running {
-                return Err(RuntimeError::RunningSession(request.session_id));
-            }
-            sessions.remove(&request.session_id)
-        };
-        drop(removed);
-        // Discard is the explicit "this run is over for good", so its record goes too. A restart
-        // must not offer to bring back a session the user deliberately threw away.
-        self.store.forget(&request.session_id);
-        Ok(())
-    }
-
-    fn contains(&self, session_id: &str) -> Result<bool, RuntimeError> {
-        Ok(lock(&self.sessions, "session registry")?.contains_key(session_id))
-    }
-
-    fn next_run_id(&self) -> Result<u64, RuntimeError> {
-        let mut next = lock(&self.next_run_id, "run id counter")?;
-        *next = next
-            .checked_add(1)
-            .ok_or_else(|| RuntimeError::Internal("run id counter exhausted".into()))?;
-        Ok(*next)
-    }
-
-    fn session(&self, session_id: &str) -> Result<Arc<SessionProcess>, RuntimeError> {
-        lock(&self.sessions, "session registry")?
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| RuntimeError::MissingSession(session_id.to_owned()))
-    }
-}
-
-impl SessionProcess {
-    fn close_pty(&self) -> Result<(), RuntimeError> {
-        drop(lock(&self.writer, "PTY writer")?.take());
-        let Some(master) = lock(&self.master, "PTY master")?.take() else {
-            return Ok(());
-        };
-        close_master_async(&self.id, master)
-    }
-
-    fn refresh_status(&self) -> Result<(), RuntimeError> {
-        let exit = lock(&self.child, "child process")?
-            .try_wait()
-            .map_err(|error| RuntimeError::Process(error.to_string()))?;
-        if let Some(exit) = exit {
-            {
-                let mut status = lock(&self.status, "process status")?;
-                status.running = false;
-                status.exit_code = Some(exit.exit_code());
-            }
-            self.close_pty()?;
-        }
-        Ok(())
-    }
-
-    fn snapshot(&self) -> Result<SessionSnapshot, RuntimeError> {
-        self.refresh_status()?;
-        let status = lock(&self.status, "process status")?;
-        Ok(SessionSnapshot {
-            session_id: self.id.clone(),
-            run_id: self.run_id,
-            process_id: self.process_id,
-            running: status.running,
-            exit_code: status.exit_code,
-            read_closed: status.read_closed,
-            read_error: status.read_error.clone(),
-        })
-    }
-}
-
-impl Drop for SessionProcess {
-    fn drop(&mut self) {
-        if let Ok(child) = self.child.get_mut() {
-            let _ = child.kill();
-        }
-        if let Ok(mut writer) = self.writer.lock() {
-            drop(writer.take());
-        }
-        if let Ok(master) = self.master.get_mut() {
-            if let Some(master) = master.take() {
-                let _ = close_master_async(&self.id, master);
-            }
+    ) -> BrokerResult<Option<SessionSnapshot>> {
+        match self.request(&Request::Snapshot(request))? {
+            Response::MaybeSnapshot(snapshot) => Ok(snapshot),
+            other => Err(unexpected(other)),
         }
     }
-}
 
-fn close_master_async(
-    session_id: &str,
-    master: Box<dyn MasterPty + Send>,
-) -> Result<(), RuntimeError> {
-    let retained = Arc::new(Mutex::new(Some(master)));
-    let worker_copy = Arc::clone(&retained);
-    let result = thread::Builder::new()
-        .name(format!("talkak-pty-closer-{session_id}"))
-        .spawn(move || {
-            if let Ok(mut current) = worker_copy.lock() {
-                drop(current.take());
-            }
+    pub(crate) fn read(&self, request: ReadSessionRequest) -> BrokerResult<SessionRead> {
+        match self.request(&Request::Read(request))? {
+            Response::Read(read) => Ok(read),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub(crate) fn write(&self, request: WriteSessionRequest) -> BrokerResult<()> {
+        match self.request(&Request::Write(request))? {
+            Response::Unit => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub(crate) fn resize(&self, request: ResizeSessionRequest) -> BrokerResult<()> {
+        match self.request(&Request::Resize(request))? {
+            Response::Unit => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub(crate) fn kill(&self, request: RunSessionRequest) -> BrokerResult<SessionSnapshot> {
+        match self.request(&Request::Kill(request))? {
+            Response::Snapshot(snapshot) => Ok(snapshot),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    pub(crate) fn discard(&self, request: SessionIdRequest) -> BrokerResult<()> {
+        match self.request(&Request::Discard(request))? {
+            Response::Unit => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Errors read as an empty restore list: the workspace can still open, and `persists()`
+    /// reports the store state honestly on its own.
+    pub(crate) fn restorable(&self) -> Vec<RestorableSession> {
+        match self.request(&Request::Restorable) {
+            Ok(Response::Restorable(sessions)) => sessions,
+            _ => Vec::new(),
+        }
+    }
+
+    pub(crate) fn stored_output(&self, session_id: &str) -> Vec<u8> {
+        let request = Request::StoredOutput(SessionIdRequest {
+            session_id: session_id.to_owned(),
         });
-    match result {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            // A synchronous master drop can block indefinitely on older ConPTY versions.
-            // Leak only on the exceptional thread-creation failure path instead.
-            std::mem::forget(retained);
-            Err(RuntimeError::Internal(format!(
-                "failed to start PTY closer: {error}"
-            )))
-        }
-    }
-}
-
-#[derive(Debug)]
-struct OutputRead {
-    start: u64,
-    next: u64,
-    bytes: Vec<u8>,
-    truncated: bool,
-}
-
-impl OutputBuffer {
-    pub(crate) fn append(&mut self, chunk: &[u8]) {
-        self.next = self.next.saturating_add(chunk.len() as u64);
-        self.bytes.extend(chunk);
-        let overflow = self.bytes.len().saturating_sub(MAX_OUTPUT_BYTES);
-        if overflow > 0 {
-            self.bytes.drain(..overflow);
-            self.start = self.start.saturating_add(overflow as u64);
+        match self.request(&request) {
+            Ok(Response::Bytes(bytes)) => bytes,
+            _ => Vec::new(),
         }
     }
 
-    fn read(&self, after: u64) -> OutputRead {
-        let cursor = after.max(self.start).min(self.next);
-        let offset = (cursor - self.start) as usize;
-        let bytes = self
-            .bytes
-            .iter()
-            .skip(offset)
-            .take(MAX_READ_BYTES)
-            .copied()
-            .collect::<Vec<_>>();
-        OutputRead {
-            start: cursor,
-            next: cursor.saturating_add(bytes.len() as u64),
-            bytes,
-            truncated: after < self.start,
+    pub(crate) fn persists(&self) -> bool {
+        match self.request(&Request::Persists) {
+            Ok(Response::Persists(persists)) => persists,
+            _ => false,
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn read_for_test(&self, after: u64) -> TestOutputRead {
-        let read = self.read(after);
-        TestOutputRead {
-            start: read.start,
-            truncated: read.truncated,
-        }
-    }
-}
-
-#[cfg(test)]
-pub(crate) struct TestOutputRead {
-    pub(crate) start: u64,
-    pub(crate) truncated: bool,
-}
-
-fn spawn_reader_thread(
-    session_id: String,
-    mut reader: Box<dyn Read + Send>,
-    output: Arc<Mutex<OutputBuffer>>,
-    status: Arc<Mutex<ProcessStatus>>,
-    writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
-    store: Arc<SessionStore>,
-) -> Result<(), RuntimeError> {
-    thread::Builder::new()
-        .name(format!("talkak-pty-reader-{session_id}"))
-        .spawn(move || {
-            let mut chunk = [0_u8; 8192];
-            // portable-pty requests cursor inheritance from ConPTY. On Windows, answer and
-            // remove that one host-level query; later application queries remain for xterm.
-            let mut inherited_cursor_query = InitialCursorPositionQuery::new(cfg!(windows));
-            loop {
-                match reader.read(&mut chunk) {
-                    Ok(0) => break,
-                    Ok(read) => {
-                        let observation = inherited_cursor_query.observe(&chunk[..read]);
-                        if observation.should_respond {
-                            if let Ok(mut current_writer) = writer.lock() {
-                                if let Some(current_writer) = current_writer.as_mut() {
-                                    let _ = current_writer
-                                        .write_all(INHERITED_CURSOR_POSITION_REPORT)
-                                        .and_then(|()| current_writer.flush());
-                                }
-                            }
-                        }
-                        // Recorded before the in-memory append so the on-disk log is never behind
-                        // what the live terminal already showed.
-                        store.append_output(&session_id, &observation.output);
-                        if let Ok(mut buffer) = output.lock() {
-                            buffer.append(&observation.output);
-                        } else {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        if let Ok(mut current) = status.lock() {
-                            if current.running {
-                                current.read_error = Some(error.to_string());
-                            }
-                        }
-                        break;
+    /// One lockstep exchange. A broken connection is re-established once — the broker may have
+    /// exited while idle, which is its normal life cycle, not a failure.
+    fn request(&self, request: &Request) -> BrokerResult<Response> {
+        let mut guard = self
+            .connection
+            .lock()
+            .map_err(|_| BrokerError("broker connection lock poisoned".into()))?;
+        for attempt in 0..2 {
+            if guard.is_none() {
+                *guard = Some(self.establish()?);
+            }
+            let connection = guard.as_mut().expect("connection just established");
+            match exchange(connection, request) {
+                Ok(Response::Error { message }) => return Err(BrokerError(message)),
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    *guard = None;
+                    if attempt == 1 {
+                        return Err(BrokerError(format!("broker connection failed: {error}")));
                     }
                 }
             }
-            let trailing = inherited_cursor_query.finish();
-            if !trailing.is_empty() {
-                store.append_output(&session_id, &trailing);
-                if let Ok(mut buffer) = output.lock() {
-                    buffer.append(&trailing);
+        }
+        unreachable!("both attempts return");
+    }
+
+    /// Connect to a live broker or start one, then verify the protocol. A stale broker from an
+    /// older app version is asked to shut down and replaced.
+    fn establish(&self) -> BrokerResult<Connection> {
+        for _ in 0..2 {
+            let mut connection = match connect(&self.endpoint) {
+                Ok(connection) => connection,
+                Err(_) => {
+                    self.launch_broker()?;
+                    wait_for_endpoint(&self.endpoint, Duration::from_secs(5))?
                 }
+            };
+            let hello = exchange(
+                &mut connection,
+                &Request::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            )
+            .map_err(|error| BrokerError(format!("broker handshake failed: {error}")))?;
+            match hello {
+                Response::Hello {
+                    protocol_version, ..
+                } if protocol_version == PROTOCOL_VERSION => return Ok(connection),
+                Response::Hello { .. } => {
+                    // Retire the stale broker; live sessions under an old protocol cannot be
+                    // spoken to correctly anyway. The next loop iteration starts a fresh one.
+                    let _ = exchange(&mut connection, &Request::Shutdown);
+                    drop(connection);
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+                other => return Err(unexpected(other)),
             }
-            if let Ok(mut current) = status.lock() {
-                current.read_closed = true;
+        }
+        Err(BrokerError(
+            "broker kept answering with an incompatible protocol".into(),
+        ))
+    }
+
+    fn launch_broker(&self) -> BrokerResult<()> {
+        let source = broker_binary()?;
+        let program = self.installable_copy(&source).unwrap_or(source);
+        let store = self
+            .store_dir
+            .as_ref()
+            .map(|dir| dir.to_string_lossy().into_owned());
+        let mut arguments = vec![self.endpoint.as_str()];
+        if let Some(store) = store.as_deref() {
+            arguments.push(store);
+        }
+        session_broker::spawn_detached(&program.to_string_lossy(), &arguments)
+            .map_err(|error| BrokerError(format!("failed to start the session broker: {error}")))?;
+        Ok(())
+    }
+
+    /// Run the broker from a copy under the app's data directory, not from the install directory:
+    /// a running broker holds a lock on its own executable on Windows, and it must survive the
+    /// very reinstall that wants to replace that directory.
+    fn installable_copy(&self, source: &Path) -> Option<PathBuf> {
+        let data_dir = self.data_dir.as_ref()?;
+        let broker_dir = data_dir.join("broker");
+        std::fs::create_dir_all(&broker_dir).ok()?;
+        let file_name = format!(
+            "talkak-dev-broker-{}{}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::EXE_SUFFIX
+        );
+        let destination = broker_dir.join(file_name);
+        let source_len = std::fs::metadata(source).ok()?.len();
+        let up_to_date = std::fs::metadata(&destination)
+            .map(|meta| meta.len() == source_len)
+            .unwrap_or(false);
+        if !up_to_date {
+            // A locked destination means a broker of this exact version is already running from
+            // it; using it as-is is the intended outcome, not an error.
+            if std::fs::copy(source, &destination).is_err() && !destination.exists() {
+                return None;
             }
-        })
-        .map(|_| ())
-        .map_err(|error| RuntimeError::Internal(format!("failed to start PTY reader: {error}")))
+        }
+        Some(destination)
+    }
 }
 
-fn validate_spawn_request(request: &SpawnSessionRequest) -> Result<(), RuntimeError> {
-    if request.session_id.trim().is_empty()
-        || request.session_id.len() > MAX_SESSION_ID_BYTES
-        || request.session_id.chars().any(char::is_control)
+fn unexpected(response: Response) -> BrokerError {
+    BrokerError(format!("unexpected broker response: {response:?}"))
+}
+
+fn exchange(connection: &mut Connection, request: &Request) -> std::io::Result<Response> {
+    let mut line = serde_json::to_vec(request)?;
+    line.push(b'\n');
+    connection.writer.write_all(&line)?;
+    connection.writer.flush()?;
+    let mut reply = String::new();
+    let read = connection.reader.read_line(&mut reply)?;
+    if read == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "broker closed the connection",
+        ));
+    }
+    serde_json::from_str(&reply).map_err(std::io::Error::other)
+}
+
+fn connect(endpoint: &str) -> std::io::Result<Connection> {
+    let stream = open_stream(endpoint)?;
+    let reader = BufReader::new(clone_stream(&stream)?);
+    Ok(Connection {
+        writer: stream,
+        reader,
+    })
+}
+
+#[cfg(unix)]
+fn open_stream(endpoint: &str) -> std::io::Result<Stream> {
+    let stream = Stream::connect(endpoint)?;
+    // A wedged broker must fail a command, not hang the app forever.
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    Ok(stream)
+}
+
+#[cfg(windows)]
+fn open_stream(endpoint: &str) -> std::io::Result<Stream> {
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(endpoint)
+}
+
+#[cfg(unix)]
+fn clone_stream(stream: &Stream) -> std::io::Result<Stream> {
+    stream.try_clone()
+}
+
+#[cfg(windows)]
+fn clone_stream(stream: &Stream) -> std::io::Result<Stream> {
+    stream.try_clone()
+}
+
+fn wait_for_endpoint(endpoint: &str, timeout: Duration) -> BrokerResult<Connection> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        match connect(endpoint) {
+            Ok(connection) => return Ok(connection),
+            Err(error) => {
+                if Instant::now() >= deadline {
+                    return Err(BrokerError(format!(
+                        "the session broker did not come up in time: {error}"
+                    )));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+/// Same per-user endpoint the broker derives for itself, kept in one place on each side.
+fn default_endpoint() -> String {
+    #[cfg(unix)]
     {
-        return Err(RuntimeError::InvalidRequest(
-            "sessionId must be a non-empty, printable identifier up to 128 bytes".into(),
-        ));
+        let base = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        #[cfg(target_os = "macos")]
+        let base = format!("{base}/Library/Application Support");
+        #[cfg(not(target_os = "macos"))]
+        let base =
+            std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{base}/.local/share"));
+        format!("{base}/TalkakDev/broker/broker.sock")
     }
-    validate_size(request.cols, request.rows)?;
-    if let Some(cwd) = request.cwd.as_deref() {
-        let path = Path::new(cwd);
-        if !path.is_absolute() {
-            return Err(RuntimeError::InvalidRequest(
-                "working directory must be an absolute path".into(),
-            ));
-        }
-        if !path.is_dir() {
-            return Err(RuntimeError::InvalidRequest(format!(
-                "working directory does not exist: {cwd}"
-            )));
-        }
+    #[cfg(windows)]
+    {
+        let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
+        format!(r"\\.\pipe\talkak-dev-broker-{user}")
     }
-    if request.command.as_deref().is_some_and(str::is_empty) {
-        return Err(RuntimeError::InvalidRequest(
-            "command must be omitted or non-empty".into(),
-        ));
-    }
-    if request.command.is_none() && !request.args.is_empty() {
-        return Err(RuntimeError::InvalidRequest(
-            "arguments require an explicit command".into(),
-        ));
-    }
-    Ok(())
 }
 
-fn validate_size(cols: u16, rows: u16) -> Result<(), RuntimeError> {
-    if cols == 0 || rows == 0 {
-        return Err(RuntimeError::InvalidRequest(
-            "terminal columns and rows must be greater than zero".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn validate_run_id(process: &SessionProcess, run_id: u64) -> Result<(), RuntimeError> {
-    if process.run_id == run_id {
-        return Ok(());
-    }
-    Err(RuntimeError::Process("session run changed".into()))
-}
-
-pub(crate) fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
-    let mut command = match request.command.as_deref() {
-        Some(program) => CommandBuilder::new(program),
-        None => default_shell_command(),
-    };
-    command.args(&request.args);
-    if let Some(cwd) = request.cwd.as_deref() {
-        command.cwd(cwd);
-    }
-    // portable-pty inherits this process's environment, and a Windows GUI process carries neither
-    // variable, so every colour-capable CLI fell back to monochrome. The renderer is xterm.js on
-    // both platforms, so tell the child exactly what it is talking to.
-    command.env("TERM", "xterm-256color");
-    command.env("COLORTERM", "truecolor");
-    command
-}
-
-/// The shell a pane boots when the project names no command. portable-pty's default on Windows is
-/// %COMSPEC% — cmd.exe — where a developer's first `ls` answers "not recognized". A developer
-/// workspace boots a developer shell: pwsh if installed, Windows PowerShell otherwise, and cmd only
-/// when neither resolves. Unix keeps the login shell portable-pty already picks.
-#[cfg(windows)]
-pub(crate) fn default_shell_command() -> CommandBuilder {
-    for shell in ["pwsh.exe", "powershell.exe"] {
-        if resolves_on_path(shell) {
-            let mut command = CommandBuilder::new(shell);
-            // Skip the copyright banner; the user's profile still loads.
-            command.args(["-NoLogo"]);
-            return command;
+/// The broker binary: beside this executable in an installed app (Tauri sidecar), or in the
+/// broker crate's own target directory during development and `cargo test`.
+fn broker_binary() -> BrokerResult<PathBuf> {
+    let name = format!("talkak-dev-broker{}", std::env::consts::EXE_SUFFIX);
+    if let Ok(current) = std::env::current_exe() {
+        if let Some(dir) = current.parent() {
+            let sibling = dir.join(&name);
+            if sibling.is_file() {
+                return Ok(sibling);
+            }
         }
     }
-    CommandBuilder::new_default_prog()
-}
-
-#[cfg(not(windows))]
-pub(crate) fn default_shell_command() -> CommandBuilder {
-    CommandBuilder::new_default_prog()
-}
-
-#[cfg(windows)]
-fn resolves_on_path(program: &str) -> bool {
-    let Some(search_path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&search_path)
-        .filter(|directory| !directory.as_os_str().is_empty())
-        .any(|directory| directory.join(program).is_file())
-}
-
-fn pty_size(cols: u16, rows: u16) -> PtySize {
-    PtySize {
-        rows,
-        cols,
-        pixel_width: 0,
-        pixel_height: 0,
+    let crate_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for profile in ["debug", "release"] {
+        let dev = crate_dir
+            .join("../session-broker/target")
+            .join(profile)
+            .join(&name);
+        if dev.is_file() {
+            return Ok(dev);
+        }
     }
-}
-
-fn lock<'a, T>(mutex: &'a Mutex<T>, name: &str) -> Result<MutexGuard<'a, T>, RuntimeError> {
-    mutex
-        .lock()
-        .map_err(|_| RuntimeError::Internal(format!("{name} lock was poisoned")))
+    Err(BrokerError(
+        "session broker binary not found — build it with `cargo build` in session-broker/".into(),
+    ))
 }

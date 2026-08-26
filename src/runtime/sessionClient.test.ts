@@ -18,6 +18,7 @@ describe("session client", () => {
       exitCode: null,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     const invokeCommand: InvokeCommand = async <T>(
       command: string,
@@ -85,6 +86,7 @@ describe("session client", () => {
       exitCode: null,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     const client = {
       available: () => true,
@@ -128,6 +130,7 @@ describe("session client", () => {
       exitCode: null,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     let spawns = 0;
     const client = {
@@ -165,6 +168,7 @@ describe("session client", () => {
       exitCode: 0,
       readClosed: true,
       readError: null,
+      next: 0,
     };
     const restarted: SessionSnapshot = {
       sessionId: "session-1",
@@ -174,6 +178,7 @@ describe("session client", () => {
       exitCode: null,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     const operations: string[] = [];
     const client = {
@@ -217,6 +222,7 @@ describe("session client", () => {
       exitCode: 0,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     const client = {
       available: () => true,
@@ -250,6 +256,7 @@ describe("session client", () => {
       exitCode: 0,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     const restarted: SessionSnapshot = {
       sessionId: "session-1",
@@ -259,6 +266,7 @@ describe("session client", () => {
       exitCode: null,
       readClosed: false,
       readError: null,
+      next: 0,
     };
     const operations: string[] = [];
     const client = {

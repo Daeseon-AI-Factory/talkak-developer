@@ -167,7 +167,7 @@ export function SessionTerminal({
           reportRuntimeStatus("passive-probe", emptyRuntimeStatus("idle"));
           return;
         }
-        prepareRuntimeReplay(session.id, snapshot.runId);
+        prepareRuntimeReplay(session.id, snapshot.runId, snapshot.next);
         setRestartReady(!snapshot.running && snapshot.readClosed);
         const previous = currentRuntimeStatus("checking");
         const sameRun = previous.runId === snapshot.runId;
@@ -445,9 +445,12 @@ export function SessionTerminal({
     };
   }, [background, phase, session.id, t]);
 
-  function prepareRuntimeReplay(sessionId: string, runId: number) {
+  function prepareRuntimeReplay(sessionId: string, runId: number, highWater: number) {
     const observed = observedRuntimeCursors.get(sessionId);
-    replayThroughRef.current = observed?.runId === runId ? observed.next : 0;
+    // A fresh app process re-attaching to a broker-owned run has no observed cursor; the
+    // snapshot's high-water mark says where history ends, so the whole backlog replays with
+    // protocol responses suppressed instead of xterm answering stale queries into the live shell.
+    replayThroughRef.current = observed?.runId === runId ? observed.next : highWater;
     if (observed?.runId !== runId) observedRuntimeCursors.delete(sessionId);
   }
 
@@ -521,7 +524,7 @@ export function SessionTerminal({
         restartReady,
       );
       if (runtimeOperationsRef.current.epoch !== operationEpoch) return;
-      prepareRuntimeReplay(session.id, snapshot.runId);
+      prepareRuntimeReplay(session.id, snapshot.runId, snapshot.next);
       const nextPhase = terminalRuntimePhase("starting", snapshot.running, snapshot.readError);
       reportRuntimeStatus("runtime-event", {
         phase: nextPhase,
