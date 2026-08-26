@@ -31,6 +31,25 @@ export function terminalOutputDrained(running: boolean, bytesLength: number): bo
   return !running && bytesLength === 0;
 }
 
+/** The engine's per-read cap (MAX_READ_BYTES). A read this size means the buffer holds more. */
+export const FULL_READ_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * How long to wait before the next read. A backlog drains at RPC pace, not poll pace: switching
+ * back to a page remounts its terminal and replays the whole buffer, and at one chunk per poll
+ * interval a large scrollback was a visible seconds-long crawl from the top. A full chunk — or a
+ * finished session with bytes still queued — reads again immediately.
+ */
+export function nextReadDelayMs(
+  running: boolean,
+  bytesLength: number,
+  pollIntervalMs: number,
+): number {
+  if (bytesLength >= FULL_READ_CHUNK_BYTES) return 0;
+  if (!running && bytesLength > 0) return 0;
+  return pollIntervalMs;
+}
+
 export function partitionTerminalOutput(
   bytes: Uint8Array,
   start: number,

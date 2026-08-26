@@ -24,6 +24,7 @@ import {
 import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
 import {
+  nextReadDelayMs,
   partitionTerminalOutput,
   terminalOutputDrained,
   terminalPollingEnabled,
@@ -429,7 +430,7 @@ export function SessionTerminal({
         if (terminalReadShouldContinue(read.running, read.readClosed, read.bytes.length)) {
           timer = window.setTimeout(
             poll,
-            !read.running && read.bytes.length > 0 ? 0 : POLL_INTERVAL_MS,
+            nextReadDelayMs(read.running, read.bytes.length, POLL_INTERVAL_MS),
           );
         }
       } catch (cause: unknown) {

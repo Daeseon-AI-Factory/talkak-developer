@@ -1,6 +1,8 @@
 import { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 import {
+  FULL_READ_CHUNK_BYTES,
+  nextReadDelayMs,
   partitionTerminalOutput,
   terminalOutputDrained,
   terminalPollingEnabled,
@@ -64,5 +66,22 @@ describe("xterm protocol handling", () => {
     expect(terminalOutputDrained(false, 0)).toBe(true);
     expect(terminalOutputDrained(false, 1)).toBe(false);
     expect(terminalOutputDrained(true, 0)).toBe(false);
+  });
+});
+
+describe("read pacing", () => {
+  it("drains a backlog at RPC pace: a full chunk means the buffer holds more", () => {
+    expect(nextReadDelayMs(true, FULL_READ_CHUNK_BYTES, 75)).toBe(0);
+    expect(nextReadDelayMs(true, FULL_READ_CHUNK_BYTES + 1, 75)).toBe(0);
+  });
+
+  it("returns to poll pace once caught up on a live session", () => {
+    expect(nextReadDelayMs(true, 120, 75)).toBe(75);
+    expect(nextReadDelayMs(true, 0, 75)).toBe(75);
+  });
+
+  it("keeps draining a finished session immediately while bytes remain", () => {
+    expect(nextReadDelayMs(false, 120, 75)).toBe(0);
+    expect(nextReadDelayMs(false, 0, 75)).toBe(75);
   });
 });
