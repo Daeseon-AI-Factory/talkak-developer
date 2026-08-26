@@ -290,6 +290,12 @@ export default function App() {
       nextPage: () => workspace.cyclePage(1),
       previousPane: () => workspace.cyclePane(-1),
       nextPane: () => workspace.cyclePane(1),
+      ...Object.fromEntries(
+        Array.from({ length: 9 }, (_, index) => [
+          `focusPane${index + 1}`,
+          () => workspace.focusPaneAt(index),
+        ]),
+      ),
     },
   });
 

@@ -18,7 +18,8 @@ export type ShortcutCommandId =
   | "previousProject"
   | "nextProject"
   | "previousPane"
-  | "nextPane";
+  | "nextPane"
+  | `focusPane${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
 export interface ShortcutChord {
   code: string;
@@ -131,18 +132,20 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     windows: windows("KeyL", "L"),
     repeat: false,
   },
+  // One spatial scheme on both platforms: pages are a horizontal row (←/→), projects a vertical
+  // list (↑/↓). Windows used PgUp/PgDn here and read as a different product from the macOS build.
   {
     id: "previousPage",
     scope: "workspace",
     macos: mac("ArrowLeft", "←", { alt: true }),
-    windows: windows("PageUp", "PgUp"),
+    windows: windows("ArrowLeft", "←"),
     repeat: true,
   },
   {
     id: "nextPage",
     scope: "workspace",
     macos: mac("ArrowRight", "→", { alt: true }),
-    windows: windows("PageDown", "PgDn"),
+    windows: windows("ArrowRight", "→"),
     repeat: true,
   },
   {
@@ -175,6 +178,18 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     windows: windows("BracketRight", "]"),
     repeat: true,
   },
+  // Jump to the Nth split of the current page — the original product's number-key navigation.
+  // Matching is by event.code, so Shift changing the character on Windows does not matter.
+  ...Array.from({ length: 9 }, (_, index) => {
+    const digit = index + 1;
+    return {
+      id: `focusPane${digit}` as ShortcutCommandId,
+      scope: "workspace" as ShortcutScope,
+      macos: mac(`Digit${digit}`, String(digit)),
+      windows: windows(`Digit${digit}`, String(digit)),
+      repeat: false,
+    };
+  }),
 ] as const;
 
 export function shortcutDefinition(id: ShortcutCommandId): ShortcutDefinition {

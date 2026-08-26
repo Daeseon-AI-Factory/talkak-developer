@@ -58,12 +58,19 @@ export function ShortcutGuide({
           </button>
         </header>
         <div className="shortcut-guide__list">
-          {SHORTCUTS.map((definition) => (
-            <div key={definition.id}>
-              <span>{t(shortcutLabelKey(definition.id))}</span>
-              <kbd>{shortcutDisplay(platform, definition.id)}</kbd>
-            </div>
-          ))}
+          {SHORTCUTS.filter((definition) => !/^focusPane[2-9]$/.test(definition.id)).map(
+            (definition) => (
+              <div key={definition.id}>
+                <span>{t(shortcutLabelKey(definition.id))}</span>
+                <kbd>
+                  {definition.id === "focusPane1"
+                    ? // Nine sibling chords shown as one range row instead of nine rows.
+                      `${shortcutDisplay(platform, definition.id)}…9`
+                    : shortcutDisplay(platform, definition.id)}
+                </kbd>
+              </div>
+            ),
+          )}
         </div>
         <footer>{t("shortcuts.terminalSafe")}</footer>
       </dialog>
@@ -71,6 +78,13 @@ export function ShortcutGuide({
   );
 }
 
-function shortcutLabelKey(id: ShortcutCommandId): `shortcut.${ShortcutCommandId}` {
-  return `shortcut.${id}`;
+type GuideLabelKey = `shortcut.${Exclude<
+  ShortcutCommandId,
+  `focusPane${2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
+>}`;
+
+// The nine pane-jump chords share one translated label; only focusPane1 exists as a message key.
+function shortcutLabelKey(id: ShortcutCommandId): GuideLabelKey {
+  if (/^focusPane[2-9]$/.test(id)) return "shortcut.focusPane1";
+  return `shortcut.${id}` as GuideLabelKey;
 }

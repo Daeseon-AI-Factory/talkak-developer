@@ -59,8 +59,9 @@ describe("shortcut registry", () => {
 
 describe("paired shortcut display", () => {
   it("says a shared Windows modifier once instead of twice", () => {
-    // "Ctrl+Shift+PgUp · Ctrl+Shift+PgDn" overflowed the page hint and was cut mid-word.
-    expect(shortcutPairDisplay("windows", "previousPage", "nextPage")).toBe("Ctrl+Shift+PgUp/PgDn");
+    // A spelled-out pair ("Ctrl+Shift+← · Ctrl+Shift+→") overflowed the page hint and was cut
+    // mid-word; a shared prefix is said once.
+    expect(shortcutPairDisplay("windows", "previousPage", "nextPage")).toBe("Ctrl+Shift+←/→");
     expect(shortcutPairDisplay("windows", "previousPane", "nextPane")).toBe("Ctrl+Shift+[/]");
   });
 

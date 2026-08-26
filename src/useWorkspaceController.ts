@@ -408,6 +408,14 @@ export function useWorkspaceController({
     if (pane) focusWorkspacePane(pane.id, pane.sessionId);
   }
 
+  // Jump straight to the Nth pane of the current page, in layout order — the split-navigation
+  // muscle memory from the original product's number keys.
+  function focusPaneAt(index: number) {
+    if (!activePage) return;
+    const pane = listPanes(activePage.root)[index];
+    if (pane) focusWorkspacePane(pane.id, pane.sessionId);
+  }
+
   function installProject(project: Project, replacedPreviews: boolean) {
     const created = createInitialWorkspace([project], null);
     setPagesByProject((current) =>
@@ -471,6 +479,7 @@ export function useWorkspaceController({
     openSession,
     cyclePage,
     cyclePane,
+    focusPaneAt,
     installProject,
     markLaunchHandled,
     updateRuntimeObservation,
