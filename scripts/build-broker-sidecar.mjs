@@ -9,9 +9,13 @@ import { fileURLToPath } from "node:url";
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)));
 
-execFileSync("cargo", ["build", "--release", "--manifest-path", join(repo, "session-broker", "Cargo.toml")], {
-  stdio: "inherit",
-});
+execFileSync(
+  "cargo",
+  ["build", "--release", "--manifest-path", join(repo, "session-broker", "Cargo.toml")],
+  {
+    stdio: "inherit",
+  },
+);
 
 const rustcInfo = execFileSync("rustc", ["-vV"], { encoding: "utf8" });
 const triple = rustcInfo.match(/^host: (.+)$/m)?.[1];

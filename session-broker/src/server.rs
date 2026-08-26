@@ -67,7 +67,18 @@ where
             continue;
         }
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(request) => dispatch(request, &runtime, store_dir.as_deref()),
+            Ok(request) => {
+                if let Request::Spawn(spawn) = &request {
+                    crate::logging::log(&format!("spawn requested: {}", spawn.session_id));
+                }
+                if let Request::Kill(run) = &request {
+                    crate::logging::log(&format!(
+                        "kill requested: {} run {}",
+                        run.session_id, run.run_id
+                    ));
+                }
+                dispatch(request, &runtime, store_dir.as_deref())
+            }
             Err(error) => Response::Error {
                 message: format!("bad request: {error}"),
             },
@@ -87,7 +98,13 @@ where
 }
 
 fn exit_if_idle(runtime: &SessionRuntime) {
-    if SHUTDOWN_REQUESTED.load(Ordering::SeqCst) || !runtime.has_running_sessions() {
+    let shutdown = SHUTDOWN_REQUESTED.load(Ordering::SeqCst);
+    let running = runtime.has_running_sessions();
+    crate::logging::log(&format!(
+        "connection closed: shutdown_requested={shutdown} sessions_running={running}"
+    ));
+    if shutdown || !running {
+        crate::logging::log("exiting: idle");
         std::process::exit(0);
     }
 }

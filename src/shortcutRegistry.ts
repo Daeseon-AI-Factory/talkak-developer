@@ -15,6 +15,8 @@ export type ShortcutCommandId =
   | "terminalLog"
   | "previousPage"
   | "nextPage"
+  | "previousProject"
+  | "nextProject"
   | "previousPane"
   | "nextPane";
 
@@ -141,6 +143,22 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     scope: "workspace",
     macos: mac("ArrowRight", "→", { alt: true }),
     windows: windows("PageDown", "PgDn"),
+    repeat: true,
+  },
+  {
+    // Global, unlike the page/pane cycles: switching project is how you leave any screen.
+    // The arrows mirror the sidebar's vertical project list, the way ←/→ mirror the page row.
+    id: "previousProject",
+    scope: "global",
+    macos: mac("ArrowUp", "↑", { alt: true }),
+    windows: windows("ArrowUp", "↑"),
+    repeat: true,
+  },
+  {
+    id: "nextProject",
+    scope: "global",
+    macos: mac("ArrowDown", "↓", { alt: true }),
+    windows: windows("ArrowDown", "↓"),
     repeat: true,
   },
   {

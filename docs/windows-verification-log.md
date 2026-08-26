@@ -11,6 +11,33 @@ Branch: `agent/developer-workspace-ci` at `bc8fd5b`.
 
 ---
 
+## W-009 — A broker died silently, stranding three live shells, and left no way to know why
+
+**Severity:** high — the persistence layer's failure mode was unobservable.
+**Status:** logging fixed in this branch; the death itself remains undiagnosed.
+
+First real morning with the broker build (installed 10:26, launched ~10:40): reattach WORKED —
+the user confirmed sessions survived an app restart. But by 11:0x the broker process (pid 27236)
+was gone while three pwsh children it had spawned (10:42:39, 10:45:43, 10:53:22) were still
+running, orphaned: a new broker has no handles to a dead broker's PTYs, so those shells can never
+be reached again. Session logs were written up to 10:54:4x, then nothing.
+
+The cause cannot be determined, and that is the finding: `spawn_detached` nulls stdio, so a
+detached broker's panic, error or exit reason went nowhere. `exit_if_idle` should not fire with
+running sessions; whether this was a panic unwinding through the serve loop, an OS-level kill, or
+a logic hole is unknowable after the fact.
+
+**Fix (observability):** `logging.rs` — an append-only lifecycle log at
+`%APPDATA%\dev.talkak.desktop\broker\broker.log`: startup (version/endpoint/store), spawn/kill
+requests, every connection close with the shutdown/running flags that feed the exit decision, the
+idle-exit itself, server errors, and a panic hook. The next death will name itself.
+
+**Left open:** orphan recovery. Stored session records do not carry child pids, so a fresh broker
+cannot adopt or reap another broker's children; orphans accumulate silently. Recorded here as the
+next broker work item.
+
+---
+
 ## W-008 — Selecting text and pressing Ctrl+C did not copy; it interrupted the running process
 
 **Severity:** high — reported from real use ("기본적인 복사도 안되냐").

@@ -10,6 +10,7 @@
 //! The app keeps the same ten call signatures and forwards them over a local transport.
 
 pub mod detach;
+pub mod logging;
 pub mod protocol;
 pub mod runtime;
 #[cfg(feature = "server")]

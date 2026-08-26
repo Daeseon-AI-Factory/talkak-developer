@@ -62,12 +62,7 @@ fn pressing_tab_completes_a_path_in_the_default_shell() {
 }
 
 /// Polls the replay buffer from `after` until `check` passes; returns the cursor reached.
-fn wait_for(
-    runtime: &SessionRuntime,
-    after: u64,
-    check: impl Fn(&str) -> bool,
-    what: &str,
-) -> u64 {
+fn wait_for(runtime: &SessionRuntime, after: u64, check: impl Fn(&str) -> bool, what: &str) -> u64 {
     let deadline = Instant::now() + Duration::from_secs(20);
     let mut collected = String::new();
     let mut cursor = after;

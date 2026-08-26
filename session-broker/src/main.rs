@@ -20,6 +20,17 @@ fn main() {
         let _ = std::fs::create_dir_all(parent);
     }
 
+    // The log lives beside the broker's own executable copy: <app-data>/broker/broker.log.
+    session_broker::logging::init(store_dir.as_ref().and_then(|dir| {
+        std::path::Path::new(dir)
+            .parent()
+            .map(|data| data.join("broker").join("broker.log"))
+    }));
+    session_broker::logging::log(&format!(
+        "starting {} endpoint={endpoint} store={store_dir:?}",
+        env!("CARGO_PKG_VERSION")
+    ));
+
     let runtime = match &store_dir {
         Some(dir) => SessionRuntime::with_store(SessionStore::at(std::path::PathBuf::from(dir))),
         None => SessionRuntime::default(),
@@ -53,6 +64,7 @@ fn main() {
         }
     };
     if let Err(e) = result {
+        session_broker::logging::log(&format!("exiting: server error: {e}"));
         eprintln!("session-broker: server error: {e}");
         std::process::exit(1);
     }

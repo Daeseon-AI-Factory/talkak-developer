@@ -156,6 +156,13 @@ export default function App() {
     setInspectorMode(null);
   }
 
+  function cycleProject(direction: -1 | 1) {
+    if (projects.length < 2) return;
+    const index = projects.findIndex((project) => project.id === activeProject.id);
+    const next = projects[(index + direction + projects.length) % projects.length];
+    selectProject(next.id);
+  }
+
   function openSession(projectId: string, sessionId: string) {
     workspace.openSession(projectId, sessionId);
     setActiveSection("workspace");
@@ -264,6 +271,8 @@ export default function App() {
       },
       settings: () => setActiveSection("settings"),
       toggleSidebar: cycleSidebar,
+      previousProject: () => cycleProject(-1),
+      nextProject: () => cycleProject(1),
       newPage: workspace.createWorkspacePage,
       splitRight: () => activePane && workspace.splitActivePane(activePane.id, "horizontal"),
       splitDown: () => activePane && workspace.splitActivePane(activePane.id, "vertical"),
