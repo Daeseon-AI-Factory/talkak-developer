@@ -15,6 +15,7 @@ import "./styles/shell-layout.css";
 import "./styles/attention-settings.css";
 import "./styles/adaptive.css";
 import "./styles/project-dialog.css";
+import "./styles/confirm.css";
 import "./styles/shortcut-guide.css";
 
 declare const __TALKAK_WEBDRIVER_CI__: boolean;

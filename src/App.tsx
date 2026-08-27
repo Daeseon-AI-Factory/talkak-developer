@@ -1,10 +1,14 @@
+import { invoke, isTauri } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { presentationModeForWidth } from "./adaptiveLayout";
+import { type SessionKill, runningSessionKills } from "./appQuit";
 import { resolveAttentionRequest } from "./attentionModel";
 import { AttentionCenter } from "./components/AttentionCenter";
 import { BackgroundSessionRuntimes } from "./components/BackgroundSessionRuntimes";
 import { ActivityView, SessionsView } from "./components/CollectionViews";
 import { CommandPalette } from "./components/CommandPalette";
+import { ConfirmDialog } from "./components/ConfirmDialog";
 import { Icon } from "./components/Icon";
 import { MobileDock } from "./components/MobileDock";
 import { type MobileSessionTab, MobileSessionView } from "./components/MobileSessionView";
@@ -155,6 +159,38 @@ export default function App() {
     setActiveSection("workspace");
     setInspectorMode(null);
   }
+
+  // The window X asks before anything dies. projectsRef keeps the close handler — registered
+  // once with the OS — reading current state instead of its mount-time snapshot.
+  const [quitKills, setQuitKills] = useState<SessionKill[] | null>(null);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void getCurrentWindow()
+      .onCloseRequested((event) => {
+        // Always take over the close: quitting goes through app_quit so no window-destroy
+        // permission is involved, and an accidental X never silently strands running agents.
+        event.preventDefault();
+        const kills = runningSessionKills(projectsRef.current);
+        if (kills.length === 0) {
+          void invoke("app_quit", { kills: [] });
+          return;
+        }
+        setQuitKills(kills);
+      })
+      .then((dispose) => {
+        if (disposed) dispose();
+        else unlisten = dispose;
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   function cycleProject(direction: -1 | 1) {
     if (projects.length < 2) return;
@@ -549,6 +585,27 @@ export default function App() {
         project={projectRegistry.editingProject}
         onClose={projectRegistry.closeProjectEditor}
         onSave={saveProject}
+      />
+      <ConfirmDialog
+        open={quitKills !== null}
+        title={t("quit.title")}
+        body={t("quit.body", { count: quitKills?.length ?? 0 })}
+        cancelLabel={t("quit.cancel")}
+        onCancel={() => setQuitKills(null)}
+        actions={[
+          {
+            label: t("quit.killAll"),
+            detail: t("quit.killAllDetail"),
+            tone: "danger",
+            onSelect: () => void invoke("app_quit", { kills: quitKills ?? [] }),
+          },
+          {
+            label: t("quit.keep"),
+            detail: t("quit.keepDetail"),
+            tone: "primary",
+            onSelect: () => void invoke("app_quit", { kills: [] }),
+          },
+        ]}
       />
     </div>
   );

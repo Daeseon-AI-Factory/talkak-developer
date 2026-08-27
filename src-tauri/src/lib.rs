@@ -25,6 +25,22 @@ struct HostInfo {
     supports_wsl_discovery: bool,
 }
 
+/// Quit chosen from the close-confirmation dialog. `kills` carries the sessions the user chose to
+/// stop (each kill sweeps the session's whole process tree); an empty list is the keep-running
+/// choice — the broker holds the sessions and the next launch reattaches. Individual kill
+/// failures (a run that just exited on its own) must not block quitting.
+#[tauri::command]
+fn app_quit(
+    app: tauri::AppHandle,
+    runtime: tauri::State<'_, SessionRuntime>,
+    kills: Vec<session_runtime::RunSessionRequest>,
+) {
+    for request in kills {
+        let _ = runtime.kill(request);
+    }
+    app.exit(0);
+}
+
 #[tauri::command]
 fn host_info() -> HostInfo {
     HostInfo {
@@ -54,6 +70,7 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            app_quit,
             host_info,
             project_validate_path,
             project_validate_command,

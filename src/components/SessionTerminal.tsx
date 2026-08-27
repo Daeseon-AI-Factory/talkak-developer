@@ -42,6 +42,7 @@ import {
   updateRetainedCursor,
 } from "../terminalInstances";
 import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 const POLL_INTERVAL_MS = 75;
 
@@ -91,6 +92,9 @@ export function SessionTerminal({
   // A saved profile can name an executable that no longer resolves. Knowing that before the user
   // presses anything is what keeps this launcher down to one honest button.
   const [commandMissing, setCommandMissing] = useState(false);
+  // Stopping kills the session's whole process tree — an agent mid-task included — so the button
+  // asks first.
+  const [confirmStop, setConfirmStop] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const terminalRef = useRef<XTerm | null>(null);
   const cursorRef = useRef(0);
@@ -755,7 +759,7 @@ export function SessionTerminal({
             className="terminal-stop"
             type="button"
             data-testid="stop-session"
-            onClick={() => void stop()}
+            onClick={() => setConfirmStop(true)}
           >
             {t("terminal.stop")}
           </button>
@@ -772,6 +776,23 @@ export function SessionTerminal({
           </button>
         ) : null}
       </footer>
+      <ConfirmDialog
+        open={confirmStop}
+        title={t("terminal.stopConfirmTitle")}
+        body={t("terminal.stopConfirmBody", { session: text(session.title) })}
+        cancelLabel={t("terminal.stopConfirmCancel")}
+        onCancel={() => setConfirmStop(false)}
+        actions={[
+          {
+            label: t("terminal.stopConfirm"),
+            tone: "danger",
+            onSelect: () => {
+              setConfirmStop(false);
+              void stop();
+            },
+          },
+        ]}
+      />
     </>
   );
 }
