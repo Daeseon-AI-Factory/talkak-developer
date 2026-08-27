@@ -1,0 +1,73 @@
+import type { FitAddon } from "@xterm/addon-fit";
+import type { Terminal } from "@xterm/xterm";
+
+/**
+ * Resizing a pane — dragging a split, snapping the window to half the screen — makes xterm reflow
+ * its lines, and reflow drops the viewport to the bottom. Unthrottled, a ResizeObserver fires that
+ * many times per drag, so scrollback appeared to race past on every resize.
+ *
+ * Two rules fix it: coalesce fits to one per animation frame, and put the viewport back where the
+ * reader left it. Someone already at the bottom stays at the bottom — that is where new output
+ * belongs.
+ */
+
+/**
+ * The line to scroll back to after a reflow, or null to leave the viewport alone.
+ *
+ * `baseY` is the top line of the scrollback's live region and `viewportY` the top line on screen,
+ * so `baseY - viewportY` is how far the reader had scrolled UP. Reflow changes `baseY` (lines
+ * rewrap), so the distance from the bottom is what survives a resize, not the absolute line.
+ */
+export function preservedScrollLine(
+  beforeBaseY: number,
+  beforeViewportY: number,
+  afterBaseY: number,
+): number | null {
+  const scrolledUpBy = beforeBaseY - beforeViewportY;
+  if (scrolledUpBy <= 0) return null;
+  return Math.max(0, afterBaseY - scrolledUpBy);
+}
+
+export interface TerminalFitter {
+  /** Request a fit; repeated calls within one frame collapse into a single reflow. */
+  schedule: () => void;
+  dispose: () => void;
+}
+
+export function createTerminalFitter(
+  terminal: Terminal,
+  fitAddon: FitAddon,
+  host: () => HTMLElement | null,
+  onError?: (cause: unknown) => void,
+  onSuccess?: () => void,
+): TerminalFitter {
+  let frame: number | undefined;
+
+  const fit = () => {
+    frame = undefined;
+    const element = host();
+    if (!element || element.clientWidth === 0 || element.clientHeight === 0) return;
+    const before = terminal.buffer.active;
+    const beforeBaseY = before.baseY;
+    const beforeViewportY = before.viewportY;
+    try {
+      fitAddon.fit();
+      const line = preservedScrollLine(beforeBaseY, beforeViewportY, terminal.buffer.active.baseY);
+      if (line !== null) terminal.scrollToLine(line);
+      onSuccess?.();
+    } catch (cause: unknown) {
+      onError?.(cause);
+    }
+  };
+
+  return {
+    schedule: () => {
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(fit);
+    },
+    dispose: () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = undefined;
+    },
+  };
+}

@@ -34,6 +34,7 @@ import {
 } from "../runtime/terminalReplay";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
 import { attachTerminalClipboard } from "../terminalClipboard";
+import { createTerminalFitter } from "../terminalFit";
 import {
   releaseTerminal,
   resetRetainedRun,
@@ -366,31 +367,25 @@ export function SessionTerminal({
             },
           );
         });
-        const fit = () => {
-          if (
-            !hostRef.current ||
-            hostRef.current.clientWidth === 0 ||
-            hostRef.current.clientHeight === 0
-          )
-            return;
-          try {
-            fitAddon.fit();
-            clearRuntimeFault("attach");
-          } catch (cause: unknown) {
-            reportRuntimeFault("attach", cause);
-          }
-        };
+        const fitter = createTerminalFitter(
+          terminal,
+          fitAddon,
+          () => hostRef.current,
+          (cause) => reportRuntimeFault("attach", cause),
+          () => clearRuntimeFault("attach"),
+        );
         const frame = requestAnimationFrame(() => {
-          fit();
+          fitter.schedule();
           if (focusedRef.current && canMoveTerminalFocus()) terminal.focus();
         });
-        const observer = new ResizeObserver(fit);
+        const observer = new ResizeObserver(fitter.schedule);
         observer.observe(hostRef.current);
         disposeTerminal = () => {
           disposed = true;
           if (outputWriterRef.current === enqueueOutput) outputWriterRef.current = null;
           for (const finish of [...activeWrites]) finish();
           cancelAnimationFrame(frame);
+          fitter.dispose();
           observer.disconnect();
           sendInput.dispose();
           sendResize.dispose();

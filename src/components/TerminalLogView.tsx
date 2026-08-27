@@ -6,6 +6,7 @@ import { errorMessage, sessionClient } from "../runtime/sessionClient";
 import { initialSessionLogCursor, readSessionLogFrame } from "../runtime/sessionLogModel";
 import { terminalReadShouldContinue } from "../runtime/terminalReplay";
 import { attachTerminalClipboard } from "../terminalClipboard";
+import { createTerminalFitter } from "../terminalFit";
 import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
 
 // Exact internal polling intervals, not product latency guarantees.
@@ -53,22 +54,14 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
         terminal.open(hostRef.current);
         attachTerminalClipboard(terminal, platformFromUserAgent(navigator.userAgent));
 
-        const fit = () => {
-          if (
-            !hostRef.current ||
-            hostRef.current.clientWidth === 0 ||
-            hostRef.current.clientHeight === 0
-          ) {
-            return;
-          }
-          try {
-            fitAddon.fit();
-          } catch (cause: unknown) {
-            setError(errorMessage(cause));
-          }
-        };
-        const frame = requestAnimationFrame(fit);
-        const observer = new ResizeObserver(fit);
+        const fitter = createTerminalFitter(
+          terminal,
+          fitAddon,
+          () => hostRef.current,
+          (cause) => setError(errorMessage(cause)),
+        );
+        const frame = requestAnimationFrame(fitter.schedule);
+        const observer = new ResizeObserver(fitter.schedule);
         observer.observe(hostRef.current);
 
         let cursor = initialSessionLogCursor;
@@ -105,6 +98,7 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
         disposeTerminal = () => {
           if (timer !== undefined) window.clearTimeout(timer);
           cancelAnimationFrame(frame);
+          fitter.dispose();
           observer.disconnect();
           terminal.dispose();
         };
