@@ -46,6 +46,11 @@ pub enum Response {
         broker_version: String,
         pid: u32,
         store_dir: Option<String>,
+        /// Whether this broker serves connections concurrently. A broker predating that fix
+        /// answers one client at a time, so a client MUST hold a single connection with it or a
+        /// second one waits forever — the default is deliberately the safe, old behaviour.
+        #[serde(default)]
+        concurrent: bool,
     },
     Snapshot(SessionSnapshot),
     MaybeSnapshot(Option<SessionSnapshot>),

@@ -16,7 +16,7 @@ use session_broker::{Request, Response, PROTOCOL_VERSION};
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// Broker errors surface as their message: the engine already prefixes them
@@ -44,9 +44,19 @@ struct Connection {
     reader: BufReader<Stream>,
 }
 
-/// Idle connections kept for reuse. Enough for every visible pane's poll plus keystrokes without
-/// growing without bound; the broker serves connections concurrently.
-const MAX_IDLE_CONNECTIONS: usize = 8;
+/// Connection ceiling once the broker says it serves clients concurrently — enough for every
+/// visible pane's poll plus keystrokes, without growing unbounded.
+const MAX_CONNECTIONS: usize = 8;
+
+/// A bounded connection pool. The limit starts at ONE and only opens up when a broker's handshake
+/// says it serves connections concurrently: a broker predating that fix answers one client at a
+/// time, so a second connection to it would wait forever. Requests beyond the limit wait for a
+/// connection to come back rather than opening one that cannot be served.
+struct Pool {
+    idle: Vec<Connection>,
+    outstanding: usize,
+    limit: usize,
+}
 
 pub(crate) struct SessionRuntime {
     endpoint: String,
@@ -55,7 +65,8 @@ pub(crate) struct SessionRuntime {
     /// A POOL, not one connection: the protocol is lockstep per connection, so a single shared one
     /// made every pane's poll and every keystroke queue single-file — a keystroke's write waited
     /// out whatever read was in flight. Each request checks a connection out exclusively.
-    idle: Mutex<Vec<Connection>>,
+    pool: Mutex<Pool>,
+    available: Condvar,
     /// Serialises broker startup so a burst of first requests spawns one broker, not eight.
     launch: Mutex<()>,
 }
@@ -74,7 +85,12 @@ impl SessionRuntime {
             endpoint,
             store_dir: data_dir.as_ref().map(|dir| dir.join("sessions")),
             data_dir,
-            idle: Mutex::new(Vec::new()),
+            pool: Mutex::new(Pool {
+                idle: Vec::new(),
+                outstanding: 0,
+                limit: 1,
+            }),
+            available: Condvar::new(),
             launch: Mutex::new(()),
         }
     }
@@ -165,10 +181,7 @@ impl SessionRuntime {
     /// cycle, not a failure.
     fn request(&self, request: &Request) -> BrokerResult<Response> {
         for attempt in 0..2 {
-            let mut connection = match self.checkout() {
-                Some(connection) => connection,
-                None => self.establish()?,
-            };
+            let mut connection = self.acquire()?;
             match exchange(&mut connection, request) {
                 Ok(Response::Error { message }) => {
                     self.release(connection);
@@ -179,25 +192,72 @@ impl SessionRuntime {
                     return Ok(response);
                 }
                 // A failed exchange leaves the connection's framing unknown: drop it, never pool it.
-                Err(error) if attempt == 1 => {
-                    return Err(BrokerError(format!("broker connection failed: {error}")))
+                Err(error) => {
+                    self.release_slot();
+                    if attempt == 1 {
+                        return Err(BrokerError(format!("broker connection failed: {error}")));
+                    }
                 }
-                Err(_) => {}
             }
         }
         unreachable!("both attempts return");
     }
 
-    fn checkout(&self) -> Option<Connection> {
-        self.idle.lock().ok()?.pop()
+    /// A pooled connection, a new one, or a wait until one frees up — never a connection beyond
+    /// what the broker on the other end can actually serve.
+    fn acquire(&self) -> BrokerResult<Connection> {
+        let mut pool = self
+            .pool
+            .lock()
+            .map_err(|_| BrokerError("broker pool lock poisoned".into()))?;
+        loop {
+            if let Some(connection) = pool.idle.pop() {
+                pool.outstanding += 1;
+                return Ok(connection);
+            }
+            if pool.outstanding < pool.limit {
+                pool.outstanding += 1;
+                drop(pool);
+                return self.establish().inspect_err(|_| self.release_slot());
+            }
+            pool = self
+                .available
+                .wait(pool)
+                .map_err(|_| BrokerError("broker pool lock poisoned".into()))?;
+        }
     }
 
     fn release(&self, connection: Connection) {
-        if let Ok(mut idle) = self.idle.lock() {
-            if idle.len() < MAX_IDLE_CONNECTIONS {
-                idle.push(connection);
+        if let Ok(mut pool) = self.pool.lock() {
+            pool.outstanding -= 1;
+            if pool.idle.len() < MAX_CONNECTIONS {
+                pool.idle.push(connection);
             }
         }
+        self.available.notify_one();
+    }
+
+    /// Give a slot back without pooling the connection — its framing is unknown after a failure.
+    fn release_slot(&self) {
+        if let Ok(mut pool) = self.pool.lock() {
+            pool.outstanding = pool.outstanding.saturating_sub(1);
+        }
+        self.available.notify_one();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn connection_limit(&self) -> usize {
+        self.pool.lock().map(|pool| pool.limit).unwrap_or(0)
+    }
+
+    /// Raised only by a broker that says it serves clients concurrently.
+    fn allow_concurrent_connections(&self) {
+        if let Ok(mut pool) = self.pool.lock() {
+            if pool.limit < MAX_CONNECTIONS {
+                pool.limit = MAX_CONNECTIONS;
+            }
+        }
+        self.available.notify_all();
     }
 
     /// Connect to a live broker or start one, then verify the protocol. A stale broker from an
@@ -231,8 +291,15 @@ impl SessionRuntime {
             .map_err(|error| BrokerError(format!("broker handshake failed: {error}")))?;
             match hello {
                 Response::Hello {
-                    protocol_version, ..
-                } if protocol_version == PROTOCOL_VERSION => return Ok(connection),
+                    protocol_version,
+                    concurrent,
+                    ..
+                } if protocol_version == PROTOCOL_VERSION => {
+                    if concurrent {
+                        self.allow_concurrent_connections();
+                    }
+                    return Ok(connection);
+                }
                 Response::Hello { .. } => {
                     // Retire the stale broker; live sessions under an old protocol cannot be
                     // spoken to correctly anyway. The next loop iteration starts a fresh one.

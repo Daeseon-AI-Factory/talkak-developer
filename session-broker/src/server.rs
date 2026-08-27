@@ -38,6 +38,7 @@ pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&s
             broker_version: env!("CARGO_PKG_VERSION").to_string(),
             pid: std::process::id(),
             store_dir: store_dir.map(str::to_string),
+            concurrent: true,
         },
         Request::Spawn(spawn) => reply(runtime.spawn(spawn), Response::Snapshot),
         Request::Snapshot(id) => reply(runtime.snapshot(id), Response::MaybeSnapshot),

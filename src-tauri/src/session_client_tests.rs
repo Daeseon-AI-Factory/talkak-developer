@@ -121,6 +121,29 @@ fn the_client_runs_a_full_session_lifecycle_through_a_detached_broker() {
     assert!(runtime.restorable().is_empty());
 }
 
+/// The pool must default to a SINGLE connection. A broker built before the concurrency fix —
+/// including one already running on a machine mid-upgrade — answers one client at a time, so a
+/// second connection to it waits forever. Only a handshake that says otherwise may open it up.
+#[test]
+fn the_pool_holds_to_one_connection_until_a_broker_says_it_serves_concurrently() {
+    let runtime = SessionRuntime::at_endpoint(unique_endpoint("limit"), None);
+    assert_eq!(runtime.connection_limit(), 1);
+}
+
+#[test]
+fn talking_to_a_concurrent_broker_opens_the_pool_up() {
+    let data = tempfile::tempdir().expect("data dir");
+    let runtime = SessionRuntime::at_endpoint(
+        unique_endpoint("concurrent"),
+        Some(data.path().to_path_buf()),
+    );
+    assert!(runtime.persists(), "the real broker should answer");
+    assert!(
+        runtime.connection_limit() > 1,
+        "a concurrent broker's handshake should raise the limit"
+    );
+}
+
 #[test]
 fn a_second_client_adopts_the_broker_and_finds_the_first_clients_session() {
     let data = tempfile::tempdir().expect("data dir");
