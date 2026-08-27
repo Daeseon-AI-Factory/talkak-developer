@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { type TerminalClipboardKeyEvent, terminalClipboardAction } from "./terminalClipboard";
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  type TerminalClipboardKeyEvent,
+  attachTerminalClipboard,
+  terminalClipboardAction,
+} from "./terminalClipboard";
 
 const key = (overrides: Partial<TerminalClipboardKeyEvent>): TerminalClipboardKeyEvent => ({
   type: "keydown",
@@ -66,5 +70,69 @@ describe("terminal clipboard keys", () => {
     expect(
       terminalClipboardAction(key({ code: "KeyC", ctrlKey: true, metaKey: true }), true, "windows"),
     ).toBe("passthrough");
+  });
+});
+
+describe("clipboard failures are surfaced, never swallowed", () => {
+  const terminal = (selection: string) =>
+    ({
+      hasSelection: () => selection.length > 0,
+      getSelection: () => selection,
+      clearSelection: () => {
+        cleared = true;
+      },
+      paste: (text: string) => {
+        pasted = text;
+      },
+      attachCustomKeyEventHandler: (handler: (event: KeyboardEvent) => boolean) => {
+        press = handler;
+      },
+    }) as unknown as Parameters<typeof attachTerminalClipboard>[0];
+
+  let press: (event: KeyboardEvent) => boolean;
+  let cleared = false;
+  let pasted = "";
+
+  beforeEach(() => {
+    cleared = false;
+    pasted = "";
+  });
+
+  it("keeps the selection and reports the reason when a copy is refused", async () => {
+    const errors: string[] = [];
+    attachTerminalClipboard(
+      terminal("some output"),
+      "windows",
+      {
+        writeText: () => Promise.reject(new Error("clipboard unavailable: denied")),
+        readText: () => Promise.resolve(""),
+      },
+      (message) => errors.push(message),
+    );
+    press(key({ code: "KeyC", ctrlKey: true }) as unknown as KeyboardEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cleared).toBe(false);
+    expect(errors[0]).toContain("copy failed");
+    expect(errors[0]).toContain("denied");
+  });
+
+  it("clears the selection only once the write actually lands", async () => {
+    attachTerminalClipboard(terminal("some output"), "windows", {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve(""),
+    });
+    press(key({ code: "KeyC", ctrlKey: true }) as unknown as KeyboardEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cleared).toBe(true);
+  });
+
+  it("pastes what the OS clipboard holds", async () => {
+    attachTerminalClipboard(terminal(""), "windows", {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve("pasted text"),
+    });
+    press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as unknown as KeyboardEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pasted).toBe("pasted text");
   });
 });

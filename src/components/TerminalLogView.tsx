@@ -52,7 +52,12 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
         const fitAddon = new FitAddon();
         terminal.loadAddon(fitAddon);
         terminal.open(hostRef.current);
-        attachTerminalClipboard(terminal, platformFromUserAgent(navigator.userAgent));
+        attachTerminalClipboard(
+          terminal,
+          platformFromUserAgent(navigator.userAgent),
+          undefined,
+          setError,
+        );
 
         const fitter = createTerminalFitter(
           terminal,

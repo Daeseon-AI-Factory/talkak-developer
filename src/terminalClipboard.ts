@@ -1,5 +1,6 @@
 import type { Terminal } from "@xterm/xterm";
 import type { DesktopPlatform } from "./platform";
+import { type ClipboardClient, clipboardClient } from "./runtime/clipboardClient";
 
 /**
  * Clipboard keys for a terminal pane, the way Windows Terminal settled them: Ctrl+C copies when
@@ -36,23 +37,38 @@ export function terminalClipboardAction(
  * Wires the decision above into an xterm instance. Returns false to xterm exactly when the key was
  * consumed here, so a copy never doubles as an interrupt.
  */
-export function attachTerminalClipboard(terminal: Terminal, platform: DesktopPlatform): void {
+export function attachTerminalClipboard(
+  terminal: Terminal,
+  platform: DesktopPlatform,
+  clipboard: ClipboardClient = clipboardClient,
+  onError?: (message: string) => void,
+): void {
+  const report = (verb: string) => (cause: unknown) =>
+    onError?.(`${verb}: ${cause instanceof Error ? cause.message : String(cause)}`);
+
   terminal.attachCustomKeyEventHandler((event) => {
     const action = terminalClipboardAction(event, terminal.hasSelection(), platform);
     if (action === "copy") {
       const selection = terminal.getSelection();
       if (selection) {
-        // Failure leaves the selection in place, so the user sees the copy did not take.
-        void navigator.clipboard.writeText(selection).then(() => terminal.clearSelection());
+        // The selection is cleared only once the write actually lands, so a failed copy stays
+        // visibly selected instead of looking like it worked.
+        void clipboard
+          .writeText(selection)
+          .then(() => terminal.clearSelection())
+          .catch(report("copy failed"));
       }
       return false;
     }
     if (action === "paste") {
-      void navigator.clipboard.readText().then((text) => {
-        // terminal.paste() routes through onData with bracketed-paste framing, the same path
-        // typed input takes, so a read-only terminal ignores it and a live one forwards it.
-        if (text) terminal.paste(text);
-      });
+      void clipboard
+        .readText()
+        .then((text) => {
+          // terminal.paste() routes through onData with bracketed-paste framing, the same path
+          // typed input takes, so a read-only terminal ignores it and a live one forwards it.
+          if (text) terminal.paste(text);
+        })
+        .catch(report("paste failed"));
       return false;
     }
     return true;

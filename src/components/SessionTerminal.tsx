@@ -277,7 +277,12 @@ export function SessionTerminal({
           terminal.open(hostRef.current);
           retainTerminal(session.id, { terminal, fitAddon, runId: currentRunId, cursor: 0 });
         }
-        attachTerminalClipboard(terminal, platformFromUserAgent(navigator.userAgent));
+        attachTerminalClipboard(
+          terminal,
+          platformFromUserAgent(navigator.userAgent),
+          undefined,
+          setError,
+        );
         terminalRef.current = terminal;
         let writeChain = Promise.resolve();
         const activeWrites = new Set<() => void>();
@@ -739,7 +744,7 @@ export function SessionTerminal({
         <div className="terminal-host" ref={hostRef} />
       </div>
       <footer className="terminal-pane__footer">
-        <span className="live-label">LIVE PTY</span>
+        <span className="live-label">{t("inspector.terminalLive")}</span>
         <span data-testid="runtime-phase" data-phase={phase}>
           {runtimePhaseLabel(phase, exitCode)}
         </span>
