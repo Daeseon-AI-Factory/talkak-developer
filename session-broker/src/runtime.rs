@@ -416,6 +416,7 @@ impl SessionRuntime {
             }
             return Err(RuntimeError::Process(error.to_string()));
         }
+        sweep_process_tree(process.process_id);
         process.snapshot()
     }
 
@@ -708,6 +709,26 @@ fn validate_run_id(process: &SessionProcess, run_id: u64) -> Result<(), RuntimeE
     }
     Err(RuntimeError::Process("session run changed".into()))
 }
+
+/// Killing the shell is not killing the session's work: on Windows the shell's children — an agent
+/// CLI mid-run — survive `child.kill()` and keep running blind, holding their own session files
+/// open. Sweep the whole tree, best-effort; the shell itself is already dead or dying.
+#[cfg(windows)]
+fn sweep_process_tree(process_id: Option<u32>) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let Some(pid) = process_id else { return };
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// On unix the PTY teardown delivers SIGHUP to the session's process group already.
+#[cfg(not(windows))]
+fn sweep_process_tree(_process_id: Option<u32>) {}
 
 pub fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
     let mut command = match request.command.as_deref() {

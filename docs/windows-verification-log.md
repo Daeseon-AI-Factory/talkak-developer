@@ -11,7 +11,52 @@ Branch: `agent/developer-workspace-ci` at `bc8fd5b`.
 
 ---
 
-## W-009 — A broker died silently, stranding three live shells, and left no way to know why
+## W-011 — Stopping a session left its agent running blind, and `codex resume` locked out
+
+**Severity:** high — reported from real use; the recovery path was also blocked.
+**Status:** fixed in this branch (client-side immediately; engine-side with the next broker).
+
+A pane's shell died (닫기/종료 or its window closing), but the agent CLI running inside it —
+codex, mid-task since the previous day — survived the shell on Windows and kept working headless,
+holding its own session file open. A later `codex resume` then failed with "thread … already has
+an active writer": the orphan WAS the active writer, unreachable in any terminal.
+
+`child.kill()` (and a dying ConPTY) reaches the shell, not the shell's descendants. Fixed by
+sweeping the whole tree (`taskkill /T`, windowless, best-effort) after a kill, both in the app
+client (effective against the currently-running broker generation) and in the engine (for the
+next). Unix already gets this from SIGHUP to the session's process group.
+
+Recovery for an existing orphan: `taskkill /PID <codex pid> /T /F`, then `codex resume` — the
+rollout file carries the full conversation and the repository already holds the work.
+
+---
+
+## W-010 — A version-named broker copy pinned every later build to day one's binary
+
+**Severity:** medium — invisible until a broker restart was expected to pick up fixes.
+**Status:** fixed in this branch.
+
+The app runs the broker from a copy named `talkak-dev-broker-<version>.exe` under the app data
+directory (W-005's reinstall-lock fix). During development the version never moved, and the copy
+was locked by the running broker — so the copy step silently kept day one's binary, and five
+subsequent builds (including the broker's own lifecycle logging) never reached a newly spawned
+broker. The copy name now carries the binary size alongside the version, so a changed build gets a
+new file and a fresh spawn runs it. A LIVE broker is deliberately left alone: sessions outrank
+freshness, and it is replaced the next time it exits idle.
+
+---
+
+## W-009 — CORRECTED: the broker never died; the monitoring searched the wrong process name
+
+**Original claim (wrong):** a broker died silently, stranding three shells.
+**What actually happened:** the broker process is named after its versioned copy —
+`talkak-dev-broker-0.1.0`, not `talkak-dev-broker` — and every `Get-Process -Name
+talkak-dev-broker` check missed it. Broker pid 27236, "dead" in the original entry, was alive the
+whole time and at the time of this correction had kept sessions across five app reinstalls and
+~23 hours, exactly as designed. The "orphaned shells" were its live sessions. The lifecycle-log
+gap the original entry fixed is still real (and that broker generation predates the logging, so
+its log's absence is expected — see W-010); the death it was written to explain never happened.
+Kept as a record of the misdiagnosis.
 
 **Severity:** high — the persistence layer's failure mode was unobservable.
 **Status:** logging fixed in this branch; the death itself remains undiagnosed.

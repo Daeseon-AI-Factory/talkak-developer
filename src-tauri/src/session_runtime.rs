@@ -109,7 +109,10 @@ impl SessionRuntime {
 
     pub(crate) fn kill(&self, request: RunSessionRequest) -> BrokerResult<SessionSnapshot> {
         match self.request(&Request::Kill(request))? {
-            Response::Snapshot(snapshot) => Ok(snapshot),
+            Response::Snapshot(snapshot) => {
+                sweep_process_tree(snapshot.process_id);
+                Ok(snapshot)
+            }
             other => Err(unexpected(other)),
         }
     }
@@ -233,13 +236,16 @@ impl SessionRuntime {
         let data_dir = self.data_dir.as_ref()?;
         let broker_dir = data_dir.join("broker");
         std::fs::create_dir_all(&broker_dir).ok()?;
+        let source_len = std::fs::metadata(source).ok()?.len();
+        // The name carries the binary size, not just the version: during development the version
+        // does not move, and a same-named copy locked by a running broker silently pinned every
+        // later build to the first day's binary.
         let file_name = format!(
-            "talkak-dev-broker-{}{}",
+            "talkak-dev-broker-{}-{source_len}{}",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::EXE_SUFFIX
         );
         let destination = broker_dir.join(file_name);
-        let source_len = std::fs::metadata(source).ok()?.len();
         let up_to_date = std::fs::metadata(&destination)
             .map(|meta| meta.len() == source_len)
             .unwrap_or(false);
@@ -253,6 +259,27 @@ impl SessionRuntime {
         Some(destination)
     }
 }
+
+/// Stopping a session kills the shell, but on Windows the shell's children — an agent CLI mid-run —
+/// survive it and keep working blind, holding their session files open (a later `codex resume`
+/// then fails on "already has an active writer"). Sweep the whole tree, best-effort: by the time
+/// this runs the engine has already killed the shell itself.
+#[cfg(windows)]
+fn sweep_process_tree(process_id: Option<u32>) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let Some(pid) = process_id else { return };
+    let _ = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// On unix the PTY teardown delivers SIGHUP to the session's process group already.
+#[cfg(not(windows))]
+fn sweep_process_tree(_process_id: Option<u32>) {}
 
 fn unexpected(response: Response) -> BrokerError {
     BrokerError(format!("unexpected broker response: {response:?}"))
