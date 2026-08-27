@@ -3,6 +3,12 @@
   overflow: hidden;
   border-left: 1px solid var(--border);
   background: rgba(10, 23, 27, 0.96);
+  /* Everything inside scales from this base (all inner sizes are em). The docked column stays
+     compact; the reading modal raises the base in shell-layout.css. The old absolute sizes went
+     down to 7px, which a 96-DPI display renders as smudge — legible only on the retina Mac this
+     was designed on. */
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .inspector__header {
@@ -22,13 +28,13 @@
 
 .inspector__header strong {
   margin-top: 3px;
-  font-size: 11px;
+  font-size: 1em;
 }
 
 .inspector__eyebrow {
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
   font-weight: 700;
   letter-spacing: calc(0.12em * var(--tracking));
 }
@@ -51,7 +57,7 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 9px;
+  font-size: 0.86em;
 }
 
 .inspector-tabs button[data-active="true"] {
@@ -76,7 +82,7 @@
   margin-bottom: 10px;
   color: var(--warning);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
   text-align: right;
 }
 
@@ -87,7 +93,7 @@
   gap: 10px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 0.8em;
 }
 
 .state-badge {
@@ -99,7 +105,7 @@
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.02);
   color: var(--text-secondary);
-  font-size: 8px;
+  font-size: 0.8em;
   white-space: nowrap;
 }
 
@@ -131,7 +137,7 @@
 
 .summary-hero h2 {
   margin: 14px 0 15px;
-  font-size: 15px;
+  font-size: 1.3em;
   letter-spacing: -0.025em;
   line-height: 1.4;
 }
@@ -156,7 +162,7 @@
   margin-top: 7px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
   text-align: right;
 }
 
@@ -168,7 +174,7 @@
   margin: 0 0 9px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 0.8em;
   letter-spacing: calc(0.1em * var(--tracking));
   text-transform: uppercase;
 }
@@ -194,7 +200,7 @@
 .file-row code {
   overflow: hidden;
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 0.9em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -202,7 +208,7 @@
 .decision-row > span {
   color: var(--success);
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: 0.92em;
 }
 
 .decision-row p,
@@ -210,7 +216,7 @@
 .summary-section__empty {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size: 1em;
   line-height: 1.55;
 }
 
@@ -229,7 +235,7 @@
 .next-step-card > span {
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
   font-weight: 700;
   letter-spacing: calc(0.12em * var(--tracking));
 }
@@ -245,7 +251,7 @@
   margin-bottom: 12px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
 }
 
 .conversation-entry {
@@ -277,7 +283,7 @@
 .conversation-entry strong {
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 0.92em;
 }
 
 .conversation-entry[data-author="you"] strong {
@@ -292,13 +298,13 @@
   color: var(--text-dim);
   /* A timestamp is data in columns: fixed-width keeps successive entries aligned. */
   font-family: var(--mono);
-  font-size: 7px;
+  font-size: 0.8em;
 }
 
 .conversation-entry p {
   margin: 0;
   color: var(--text-secondary);
-  font-size: 9px;
+  font-size: 1em;
   line-height: 1.55;
 }
 
@@ -308,7 +314,7 @@
   border: 1px dashed var(--border);
   border-radius: 8px;
   color: var(--text-dim);
-  font-size: 8px;
+  font-size: 0.8em;
   line-height: 1.5;
 }
 
@@ -326,7 +332,7 @@
   gap: 8px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
 }
 
 .terminal-log__meta span:first-child {
@@ -364,7 +370,7 @@
   place-items: center;
   padding: 18px;
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 0.86em;
   line-height: 1.5;
   text-align: center;
 }
@@ -374,7 +380,7 @@
   margin: 0;
   padding: 7px 8px;
   border-radius: 6px;
-  font-size: 8px;
+  font-size: 0.8em;
   line-height: 1.4;
 }
 
@@ -403,7 +409,7 @@
   background: rgba(10, 23, 27, 0.94);
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 0.8em;
 }
 
 .workspace-statusbar > span {
@@ -441,11 +447,11 @@
 
 .empty-workspace h2 {
   margin: 16px 0 7px;
-  font-size: 16px;
+  font-size: 1.4em;
 }
 
 .empty-workspace p {
   margin: 0 0 18px;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 0.92em;
 }

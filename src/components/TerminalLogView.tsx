@@ -44,7 +44,7 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
           disableStdin: true,
           screenReaderMode: true,
           fontFamily: TERMINAL_FONT_FAMILY,
-          fontSize: 11,
+          fontSize: 12,
           scrollback: 5000,
           theme: TERMINAL_THEME,
         });

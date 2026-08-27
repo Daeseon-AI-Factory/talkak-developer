@@ -417,6 +417,8 @@
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   box-shadow: var(--shadow);
+  /* The modal exists to be read; its whole em scale steps up from the docked column's base. */
+  font-size: 13.5px;
 }
 
 .inspector[data-pinned="false"] .inspector__content {
