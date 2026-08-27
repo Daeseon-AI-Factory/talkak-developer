@@ -22,6 +22,7 @@ interface PaneLayoutViewProps {
   onDetachPane: (paneId: string) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
   onLaunchHandled: (sessionId: string) => void;
+  onRename: (sessionId: string, name: string) => void;
   onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
@@ -55,6 +56,7 @@ export function PaneLayoutView(props: PaneLayoutViewProps) {
         onMove={() => props.onMovePane(pane.id)}
         onDetach={() => props.onDetachPane(pane.id)}
         onLaunchHandled={props.onLaunchHandled}
+        onRename={props.onRename}
         onRuntimeObservation={props.onRuntimeObservation}
       />
     );

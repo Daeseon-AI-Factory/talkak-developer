@@ -41,6 +41,7 @@ interface WorkspaceProps {
   onCloseInspector: () => void;
   onToggleInspectorPin: () => void;
   onLaunchHandled: (sessionId: string) => void;
+  onRename: (sessionId: string, name: string) => void;
   onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
@@ -70,6 +71,7 @@ export function Workspace({
   onCloseInspector,
   onToggleInspectorPin,
   onLaunchHandled,
+  onRename,
   onRuntimeObservation,
 }: WorkspaceProps) {
   const { t } = useI18n();
@@ -238,6 +240,7 @@ export function Workspace({
               onDetachPane={onDetachPane}
               onResizeSplit={onResizeSplit}
               onLaunchHandled={onLaunchHandled}
+              onRename={onRename}
               onRuntimeObservation={onRuntimeObservation}
             />
           </div>

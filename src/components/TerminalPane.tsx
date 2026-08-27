@@ -20,6 +20,7 @@ interface TerminalPaneProps {
   onMove: () => void;
   onDetach: () => void;
   onLaunchHandled: (sessionId: string) => void;
+  onRename: (sessionId: string, name: string) => void;
   onRuntimeObservation: (sessionId: string, observation: TerminalRuntimeObservation) => void;
 }
 
@@ -36,10 +37,12 @@ export function TerminalPane({
   onMove,
   onDetach,
   onLaunchHandled,
+  onRename,
   onRuntimeObservation,
 }: TerminalPaneProps) {
   const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const [runtimeAttached, setRuntimeAttached] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const paneRef = useRef<HTMLElement | null>(null);
   const sessionTitle = text(session.title);
   const runtime = runtimeAttached
@@ -79,7 +82,42 @@ export function TerminalPane({
         <div className="terminal-pane__title">
           <span className="terminal-pane__status" />
           <Icon name="terminal" size={16} />
-          <strong>{sessionTitle}</strong>
+          {renaming ? (
+            <input
+              className="terminal-pane__rename"
+              // Editing a name must not drag the pane out from under the cursor.
+              draggable={false}
+              onDragStart={(event) => event.stopPropagation()}
+              defaultValue={typeof session.title === "string" ? session.title : ""}
+              placeholder={t("terminal.renamePlaceholder")}
+              aria-label={t("terminal.rename")}
+              // biome-ignore lint/a11y/noAutofocus: opening the field is the request to type in it
+              autoFocus
+              onBlur={(event) => {
+                onRename(session.id, event.currentTarget.value);
+                setRenaming(false);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+                if (event.key === "Escape") {
+                  // Escape abandons the edit; blur would otherwise commit it.
+                  event.currentTarget.value =
+                    typeof session.title === "string" ? session.title : "";
+                  setRenaming(false);
+                }
+                event.stopPropagation();
+              }}
+            />
+          ) : (
+            <button
+              className="terminal-pane__rename-trigger"
+              type="button"
+              title={t("terminal.rename")}
+              onClick={() => setRenaming(true)}
+            >
+              <strong>{sessionTitle}</strong>
+            </button>
+          )}
           <span className="terminal-pane__profile">{text(session.profile)}</span>
         </div>
         <div className="terminal-pane__actions">

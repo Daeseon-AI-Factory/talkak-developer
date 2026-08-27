@@ -64,7 +64,7 @@ const ko = {
   "projectDialog.argumentsPlaceholder": "--mode\nreview",
   "projectDialog.argumentsHint": "빈 줄을 제외한 한 줄이 정확히 한 개의 인자로 전달됩니다.",
   "projectDialog.localOnly":
-    "프로젝트 설정과 페이지·세션 배치만 이 기기에 저장하며 터미널 출력은 저장하지 않습니다.",
+    "프로젝트 설정과 페이지·세션 배치를 이 기기에 저장합니다. 세션 복구를 위해 터미널 출력은 세션별 최대 4MB까지 로컬에 보관됩니다.",
   "projectDialog.cancel": "취소",
   "projectDialog.add": "프로젝트 추가",
   "projectDialog.update": "설정 저장",
@@ -155,6 +155,8 @@ const ko = {
   "terminal.defaultShell": "기본 터미널 · 설정된 AI 없음",
   "terminal.workingDirectory": "작업 폴더",
   "terminal.workingDirectoryPlaceholder": "절대 경로를 입력하거나 비워 홈 폴더에서 시작",
+  "terminal.rename": "세션 이름 바꾸기 — 무슨 작업인지 적어두기",
+  "terminal.renamePlaceholder": "예: 브로커 재접속 디버깅",
   "terminal.startShell": "세션 시작",
   "terminal.startDefaultShell": "기본 터미널로 시작",
   "terminal.launchCommandMissing":
@@ -187,7 +189,7 @@ const ko = {
   "inspector.terminal": "터미널",
   "inspector.conversation": "대화 로그",
   "inspector.terminalAria": "읽기 전용 실제 터미널 로그",
-  "inspector.terminalMemoryOnly": "메모리 제한 · 저장 안 함",
+  "inspector.terminalMemoryOnly": "로컬 복구 로그 · 세션별 최대 4MB",
   "inspector.terminalTruncated": "오래된 출력은 메모리 제한으로 생략되었습니다.",
   "inspector.terminalDesktopOnly": "실제 터미널 로그는 Talkak 데스크톱 앱에서 표시됩니다.",
   "inspector.terminalLoading": "로그 불러오는 중",
@@ -380,7 +382,7 @@ const en: Record<MessageKey, string> = {
   "projectDialog.argumentsPlaceholder": "--mode\nreview",
   "projectDialog.argumentsHint": "Each non-empty line is passed as exactly one argument.",
   "projectDialog.localOnly":
-    "Only project settings and page/session layout are stored on this device. Terminal output is not persisted.",
+    "Project settings and page/session layout are stored on this device. Terminal output is kept locally up to 4 MB per session for recovery.",
   "projectDialog.cancel": "Cancel",
   "projectDialog.add": "Add project",
   "projectDialog.update": "Save settings",
@@ -471,6 +473,8 @@ const en: Record<MessageKey, string> = {
   "terminal.defaultShell": "Default terminal · no agent configured",
   "terminal.workingDirectory": "Working directory",
   "terminal.workingDirectoryPlaceholder": "Enter an absolute path, or leave blank to start at home",
+  "terminal.rename": "Rename this session — note what it is for",
+  "terminal.renamePlaceholder": "e.g. debugging broker reattach",
   "terminal.startShell": "Start session",
   "terminal.startDefaultShell": "Start the default terminal",
   "terminal.launchCommandMissing":
@@ -503,7 +507,7 @@ const en: Record<MessageKey, string> = {
   "inspector.terminal": "Terminal",
   "inspector.conversation": "Conversation log",
   "inspector.terminalAria": "Read-only live terminal log",
-  "inspector.terminalMemoryOnly": "Memory-bounded · not saved",
+  "inspector.terminalMemoryOnly": "Local recovery log · up to 4 MB per session",
   "inspector.terminalTruncated": "Older output was omitted by the memory limit.",
   "inspector.terminalDesktopOnly": "The real terminal log is available in the Talkak desktop app.",
   "inspector.terminalLoading": "Loading log",

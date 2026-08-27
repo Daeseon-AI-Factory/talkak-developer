@@ -13,6 +13,7 @@ import {
 } from "./layoutModel";
 import { browserProjectStorage } from "./projectStore";
 import { createWorkspaceSession } from "./sessionModel";
+import { renamedSessionTitle } from "./sessionRename";
 import { applyRuntimeObservationToProjects } from "./sessionRuntimeState";
 import {
   createInitialWorkspace,
@@ -451,6 +452,26 @@ export function useWorkspaceController({
     );
   }
 
+  // Name a session for the work in it. A blank name returns the generated "Session N" title, so
+  // clearing the field is the way back rather than a dead end. Titles are LocalizedText, and a
+  // plain string is already a valid one — so a typed name persists through the workspace snapshot
+  // like any other title, and survives restarts.
+  function renameSession(sessionId: string, name: string) {
+    setProjects((current) =>
+      current.map((project) => {
+        if (!project.sessions.some((session) => session.id === sessionId)) return project;
+        return {
+          ...project,
+          sessions: project.sessions.map((session, index) =>
+            session.id === sessionId
+              ? { ...session, title: renamedSessionTitle(name, index + 1) }
+              : session,
+          ),
+        };
+      }),
+    );
+  }
+
   function updateRuntimeObservation(sessionId: string, observation: TerminalRuntimeObservation) {
     setProjects((current) => applyRuntimeObservationToProjects(current, sessionId, observation));
   }
@@ -482,6 +503,7 @@ export function useWorkspaceController({
     focusPaneAt,
     installProject,
     markLaunchHandled,
+    renameSession,
     updateRuntimeObservation,
   };
 }

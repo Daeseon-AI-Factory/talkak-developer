@@ -167,3 +167,35 @@
   color: var(--accent);
   font-size: 8px;
 }
+
+/* A session's name is the note that says what the pane is for, so it reads as text until
+   clicked — a button that looks like a heading, not a form field competing with the terminal. */
+.terminal-pane__rename-trigger {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: text;
+  font: inherit;
+  text-align: left;
+}
+
+.terminal-pane__rename-trigger:hover {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.terminal-pane__rename {
+  min-width: 0;
+  max-width: 22ch;
+  padding: 1px 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  outline: none;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+}

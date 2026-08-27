@@ -534,6 +534,7 @@ export default function App() {
             onCloseInspector={() => setInspectorMode(null)}
             onToggleInspectorPin={() => setInspectorPinned((current) => !current)}
             onLaunchHandled={workspace.markLaunchHandled}
+            onRename={workspace.renameSession}
             onRuntimeObservation={workspace.updateRuntimeObservation}
           />
         ) : null}
