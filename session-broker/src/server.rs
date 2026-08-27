@@ -11,7 +11,7 @@
 
 use crate::protocol::{Request, Response, PROTOCOL_VERSION};
 use crate::runtime::SessionRuntime;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
@@ -97,11 +97,32 @@ where
     }
 }
 
+static LIVE_CLIENTS: AtomicUsize = AtomicUsize::new(0);
+
+/// Serve a connection on its own task and keep accepting. Awaiting a connection inline meant the
+/// broker handled exactly ONE client at a time for that client's whole lifetime: with the app
+/// holding a permanent connection, every other connection hung forever, and the app's own panes
+/// queued single-file behind each other — the typing lag. The runtime is internally synchronised,
+/// so concurrent connections are safe.
+fn serve_detached<S>(stream: S, runtime: Arc<SessionRuntime>, store_dir: Option<String>)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    LIVE_CLIENTS.fetch_add(1, Ordering::SeqCst);
+    tokio::spawn(async move {
+        serve_connection(stream, Arc::clone(&runtime), store_dir).await;
+        // Only the last client leaving can retire the broker.
+        if LIVE_CLIENTS.fetch_sub(1, Ordering::SeqCst) == 1 {
+            exit_if_idle(&runtime);
+        }
+    });
+}
+
 fn exit_if_idle(runtime: &SessionRuntime) {
     let shutdown = SHUTDOWN_REQUESTED.load(Ordering::SeqCst);
     let running = runtime.has_running_sessions();
     crate::logging::log(&format!(
-        "connection closed: shutdown_requested={shutdown} sessions_running={running}"
+        "last client left: shutdown_requested={shutdown} sessions_running={running}"
     ));
     if shutdown || !running {
         crate::logging::log("exiting: idle");
@@ -126,8 +147,7 @@ pub async fn serve_unix(
     let listener = tokio::net::UnixListener::bind(socket_path)?;
     loop {
         let (stream, _) = listener.accept().await?;
-        serve_connection(stream, Arc::clone(&runtime), store_dir.clone()).await;
-        exit_if_idle(&runtime);
+        serve_detached(stream, Arc::clone(&runtime), store_dir.clone());
     }
 }
 
@@ -150,7 +170,6 @@ pub async fn serve_pipe(
         // The next instance exists before this connection is served, so a client arriving
         // mid-conversation is queued by the OS instead of rejected.
         server = ServerOptions::new().create(pipe_name)?;
-        serve_connection(connected, Arc::clone(&runtime), store_dir.clone()).await;
-        exit_if_idle(&runtime);
+        serve_detached(connected, Arc::clone(&runtime), store_dir.clone());
     }
 }

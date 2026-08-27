@@ -44,11 +44,20 @@ struct Connection {
     reader: BufReader<Stream>,
 }
 
+/// Idle connections kept for reuse. Enough for every visible pane's poll plus keystrokes without
+/// growing without bound; the broker serves connections concurrently.
+const MAX_IDLE_CONNECTIONS: usize = 8;
+
 pub(crate) struct SessionRuntime {
     endpoint: String,
     store_dir: Option<PathBuf>,
     data_dir: Option<PathBuf>,
-    connection: Mutex<Option<Connection>>,
+    /// A POOL, not one connection: the protocol is lockstep per connection, so a single shared one
+    /// made every pane's poll and every keystroke queue single-file — a keystroke's write waited
+    /// out whatever read was in flight. Each request checks a connection out exclusively.
+    idle: Mutex<Vec<Connection>>,
+    /// Serialises broker startup so a burst of first requests spawns one broker, not eight.
+    launch: Mutex<()>,
 }
 
 impl SessionRuntime {
@@ -65,7 +74,8 @@ impl SessionRuntime {
             endpoint,
             store_dir: data_dir.as_ref().map(|dir| dir.join("sessions")),
             data_dir,
-            connection: Mutex::new(None),
+            idle: Mutex::new(Vec::new()),
+            launch: Mutex::new(()),
         }
     }
 
@@ -150,30 +160,44 @@ impl SessionRuntime {
         }
     }
 
-    /// One lockstep exchange. A broken connection is re-established once — the broker may have
-    /// exited while idle, which is its normal life cycle, not a failure.
+    /// One lockstep exchange on a connection checked out of the pool. A broken connection is
+    /// dropped and retried once — the broker may have exited while idle, which is its normal life
+    /// cycle, not a failure.
     fn request(&self, request: &Request) -> BrokerResult<Response> {
-        let mut guard = self
-            .connection
-            .lock()
-            .map_err(|_| BrokerError("broker connection lock poisoned".into()))?;
         for attempt in 0..2 {
-            if guard.is_none() {
-                *guard = Some(self.establish()?);
-            }
-            let connection = guard.as_mut().expect("connection just established");
-            match exchange(connection, request) {
-                Ok(Response::Error { message }) => return Err(BrokerError(message)),
-                Ok(response) => return Ok(response),
-                Err(error) => {
-                    *guard = None;
-                    if attempt == 1 {
-                        return Err(BrokerError(format!("broker connection failed: {error}")));
-                    }
+            let mut connection = match self.checkout() {
+                Some(connection) => connection,
+                None => self.establish()?,
+            };
+            match exchange(&mut connection, request) {
+                Ok(Response::Error { message }) => {
+                    self.release(connection);
+                    return Err(BrokerError(message));
                 }
+                Ok(response) => {
+                    self.release(connection);
+                    return Ok(response);
+                }
+                // A failed exchange leaves the connection's framing unknown: drop it, never pool it.
+                Err(error) if attempt == 1 => {
+                    return Err(BrokerError(format!("broker connection failed: {error}")))
+                }
+                Err(_) => {}
             }
         }
         unreachable!("both attempts return");
+    }
+
+    fn checkout(&self) -> Option<Connection> {
+        self.idle.lock().ok()?.pop()
+    }
+
+    fn release(&self, connection: Connection) {
+        if let Ok(mut idle) = self.idle.lock() {
+            if idle.len() < MAX_IDLE_CONNECTIONS {
+                idle.push(connection);
+            }
+        }
     }
 
     /// Connect to a live broker or start one, then verify the protocol. A stale broker from an
@@ -183,8 +207,19 @@ impl SessionRuntime {
             let mut connection = match connect(&self.endpoint) {
                 Ok(connection) => connection,
                 Err(_) => {
-                    self.launch_broker()?;
-                    wait_for_endpoint(&self.endpoint, Duration::from_secs(5))?
+                    // Under the launch lock, re-probe first: a concurrent caller may have started
+                    // the broker while this one waited, and two brokers would split the sessions.
+                    let _guard = self
+                        .launch
+                        .lock()
+                        .map_err(|_| BrokerError("broker launch lock poisoned".into()))?;
+                    match connect(&self.endpoint) {
+                        Ok(connection) => connection,
+                        Err(_) => {
+                            self.launch_broker()?;
+                            wait_for_endpoint(&self.endpoint, Duration::from_secs(5))?
+                        }
+                    }
                 }
             };
             let hello = exchange(
