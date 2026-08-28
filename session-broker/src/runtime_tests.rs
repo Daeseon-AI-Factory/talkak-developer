@@ -8,6 +8,60 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[test]
+fn an_inherited_no_color_never_reaches_a_pane() {
+    // The broker outlives the app that starts it, so whatever environment launched it is stamped on
+    // every shell it will ever open. Started once from a terminal carrying NO_COLOR=1, it set
+    // PowerShell's OutputRendering to PlainText in every pane while TERM and COLORTERM sat there
+    // claiming the terminal was colour-capable.
+    std::env::set_var("NO_COLOR", "1");
+    let command = command_for_request(&SpawnSessionRequest {
+        session_id: "no-color".into(),
+        cwd: None,
+        command: None,
+        args: Vec::new(),
+        cols: 80,
+        rows: 24,
+    });
+    std::env::remove_var("NO_COLOR");
+
+    assert!(
+        command.get_env("NO_COLOR").is_none(),
+        "NO_COLOR was inherited into the pane environment"
+    );
+    assert_eq!(
+        command.get_env("TERM").map(|value| value.to_string_lossy()),
+        Some("xterm-256color".into()),
+        "the pane must still be told what it is talking to"
+    );
+    assert_eq!(
+        command.get_env("COLORTERM").map(|value| value.to_string_lossy()),
+        Some("truecolor".into())
+    );
+}
+
+#[test]
+fn a_deliberate_clicolor_force_survives() {
+    // Only the negative form is stripped. Someone who forces colour on keeps it.
+    std::env::set_var("CLICOLOR_FORCE", "1");
+    let command = command_for_request(&SpawnSessionRequest {
+        session_id: "clicolor-force".into(),
+        cwd: None,
+        command: None,
+        args: Vec::new(),
+        cols: 80,
+        rows: 24,
+    });
+    std::env::remove_var("CLICOLOR_FORCE");
+
+    assert_eq!(
+        command
+            .get_env("CLICOLOR_FORCE")
+            .map(|value| value.to_string_lossy()),
+        Some("1".into())
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn the_default_windows_shell_is_a_powershell_when_one_is_installed() {

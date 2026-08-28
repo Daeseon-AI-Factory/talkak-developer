@@ -778,6 +778,19 @@ pub fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
     // both platforms, so tell the child exactly what it is talking to.
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
+    // ...and drop anything in the inherited environment that countermands that. The broker outlives
+    // the app that starts it, so whatever environment happened to launch it is stamped on every
+    // shell it will ever open. Launched once from a terminal carrying NO_COLOR=1, it set
+    // $PSStyle.OutputRendering to PlainText in every pane — `Write-Host -ForegroundColor Red` came
+    // out as bare text — while TERM and COLORTERM sat there claiming the opposite.
+    for suppressor in ["NO_COLOR", "ANSI_COLORS_DISABLED"] {
+        command.env_remove(suppressor);
+    }
+    // CLICOLOR=0 is the documented way to say "no colour"; CLICOLOR_FORCE is the override. Only the
+    // negative form is removed, so a user who deliberately forces colour keeps it.
+    if std::env::var("CLICOLOR").is_ok_and(|value| value == "0") {
+        command.env_remove("CLICOLOR");
+    }
     command
 }
 
