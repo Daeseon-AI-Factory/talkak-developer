@@ -16,13 +16,26 @@ export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlyS
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const [unsupported, setUnsupported] = useState(false);
+
   const refresh = useCallback(async () => {
     if (!sessionClient.available()) return;
     try {
       setSessions(await sessionClient.liveSessions());
       setError(null);
+      setUnsupported(false);
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      // A broker started before this feature existed does not know the request. Saying so beats
+      // an empty list, which would claim there is nothing to clean up while dozens run.
+      const message = errorMessage(cause);
+      setSessions([]);
+      if (/bad request|unexpected broker response/i.test(message)) {
+        setUnsupported(true);
+        setError(null);
+      } else {
+        setUnsupported(false);
+        setError(message);
+      }
     }
   }, []);
 
@@ -74,7 +87,10 @@ export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlyS
       </header>
       <p className="orphan-sessions__description">{t("orphans.description")}</p>
       {error ? <output className="orphan-sessions__error">{error}</output> : null}
-      {orphans.length === 0 ? (
+      {unsupported ? (
+        <output className="orphan-sessions__error">{t("orphans.unsupported")}</output>
+      ) : null}
+      {unsupported ? null : orphans.length === 0 ? (
         <p className="orphan-sessions__empty">{t("orphans.empty")}</p>
       ) : (
         <ul>

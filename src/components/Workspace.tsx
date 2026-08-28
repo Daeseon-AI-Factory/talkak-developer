@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import type { InspectorMode, Project, TerminalRuntimeObservation } from "../domain";
 import { useI18n } from "../i18n";
 import {
@@ -76,6 +77,10 @@ export function Workspace({
 }: WorkspaceProps) {
   const { t } = useI18n();
   const counts = countSessions(project.sessions);
+  const sessionsById = useMemo(
+    () => new Map(project.sessions.map((session) => [session.id, session])),
+    [project.sessions],
+  );
   const activePage = pages.find((page) => page.id === activePageId) ?? pages[0];
   const activeSession =
     project.sessions.find((session) => session.id === activeSessionId) ??
@@ -134,6 +139,7 @@ export function Workspace({
             onMovePaneToPage={onMovePaneToPage}
             addShortcut={shortcutDisplay(platform, "newPage")}
             switchShortcut={shortcutPairDisplay(platform, "previousPage", "nextPage")}
+            sessionsById={sessionsById}
           />
           <div className="workspace-toolbar__actions">
             <span className="pane-count">

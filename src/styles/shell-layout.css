@@ -212,6 +212,46 @@
   white-space: nowrap;
 }
 
+/* Which page needs you, said on the tab itself. A tab carried a title and a pane count and nothing
+   else, so a session that failed or finished on another page stayed invisible until you switched
+   to it — which defeats having pages at all. */
+.page-tab__activity {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.page-tab__activity[data-activity="running"] {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(115, 223, 168, 0.16);
+}
+
+.page-tab__activity[data-activity="attention"] {
+  border: 0;
+  animation: page-tab-attention 1.8s ease-in-out infinite;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
+}
+
+.page-tab__activity[data-activity="exited"] {
+  border: 1px solid var(--text-dim);
+  background: transparent;
+}
+
+@keyframes page-tab-attention {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-tab__activity[data-activity="attention"] {
+    animation: none;
+  }
+}
+
 .page-tab__select small {
   display: grid;
   min-width: 17px;

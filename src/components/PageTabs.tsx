@@ -1,6 +1,8 @@
 import type { DragEvent } from "react";
+import type { DevSession } from "../domain";
 import { useI18n } from "../i18n";
 import { type WorkspacePage, listPanes } from "../layoutModel";
+import { pageActivity, pageSessionSummary } from "../pageActivity";
 import { Icon } from "./Icon";
 
 const PANE_DRAG_TYPE = "application/x-talkak-pane";
@@ -14,6 +16,8 @@ interface PageTabsProps {
   onMovePaneToPage: (paneId: string, pageId: string) => void;
   addShortcut: string;
   switchShortcut: string;
+  /** Sessions of the active project, so a tab can say what its page is doing. */
+  sessionsById: ReadonlyMap<string, DevSession>;
 }
 
 export function PageTabs({
@@ -25,6 +29,7 @@ export function PageTabs({
   onMovePaneToPage,
   addShortcut,
   switchShortcut,
+  sessionsById,
 }: PageTabsProps) {
   const { t, text } = useI18n();
 
@@ -47,10 +52,18 @@ export function PageTabs({
         const active = page.id === activePageId;
         const paneCount = listPanes(page.root).length;
         const pageTitle = text(page.title);
+        const activity = pageActivity(page, sessionsById);
+        const summary = pageSessionSummary(page, sessionsById, (session, sessionState) =>
+          t("pages.sessionLine", {
+            session: text(session.title),
+            state: t(`pages.activity.${sessionState}`),
+          }),
+        );
         return (
           <div
             className="page-tab"
             data-active={active}
+            data-activity={activity}
             key={page.id}
             onDragOver={allowPaneDrop}
             onDrop={(event) => movePane(event, page.id)}
@@ -63,9 +76,10 @@ export function PageTabs({
               aria-selected={active}
               // The toolbar no longer carries a standing hint — it never had room and was always
               // cut off. The keys live in the shortcut guide, and here on the thing they act on.
-              title={t("pages.switchHint", { shortcuts: switchShortcut })}
+              title={[...summary, t("pages.switchHint", { shortcuts: switchShortcut })].join("\n")}
               onClick={() => onSelectPage(page.id)}
             >
+              <span className="page-tab__activity" data-activity={activity} />
               <span>{pageTitle}</span>
               <small>{paneCount}</small>
             </button>

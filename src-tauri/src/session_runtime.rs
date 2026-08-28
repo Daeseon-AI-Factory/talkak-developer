@@ -151,11 +151,13 @@ impl SessionRuntime {
     }
 
     /// Every session the broker holds, so an operator can find and stop shells that outlived
-    /// their panes. Errors read as an empty list rather than blocking the screen.
-    pub(crate) fn live_sessions(&self) -> Vec<LiveSession> {
-        match self.request(&Request::Sessions) {
-            Ok(Response::Sessions(sessions)) => sessions,
-            _ => Vec::new(),
+    /// their panes. The error is RETURNED, not swallowed: a broker too old to know this request
+    /// answers with one, and an empty list would claim there is nothing to clean up when there
+    /// may be dozens.
+    pub(crate) fn live_sessions(&self) -> BrokerResult<Vec<LiveSession>> {
+        match self.request(&Request::Sessions)? {
+            Response::Sessions(sessions) => Ok(sessions),
+            other => Err(unexpected(other)),
         }
     }
 

@@ -95,5 +95,5 @@ pub(crate) fn session_discard(
 /// them by design, so without this list a shell could run for days with nothing able to find it.
 #[tauri::command]
 pub(crate) fn session_live(runtime: State<'_, SessionRuntime>) -> Result<Vec<LiveSession>, String> {
-    Ok(runtime.live_sessions())
+    runtime.live_sessions().map_err(|error| error.to_string())
 }
