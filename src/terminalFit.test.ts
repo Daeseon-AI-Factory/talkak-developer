@@ -16,8 +16,11 @@ describe("scroll position across a reflow", () => {
     expect(preservedScrollLine(400, 300, 350)).toBe(250);
   });
 
-  it("clamps to the top rather than scrolling to a negative line", () => {
-    expect(preservedScrollLine(400, 100, 120)).toBe(0);
+  it("leaves the viewport alone when the old position no longer exists", () => {
+    // Clamping to 0 here yanked the pane to the very top of its scrollback — the last place the
+    // reader was looking. Better to leave the viewport where the reflow put it.
+    expect(preservedScrollLine(400, 100, 120)).toBeNull();
+    expect(preservedScrollLine(400, 100, 300)).toBeNull();
   });
 
   it("treats an over-scrolled viewport as being at the bottom", () => {

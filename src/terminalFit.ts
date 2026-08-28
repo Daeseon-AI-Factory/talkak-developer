@@ -25,7 +25,12 @@ export function preservedScrollLine(
 ): number | null {
   const scrolledUpBy = beforeBaseY - beforeViewportY;
   if (scrolledUpBy <= 0) return null;
-  return Math.max(0, afterBaseY - scrolledUpBy);
+  const line = afterBaseY - scrolledUpBy;
+  // The old position no longer exists — the buffer shrank past it. Leave the viewport where the
+  // reflow put it: clamping to 0 here yanked the pane to the very top of its scrollback, which is
+  // the last place the reader was looking.
+  if (line <= 0) return null;
+  return line;
 }
 
 export interface TerminalFitter {
@@ -50,10 +55,21 @@ export function createTerminalFitter(
     const before = terminal.buffer.active;
     const beforeBaseY = before.baseY;
     const beforeViewportY = before.viewportY;
+    const beforeCols = terminal.cols;
+    const beforeRows = terminal.rows;
     try {
       fitAddon.fit();
-      const line = preservedScrollLine(beforeBaseY, beforeViewportY, terminal.buffer.active.baseY);
-      if (line !== null) terminal.scrollToLine(line);
+      // Only an actual dimension change reflows the buffer. Without this guard every observer
+      // tick — including the ones a pane fires while output is arriving — moved the viewport,
+      // which is how a finished burst of output could end up scrolled somewhere nobody asked for.
+      if (terminal.cols !== beforeCols || terminal.rows !== beforeRows) {
+        const line = preservedScrollLine(
+          beforeBaseY,
+          beforeViewportY,
+          terminal.buffer.active.baseY,
+        );
+        if (line !== null) terminal.scrollToLine(line);
+      }
       onSuccess?.();
     } catch (cause: unknown) {
       onError?.(cause);
