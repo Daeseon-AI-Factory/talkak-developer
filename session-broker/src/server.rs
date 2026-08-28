@@ -48,6 +48,7 @@ pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&s
         Request::Kill(run) => reply(runtime.kill(run), Response::Snapshot),
         Request::Discard(id) => reply(runtime.discard(id), |()| Response::Unit),
         Request::Restorable => Response::Restorable(runtime.restorable()),
+        Request::Sessions => Response::Sessions(runtime.live_sessions()),
         Request::StoredOutput(id) => Response::Bytes(runtime.stored_output(&id.session_id)),
         Request::Persists => Response::Persists(runtime.persists()),
         Request::Shutdown => {
