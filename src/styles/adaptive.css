@@ -90,7 +90,7 @@
   .language-switch button {
     min-width: 44px;
     min-height: 44px;
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .attention-center,
@@ -108,7 +108,7 @@
 
   .attention-center__header > span,
   .settings-panel__header > span {
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .attention-center__header h1,
@@ -119,7 +119,7 @@
 
   .attention-center__header p,
   .settings-panel__header p {
-    font-size: 12px;
+    font-size: 14px;
     line-height: 1.55;
   }
 
@@ -128,7 +128,7 @@
     position: static;
     display: inline-flex;
     margin-top: 10px;
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .attention-center__layout {
@@ -161,15 +161,15 @@
   .attention-card__meta,
   .attention-card__footer,
   .attention-detail__meta {
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .attention-card > strong {
-    font-size: 15px;
+    font-size: 17px;
   }
 
   .attention-card__description {
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .attention-detail {
@@ -196,7 +196,7 @@
   }
 
   .attention-detail__description {
-    font-size: 14px;
+    font-size: 16px;
     line-height: 1.7;
   }
 
@@ -207,14 +207,14 @@
   }
 
   .attention-choices > button strong {
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .attention-choices > button span,
   .attention-review > p,
   .attention-detail__notice,
   .attention-state {
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .attention-review > div {
@@ -240,7 +240,7 @@
   .setting-control button {
     min-height: 48px;
     padding: 0 8px;
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .setting-card {
@@ -250,11 +250,11 @@
   }
 
   .setting-card strong {
-    font-size: 14px;
+    font-size: 16px;
   }
 
   .setting-card p {
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .setting-control {
@@ -291,7 +291,7 @@
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .mobile-dock > button[data-active="true"] {
@@ -319,7 +319,7 @@
     background: var(--warning);
     color: #1d0d03;
     font-family: var(--mono);
-    font-size: 8px;
+    font-size: 11px;
     font-weight: 900;
   }
 
@@ -345,7 +345,7 @@
   .mobile-session-view__project {
     color: var(--accent);
     font-family: var(--sans);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .mobile-session-view__header h1 {
@@ -391,13 +391,13 @@
   }
 
   .mobile-session-picker__item strong {
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .mobile-session-picker__item span {
     margin-top: 3px;
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .mobile-session-tabs {
@@ -457,13 +457,13 @@
     display: flex;
     justify-content: space-between;
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .mobile-conversation-entry p {
     margin: 8px 0 0;
     color: var(--text-secondary);
-    font-size: 13px;
+    font-size: 15px;
     line-height: 1.6;
   }
 
@@ -471,13 +471,13 @@
     min-width: max-content;
     color: var(--text-secondary);
     font-family: var(--mono);
-    font-size: 11px;
+    font-size: 13px;
     line-height: 1.7;
   }
 
   .mobile-summary {
     color: var(--text-secondary);
-    font-size: 12px;
+    font-size: 14px;
     line-height: 1.6;
   }
 
@@ -490,7 +490,7 @@
   .mobile-summary h2 {
     margin: 0 0 8px;
     color: var(--text);
-    font-size: 12px;
+    font-size: 14px;
   }
 
   .mobile-summary p,
@@ -512,7 +512,7 @@
   }
 
   .mobile-composer__quick-replies button {
-    font-size: 11px;
+    font-size: 13px;
   }
 
   .mobile-composer__input {
@@ -525,7 +525,7 @@
     outline: none;
     background: rgba(2, 8, 10, 0.75);
     color: var(--text);
-    font-size: 16px;
+    font-size: 18px;
     line-height: 1.45;
   }
 
@@ -545,7 +545,7 @@
     background: transparent;
     color: var(--text-secondary);
     cursor: pointer;
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .mobile-composer__actions button:disabled,
@@ -563,7 +563,7 @@
 
   .mobile-composer__voice-state {
     color: var(--text-dim);
-    font-size: 9px;
+    font-size: 12px;
   }
 
   .mobile-draft-review {
@@ -576,7 +576,7 @@
 
   .mobile-draft-review h2 {
     margin: 0;
-    font-size: 13px;
+    font-size: 15px;
   }
 
   .mobile-draft-review__text {
@@ -586,7 +586,7 @@
 
   .mobile-draft-review__status {
     color: var(--warning);
-    font-size: 10px;
+    font-size: 12px;
   }
 
   .attention-card,
@@ -664,6 +664,6 @@
 
   .setting-control button {
     padding: 0 5px;
-    font-size: 9px;
+    font-size: 12px;
   }
 }

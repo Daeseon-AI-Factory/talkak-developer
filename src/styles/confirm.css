@@ -22,13 +22,13 @@
 
 .confirm-dialog h2 {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: 16px;
 }
 
 .confirm-dialog p {
   margin: 0 0 16px;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.55;
 }
 
@@ -50,12 +50,12 @@
 }
 
 .confirm-dialog__actions button strong {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .confirm-dialog__actions button small {
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .confirm-dialog__actions button:hover {

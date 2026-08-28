@@ -17,7 +17,7 @@
 .settings-panel__header > span {
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   letter-spacing: calc(0.15em * var(--tracking));
 }
@@ -35,7 +35,7 @@
   max-width: 720px;
   margin: 0;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.65;
 }
 
@@ -50,7 +50,7 @@
   background: var(--accent-soft);
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .attention-center__layout {
@@ -115,7 +115,7 @@
   gap: 7px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .attention-card__meta > span:first-child,
@@ -130,14 +130,14 @@
 
 .attention-card > strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.35;
 }
 
 .attention-card__description {
   display: -webkit-box;
   overflow: hidden;
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -169,7 +169,7 @@
   margin: 18px 0 8px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .attention-detail h2 {
@@ -184,7 +184,7 @@
   max-width: 760px;
   margin: 16px 0 22px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.75;
 }
 
@@ -223,7 +223,7 @@
   margin: 0 0 10px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 12px;
   letter-spacing: calc(0.09em * var(--tracking));
   text-transform: uppercase;
 }
@@ -250,11 +250,11 @@
 
 .attention-choices > button strong {
   color: var(--text);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .attention-choices > button span {
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.5;
 }
 
@@ -271,14 +271,14 @@
 }
 
 .attention-review > strong {
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .attention-review > p,
 .attention-detail__notice,
 .attention-state {
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.55;
 }
 
@@ -370,7 +370,7 @@
 
 .settings-scope > span {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -392,7 +392,7 @@
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .settings-scope button[data-active="true"],
@@ -425,13 +425,13 @@
 }
 
 .setting-card strong {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .setting-card p {
   margin: 5px 0 0;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.45;
 }
 

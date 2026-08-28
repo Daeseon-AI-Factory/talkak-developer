@@ -52,7 +52,7 @@
   background: var(--warning-soft);
   color: var(--warning);
   font-family: var(--sans);
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 800;
 }
 
@@ -65,20 +65,20 @@
 .attention-strip__copy small {
   color: var(--warning);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: calc(0.12em * var(--tracking));
 }
 
 .attention-strip__copy strong {
   color: var(--text);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .attention-strip__copy > span {
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -88,7 +88,7 @@
   align-items: center;
   gap: 3px;
   color: var(--warning);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
   white-space: nowrap;
 }
@@ -100,7 +100,7 @@
   margin-bottom: 8px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: calc(0.13em * var(--tracking));
   text-transform: uppercase;
@@ -144,7 +144,7 @@
 .branch-chip {
   padding: 5px 8px;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .runtime-chip {
@@ -158,7 +158,7 @@
   margin-top: 9px;
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .workspace-header__actions {
@@ -189,14 +189,14 @@
 
 .session-stats dt {
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
 }
 
 .session-stats dd {
   margin: 2px 0 0;
   color: var(--text-dim);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .session-stats [data-alert="true"] dt {
@@ -213,7 +213,7 @@
   border: 1px solid transparent;
   border-radius: 9px;
   cursor: pointer;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 700;
 }
 
@@ -261,12 +261,12 @@
 .workspace-toolbar__context {
   gap: 8px;
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .workspace-toolbar__context strong {
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .live-dot {
@@ -327,7 +327,7 @@
   padding: 0 9px;
   border: 1px solid transparent;
   border-radius: 7px;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .toolbar-button:hover,
@@ -430,7 +430,7 @@
 
 .terminal-pane__title strong {
   overflow: hidden;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -471,7 +471,7 @@
 .terminal-pane__profile {
   overflow: hidden;
   color: var(--text-dim);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -483,7 +483,7 @@
 
 .runtime-chip {
   padding: 4px 7px;
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .terminal-pane__actions button,
@@ -508,7 +508,7 @@
   border-bottom: 1px solid rgba(135, 211, 220, 0.07);
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .terminal-pane__meta-spacer,
@@ -535,7 +535,7 @@
   overflow: auto;
   color: #a8c5ca;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.72;
 }
 
@@ -599,13 +599,13 @@
   padding: 0 11px;
   border-top: 1px solid rgba(135, 211, 220, 0.07);
   color: var(--text-dim);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .preview-label {
   color: var(--warning);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: calc(0.1em * var(--tracking));
 }

@@ -316,7 +316,10 @@ impl SessionRuntime {
                     // spoken to correctly anyway. The next loop iteration starts a fresh one.
                     let _ = exchange(&mut connection, &Request::Shutdown);
                     drop(connection);
-                    std::thread::sleep(Duration::from_millis(200));
+                    // Wait for it to actually let go of the endpoint. A fixed sleep raced a broker
+                    // holding dozens of sessions: the retry connected to the dying one, saw the
+                    // same old version, and the whole launch failed instead of replacing it.
+                    wait_for_endpoint_gone(&self.endpoint, Duration::from_secs(5));
                 }
                 other => return Err(unexpected(other)),
             }
@@ -463,6 +466,18 @@ fn wait_for_endpoint(endpoint: &str, timeout: Duration) -> BrokerResult<Connecti
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
+    }
+}
+
+/// Wait until nothing answers on the endpoint, so a replacement broker can take it. Returns on
+/// timeout rather than failing: the caller's next connect attempt is the real verdict.
+fn wait_for_endpoint_gone(endpoint: &str, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while connect(endpoint).is_ok() {
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

@@ -55,7 +55,7 @@
   display: grid;
   gap: 6px;
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: calc(0.03em * var(--tracking));
 }
@@ -70,13 +70,13 @@
   border-radius: 8px;
   background: rgba(95, 226, 237, 0.04);
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .terminal-launcher__target strong {
   color: var(--text-secondary);
   font-family: var(--sans);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .terminal-launcher__target-copy {
@@ -91,7 +91,7 @@
   overflow: hidden;
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -106,7 +106,7 @@
   background: rgba(5, 13, 16, 0.8);
   color: var(--text);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .terminal-launcher__start {
@@ -122,7 +122,7 @@
 .terminal-launcher__notice,
 .terminal-launcher__error {
   margin: 0;
-  font-size: 9px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -145,7 +145,7 @@
 .live-label {
   color: var(--success);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: calc(0.1em * var(--tracking));
 }
@@ -156,7 +156,7 @@
   border-radius: 6px;
   background: var(--warning-soft);
   color: var(--warning);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 .terminal-restart {
@@ -165,7 +165,7 @@
   border-radius: 6px;
   background: rgba(134, 243, 247, 0.08);
   color: var(--accent);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 /* A session's name is the note that says what the pane is for, so it reads as text until

@@ -30,7 +30,7 @@
 .shortcut-guide > header span {
   color: var(--accent);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: calc(0.14em * var(--tracking));
 }
@@ -48,7 +48,7 @@
 .shortcut-guide p {
   margin-top: 6px;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .shortcut-guide > header button {
@@ -82,7 +82,7 @@
   padding: 0 16px;
   background: #081317;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .shortcut-guide kbd,
@@ -90,14 +90,14 @@
 .page-tabs kbd {
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
 .shortcut-guide > footer {
   padding: 13px 18px;
   color: var(--text-dim);
-  font-size: 9px;
+  font-size: 12px;
 }
 
 @media (max-width: 720px) {

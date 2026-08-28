@@ -7,7 +7,7 @@
      compact; the reading modal raises the base in shell-layout.css. The old absolute sizes went
      down to 7px, which a 96-DPI display renders as smudge — legible only on the retina Mac this
      was designed on. */
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
 }
 

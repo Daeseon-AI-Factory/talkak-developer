@@ -501,9 +501,15 @@ fn discard_allows_an_exited_session_id_to_start_again() {
         .expect("restarted PTY should stop");
 }
 
+/// How long a test waits on a real PTY. It is a test timeout, not a runtime timeout or a product
+/// guarantee. Generous on purpose: the suite spawns a shell per test, and a cold `pwsh` start under
+/// that contention ran well past five seconds, failing three tests that pass when run one at a
+/// time. A passing test returns the moment it sees what it wants, so a longer deadline only changes
+/// how long a genuine failure takes to report.
+const PTY_WAIT: Duration = Duration::from_secs(30);
+
 fn wait_for_output(runtime: &SessionRuntime, session_id: &str, after: u64, needle: &[u8]) {
-    // Exact test timeout; it is not a runtime timeout or product guarantee.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PTY_WAIT;
     let mut cursor = after;
     let mut collected = Vec::new();
     while Instant::now() < deadline {
@@ -531,7 +537,7 @@ fn wait_for_output(runtime: &SessionRuntime, session_id: &str, after: u64, needl
 }
 
 fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) -> Option<u32> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PTY_WAIT;
     while Instant::now() < deadline {
         let read = runtime
             .read(ReadSessionRequest {
@@ -550,7 +556,7 @@ fn wait_for_read_closed(runtime: &SessionRuntime, session_id: &str) -> Option<u3
 }
 
 fn wait_for_process_exit(runtime: &SessionRuntime, session_id: &str) -> Option<u32> {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + PTY_WAIT;
     while Instant::now() < deadline {
         let read = runtime
             .read(ReadSessionRequest {

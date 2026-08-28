@@ -11,7 +11,16 @@ use crate::runtime::{
 use crate::store::RestorableSession;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+/// Bump this whenever a request or response variant is added, removed, or reshaped.
+///
+/// A broker outlives the app that started it — that is the point of it — so a running broker is
+/// routinely older than the client connecting to it. The client retires a broker whose version
+/// does not match and starts a fresh one; leaving this at 1 while `Sessions` and `concurrent`
+/// were added meant the client kept an incompatible broker and got "bad request" for a feature
+/// it believed was there.
+///
+/// 2: added `Sessions` / `Response::Sessions`, and `concurrent` on the Hello response.
+pub const PROTOCOL_VERSION: u32 = 2;
 
 // Adjacent tagging: internal tagging cannot represent variants whose payload is not a map
 // (Option, Vec, bool) — serialization fails at runtime, which read as a dropped connection.

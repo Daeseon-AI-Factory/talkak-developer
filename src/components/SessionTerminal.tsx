@@ -268,8 +268,13 @@ export function SessionTerminal({
             convertEol: false,
             cursorBlink: true,
             fontFamily: TERMINAL_FONT_FAMILY,
-            fontSize: 12,
-            screenReaderMode: true,
+            fontSize: 13,
+            // xterm's own default, and it belongs here: screen reader mode mirrors the viewport
+            // into live DOM and does per-line work as output arrives — it even ships a string for
+            // "line reading suppressed, too many lines printed". On top of the DOM renderer, with
+            // an agent streaming thousands of lines, that is what made scrolling stutter. It needs
+            // to come back as a setting for anyone who runs a screen reader, not as a default.
+            screenReaderMode: false,
             scrollback: 5000,
             theme: TERMINAL_THEME,
           });

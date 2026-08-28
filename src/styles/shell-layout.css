@@ -98,7 +98,7 @@
   width: auto;
   gap: 6px;
   padding: 0 9px;
-  font-size: 9px;
+  font-size: 12px;
 }
 
 .app-utilitybar__actions > .shell-control--label {
@@ -111,7 +111,7 @@
 .shell-control--label kbd {
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 /* An icon-only control has no room for a key beside the glyph, so the key covers it on hover or
@@ -126,7 +126,7 @@
   border-radius: inherit;
   background: var(--surface-raised);
   font-family: var(--mono);
-  font-size: 7px;
+  font-size: 10px;
   inset: 0;
   opacity: 0;
   place-items: center;
@@ -162,8 +162,9 @@
 
 .page-tab {
   display: flex;
-  min-width: 118px;
-  max-width: 210px;
+  /* Room for the activity dot and for a title set at a readable size rather than 9px. */
+  min-width: 138px;
+  max-width: 230px;
   height: 34px;
   flex: 0 1 auto;
   align-items: center;
@@ -206,7 +207,7 @@
 
 .page-tab__select span {
   overflow: hidden;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -262,7 +263,7 @@
   border-radius: 5px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 7px;
+  font-size: 10px;
 }
 
 .page-tab__close,
@@ -292,7 +293,7 @@
 }
 
 .page-tabs__add span {
-  font-size: 8px;
+  font-size: 11px;
   font-weight: 700;
 }
 
@@ -302,13 +303,13 @@
   gap: 6px;
   color: var(--text-dim);
   font-family: var(--sans);
-  font-size: 8px;
+  font-size: 11px;
   white-space: nowrap;
 }
 
 .pane-count strong {
   color: var(--warning);
-  font-size: 7px;
+  font-size: 10px;
 }
 
 .workspace-toolbar__actions {
@@ -458,7 +459,7 @@
   border-radius: 14px;
   box-shadow: var(--shadow);
   /* The modal exists to be read; its whole em scale steps up from the docked column's base. */
-  font-size: 13.5px;
+  font-size: 15px;
 }
 
 .inspector[data-pinned="false"] .inspector__content {
@@ -519,13 +520,13 @@
 }
 
 .empty-page h2 {
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .empty-page p {
   margin-top: 5px;
   color: var(--text-dim);
-  font-size: 10px;
+  font-size: 12px;
 }
 
 .empty-page__sessions {
@@ -557,7 +558,7 @@
 
 .empty-page__sessions small {
   color: var(--text-dim);
-  font-size: 8px;
+  font-size: 11px;
 }
 
 @media (max-width: 1180px) {
