@@ -45,7 +45,7 @@ export function Sidebar({
         <div className="brand__mark">T</div>
         <div>
           <strong>talkak</strong>
-          <span>DEV WORKSPACE</span>
+          <span>{t("sidebar.localWorkspace")}</span>
         </div>
       </div>
 
