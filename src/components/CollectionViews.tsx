@@ -2,6 +2,7 @@ import type { Project } from "../domain";
 import { useI18n } from "../i18n";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
+import { OrphanSessions } from "./OrphanSessions";
 
 interface CollectionViewProps {
   projects: readonly Project[];
@@ -13,6 +14,7 @@ export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
   const rows = projects.flatMap((project) =>
     project.sessions.map((session) => ({ project, session })),
   );
+  const knownSessionIds = new Set(rows.map(({ session }) => session.id));
 
   return (
     <div className="collection-screen">
@@ -21,6 +23,7 @@ export function SessionsView({ projects, onOpenSession }: CollectionViewProps) {
         title={t("sessions.title")}
         description={t("sessions.description")}
       />
+      <OrphanSessions knownSessionIds={knownSessionIds} />
       <section className="session-table" aria-label={t("sessions.tableAria")}>
         <div className="session-table__head">
           <span>{t("sessions.session")}</span>

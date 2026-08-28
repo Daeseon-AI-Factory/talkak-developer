@@ -34,8 +34,45 @@ export interface SessionRead {
   readError: string | null;
 }
 
+/**
+ * A best-effort disk record that can recreate a session after a machine restart. The process
+ * itself did not survive the restart, and its retained output is a bounded tail rather than a
+ * complete transcript.
+ */
+export interface SessionRecoveryRecord {
+  sessionId: string;
+  cwd: string | null;
+  command: string | null;
+  args: string[];
+  cols: number;
+  rows: number;
+  startedAtMs: number;
+  /** Bytes currently retained on disk; the backend keeps at most 4 MiB per session. */
+  outputBytes: number;
+}
+
+export interface SessionRecoveryCatalog {
+  /** False means the native store was unavailable, not that recovery was checked and found empty. */
+  persisted: boolean;
+  sessions: SessionRecoveryRecord[];
+}
+
+/**
+ * A session the broker is holding right now — the `tmux ls` view. Sessions outlive the panes that
+ * opened them by design, so this is the only way to find a shell nothing is watching any more.
+ */
+export interface LiveSession {
+  sessionId: string;
+  runId: number;
+  processId: number | null;
+  running: boolean;
+}
+
 export interface SessionClient {
   available: () => boolean;
+  liveSessions: () => Promise<LiveSession[]>;
+  recoveryCatalog: () => Promise<SessionRecoveryCatalog>;
+  readStoredOutput: (sessionId: string) => Promise<number[]>;
   spawn: (request: SpawnSessionInput) => Promise<SessionSnapshot>;
   snapshot: (sessionId: string) => Promise<SessionSnapshot | null>;
   read: (sessionId: string, after: number) => Promise<SessionRead>;
@@ -53,6 +90,12 @@ export function createSessionClient(
 ): SessionClient {
   return {
     available,
+    liveSessions: () => invokeCommand<LiveSession[]>("session_live"),
+    recoveryCatalog: () => invokeCommand<SessionRecoveryCatalog>("session_restorable"),
+    readStoredOutput: (sessionId) =>
+      invokeCommand<number[]>("session_stored_output", {
+        request: { sessionId },
+      }),
     spawn: (request) => invokeCommand<SessionSnapshot>("session_spawn", { request }),
     snapshot: (sessionId) =>
       invokeCommand<SessionSnapshot | null>("session_snapshot", {
@@ -81,7 +124,26 @@ export function createSessionClient(
   };
 }
 
-export const sessionClient = createSessionClient(invoke, isTauri);
+/** Browser preview counterpart: recovery reports persistence as unavailable; native mutations fail. */
+export function createBrowserSessionClient(): SessionClient {
+  return {
+    available: () => false,
+    liveSessions: async () => [],
+    recoveryCatalog: async () => ({ persisted: false, sessions: [] }),
+    readStoredOutput: async () => [],
+    spawn: () => nativeSessionUnavailable(),
+    snapshot: () => nativeSessionUnavailable(),
+    read: () => nativeSessionUnavailable(),
+    write: () => nativeSessionUnavailable(),
+    resize: () => nativeSessionUnavailable(),
+    kill: () => nativeSessionUnavailable(),
+    discard: () => nativeSessionUnavailable(),
+  };
+}
+
+export const sessionClient = isTauri()
+  ? createSessionClient(invoke, isTauri)
+  : createBrowserSessionClient();
 
 export function createSessionStarter(client: SessionClient) {
   const pending = new Map<string, Promise<SessionSnapshot>>();
@@ -108,4 +170,8 @@ export const ensureSessionStarted = createSessionStarter(sessionClient);
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function nativeSessionUnavailable<T>(): Promise<T> {
+  return Promise.reject(new Error("Native session runtime is unavailable in the browser preview."));
 }

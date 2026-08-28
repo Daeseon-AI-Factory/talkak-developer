@@ -5,8 +5,8 @@
 //! the process boundary without translation — the app client forwards, the broker executes.
 
 use crate::runtime::{
-    ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
-    SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+    LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
+    SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 use crate::store::RestorableSession;
 use serde::{Deserialize, Serialize};
@@ -31,6 +31,8 @@ pub enum Request {
     Kill(RunSessionRequest),
     Discard(SessionIdRequest),
     Restorable,
+    /// Every session the broker holds — the list nothing could see before.
+    Sessions,
     StoredOutput(SessionIdRequest),
     Persists,
     /// Ask the broker to exit once this connection closes, sessions or not. The upgrade path:
@@ -56,6 +58,7 @@ pub enum Response {
     MaybeSnapshot(Option<SessionSnapshot>),
     Read(SessionRead),
     Restorable(Vec<RestorableSession>),
+    Sessions(Vec<LiveSession>),
     Bytes(Vec<u8>),
     Persists(bool),
     Unit,

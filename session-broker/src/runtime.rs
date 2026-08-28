@@ -95,6 +95,16 @@ pub struct SessionRead {
     pub read_error: Option<String>,
 }
 
+/// One session the broker is holding, as an operator would want to see it listed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveSession {
+    pub session_id: String,
+    pub run_id: u64,
+    pub process_id: Option<u32>,
+    pub running: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeError {
     InvalidRequest(String),
@@ -149,6 +159,30 @@ impl SessionRuntime {
     /// The output kept on disk for a session id, oldest first.
     pub fn stored_output(&self, session_id: &str) -> Vec<u8> {
         self.store.output(session_id)
+    }
+
+    /// Every session this broker holds, alive or finished — the `tmux ls` of this product.
+    ///
+    /// Sessions outlive the panes that opened them, by design, and until now nothing could see
+    /// them: closing a pane detached, the app forgot, and shells accumulated for days with no way
+    /// to find or stop them. This is what an operator needs to clean up.
+    pub fn live_sessions(&self) -> Vec<LiveSession> {
+        let sessions = match lock(&self.sessions, "session registry") {
+            Ok(sessions) => sessions.values().cloned().collect::<Vec<_>>(),
+            Err(_) => return Vec::new(),
+        };
+        let mut listed = sessions
+            .iter()
+            .filter_map(|session| session.snapshot().ok())
+            .map(|snapshot| LiveSession {
+                session_id: snapshot.session_id,
+                run_id: snapshot.run_id,
+                process_id: snapshot.process_id,
+                running: snapshot.running,
+            })
+            .collect::<Vec<_>>();
+        listed.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+        listed
     }
 
     /// Whether any child is still running. The broker uses this to decide it may exit when its

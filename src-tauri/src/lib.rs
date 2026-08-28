@@ -13,7 +13,7 @@ mod session_client_tests;
 use clipboard_commands::{clipboard_read_text, clipboard_write_text};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
-    session_discard, session_kill, session_read, session_resize, session_restorable,
+    session_discard, session_kill, session_live, session_read, session_resize, session_restorable,
     session_snapshot, session_spawn, session_stored_output, session_write,
 };
 use session_runtime::SessionRuntime;
@@ -78,6 +78,7 @@ pub fn run() {
             host_info,
             project_validate_path,
             project_validate_command,
+            session_live,
             session_spawn,
             session_snapshot,
             session_read,

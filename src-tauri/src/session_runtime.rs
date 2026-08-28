@@ -8,8 +8,8 @@
 //! `session_commands.rs` and the renderer are unchanged.
 
 pub(crate) use session_broker::runtime::{
-    ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
-    SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+    LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
+    SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 pub(crate) use session_broker::store::RestorableSession;
 use session_broker::{Request, Response, PROTOCOL_VERSION};
@@ -147,6 +147,15 @@ impl SessionRuntime {
         match self.request(&Request::Discard(request))? {
             Response::Unit => Ok(()),
             other => Err(unexpected(other)),
+        }
+    }
+
+    /// Every session the broker holds, so an operator can find and stop shells that outlived
+    /// their panes. Errors read as an empty list rather than blocking the screen.
+    pub(crate) fn live_sessions(&self) -> Vec<LiveSession> {
+        match self.request(&Request::Sessions) {
+            Ok(Response::Sessions(sessions)) => sessions,
+            _ => Vec::new(),
         }
     }
 

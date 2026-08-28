@@ -1,7 +1,7 @@
 use crate::session_runtime::RestorableSession;
 use crate::session_runtime::{
-    ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest, SessionRead,
-    SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+    LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
+    SessionRead, SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 use tauri::State;
 
@@ -89,4 +89,11 @@ pub(crate) fn session_discard(
     request: SessionIdRequest,
 ) -> Result<(), String> {
     runtime.discard(request).map_err(|error| error.to_string())
+}
+
+/// Every session the broker is holding, alive or finished. Sessions outlive the panes that opened
+/// them by design, so without this list a shell could run for days with nothing able to find it.
+#[tauri::command]
+pub(crate) fn session_live(runtime: State<'_, SessionRuntime>) -> Result<Vec<LiveSession>, String> {
+    Ok(runtime.live_sessions())
 }

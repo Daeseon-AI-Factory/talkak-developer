@@ -210,3 +210,118 @@
   align-self: center;
   color: var(--text-dim);
 }
+
+/* Sessions the broker still holds that no pane refers to. Deliberately plain: this is a cleanup
+   surface, not a feature to advertise. */
+.orphan-sessions {
+  margin-bottom: 18px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.orphan-sessions > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.orphan-sessions__eyebrow {
+  display: block;
+  color: var(--warning);
+  font-family: var(--sans);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: calc(0.12em * var(--tracking));
+}
+
+.orphan-sessions > header strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+}
+
+.orphan-sessions__actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.orphan-sessions button {
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.orphan-sessions button:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.orphan-sessions button[data-tone="danger"] {
+  border-color: rgba(255, 157, 92, 0.4);
+  color: var(--warning);
+}
+
+.orphan-sessions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.orphan-sessions__description,
+.orphan-sessions__empty {
+  margin: 10px 0 0;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.orphan-sessions__error {
+  display: block;
+  margin-top: 8px;
+  color: var(--warning);
+  font-size: 10px;
+}
+
+.orphan-sessions ul {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.orphan-sessions li {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  padding: 7px 0;
+  border-top: 1px solid rgba(135, 211, 220, 0.07);
+}
+
+.orphan-sessions li code {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orphan-sessions li span[data-running="true"] {
+  color: var(--success);
+}
+
+.orphan-sessions li span {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.orphan-sessions__pid {
+  font-family: var(--mono);
+}
