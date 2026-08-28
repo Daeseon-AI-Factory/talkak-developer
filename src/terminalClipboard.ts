@@ -62,8 +62,12 @@ export function attachTerminalClipboard(
     }
     if (action === "paste") {
       void clipboard
-        .readText()
-        .then((text) => {
+        .readImagePath()
+        .then(async (imagePath) => {
+          // A PTY carries bytes, so an image cannot arrive in a terminal as an image, and an agent
+          // running inside one cannot reach the clipboard the way it could in its own window.
+          // Pasting the file path is what actually reaches the agent — and what it wanted.
+          const text = imagePath ?? (await clipboard.readText());
           // terminal.paste() routes through onData with bracketed-paste framing, the same path
           // typed input takes, so a read-only terminal ignores it and a live one forwards it.
           if (text) terminal.paste(text);

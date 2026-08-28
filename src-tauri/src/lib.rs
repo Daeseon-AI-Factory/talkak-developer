@@ -10,7 +10,7 @@ mod project_commands_tests;
 #[cfg(test)]
 mod session_client_tests;
 
-use clipboard_commands::{clipboard_read_text, clipboard_write_text};
+use clipboard_commands::{clipboard_read_image_path, clipboard_read_text, clipboard_write_text};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
     session_discard, session_kill, session_live, session_read, session_resize, session_restorable,
@@ -73,6 +73,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             app_quit,
+            clipboard_read_image_path,
             clipboard_read_text,
             clipboard_write_text,
             host_info,

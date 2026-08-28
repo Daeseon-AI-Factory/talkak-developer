@@ -106,6 +106,7 @@ describe("clipboard failures are surfaced, never swallowed", () => {
       {
         writeText: () => Promise.reject(new Error("clipboard unavailable: denied")),
         readText: () => Promise.resolve(""),
+        readImagePath: async () => null,
       },
       (message) => errors.push(message),
     );
@@ -120,6 +121,7 @@ describe("clipboard failures are surfaced, never swallowed", () => {
     attachTerminalClipboard(terminal("some output"), "windows", {
       writeText: () => Promise.resolve(),
       readText: () => Promise.resolve(""),
+      readImagePath: async () => null,
     });
     press(key({ code: "KeyC", ctrlKey: true }) as unknown as KeyboardEvent);
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -130,9 +132,38 @@ describe("clipboard failures are surfaced, never swallowed", () => {
     attachTerminalClipboard(terminal(""), "windows", {
       writeText: () => Promise.resolve(),
       readText: () => Promise.resolve("pasted text"),
+      readImagePath: async () => null,
     });
     press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as unknown as KeyboardEvent);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pasted).toBe("pasted text");
+  });
+});
+
+describe("pasting a screenshot into a terminal", () => {
+  it("pastes the image's path, since a PTY cannot carry an image", async () => {
+    let pasted = "";
+    const terminal = {
+      hasSelection: () => false,
+      getSelection: () => "",
+      clearSelection: () => {},
+      paste: (text: string) => {
+        pasted = text;
+      },
+      attachCustomKeyEventHandler: (handler: (event: KeyboardEvent) => boolean) => {
+        press = handler;
+      },
+    } as unknown as Parameters<typeof attachTerminalClipboard>[0];
+    let press: (event: KeyboardEvent) => boolean = () => true;
+
+    attachTerminalClipboard(terminal, "windows", {
+      writeText: () => Promise.resolve(),
+      // Text is present too; the image wins because it is the thing that cannot go through a PTY.
+      readText: () => Promise.resolve("some old text"),
+      readImagePath: async () => "C:Temp\talkak-clipboardclipboard-1.png",
+    });
+    press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as unknown as KeyboardEvent);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pasted).toBe("C:Temp\talkak-clipboardclipboard-1.png");
   });
 });

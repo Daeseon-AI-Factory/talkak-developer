@@ -11,6 +11,8 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 export interface ClipboardClient {
   writeText: (text: string) => Promise<void>;
   readText: () => Promise<string>;
+  /** A path to the clipboard image written to disk, or null when there is no image. */
+  readImagePath: () => Promise<string | null>;
 }
 
 export function createClipboardClient(
@@ -19,6 +21,7 @@ export function createClipboardClient(
   return {
     writeText: (text) => invokeCommand<void>("clipboard_write_text", { text }),
     readText: () => invokeCommand<string>("clipboard_read_text"),
+    readImagePath: () => invokeCommand<string | null>("clipboard_read_image_path"),
   };
 }
 
@@ -27,6 +30,8 @@ export function createBrowserClipboardClient(): ClipboardClient {
   return {
     writeText: (text) => navigator.clipboard.writeText(text),
     readText: () => navigator.clipboard.readText(),
+    // The browser preview has no filesystem to write an image to.
+    readImagePath: async () => null,
   };
 }
 

@@ -32,6 +32,7 @@ import {
   terminalReadShouldContinue,
   terminalRuntimePhase,
 } from "../runtime/terminalReplay";
+import { awaitWriteIdle, withWritePriority } from "../runtime/writePriority";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
 import { attachTerminalClipboard } from "../terminalClipboard";
 import { createTerminalFitter } from "../terminalFit";
@@ -319,7 +320,9 @@ export function SessionTerminal({
             runtimeMutationQueue,
             JSON.stringify([session.id, runId, "write"]),
             async () => {
-              await sessionClient.write(session.id, runId, bytes);
+              // Polls stand aside for the write: on a single-connection broker a keystroke
+              // otherwise waits behind every background read in flight.
+              await withWritePriority(() => sessionClient.write(session.id, runId, bytes));
               // The echo is already in the engine buffer; read it now, not a poll tick later.
               pollKickRef.current?.();
             },
@@ -441,6 +444,10 @@ export function SessionTerminal({
     const pollIsCurrent = () => !cancelled && runtimeOperationsRef.current.epoch === pollEpoch;
 
     const poll = async () => {
+      if (!pollIsCurrent() || inFlight) return;
+      // A write is more urgent than this read, and on a single-connection broker they compete
+      // for the same wire.
+      await awaitWriteIdle();
       if (!pollIsCurrent() || inFlight) return;
       inFlight = true;
       try {
