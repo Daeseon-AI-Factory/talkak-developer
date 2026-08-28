@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "dev.talkak.desktop",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm broker:debug && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build && node scripts/build-broker-sidecar.mjs",
+    "beforeBuildCommand": "pnpm build && pnpm broker:release",
     "frontendDist": "../dist"
   },
   "app": {

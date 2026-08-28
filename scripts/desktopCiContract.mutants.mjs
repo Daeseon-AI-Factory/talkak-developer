@@ -99,6 +99,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
+      - run: pnpm broker:debug
+      - run: cargo fmt --manifest-path session-broker/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path session-broker/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path session-broker/Cargo.toml --all-targets --locked
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
@@ -117,6 +121,10 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm lint
       - run: pnpm build
+      - run: pnpm broker:debug
+      - run: cargo fmt --manifest-path session-broker/Cargo.toml -- --check
+      - run: cargo clippy --manifest-path session-broker/Cargo.toml --all-targets --locked -- -D warnings
+      - run: cargo test --manifest-path session-broker/Cargo.toml --all-targets --locked
       - run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
       - run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
@@ -197,6 +205,11 @@ test("rejects allowed failures on required steps", () => {
     "      - continue-on-error: true\n        run: pnpm typecheck\n",
   );
   assert.match(validate(mutated).join("\n"), /allows failure/u);
+});
+
+test("rejects a missing clean-checkout broker build", () => {
+  const mutated = baseWorkflow.replace("      - run: pnpm broker:debug\n", "");
+  assert.match(validate(mutated).join("\n"), /missing command/u);
 });
 
 test("rejects jobs gated by dependencies", () => {

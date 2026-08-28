@@ -69,6 +69,18 @@ jobs:
       - name: Build renderer
         run: pnpm build
 
+      - name: Build debug session broker
+        run: pnpm broker:debug
+
+      - name: Check session broker formatting
+        run: cargo fmt --manifest-path session-broker/Cargo.toml -- --check
+
+      - name: Lint session broker
+        run: cargo clippy --manifest-path session-broker/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test session broker
+        run: cargo test --manifest-path session-broker/Cargo.toml --all-targets --locked
+
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
 
@@ -132,6 +144,18 @@ jobs:
 
       - name: Build renderer
         run: pnpm build
+
+      - name: Build debug session broker
+        run: pnpm broker:debug
+
+      - name: Check session broker formatting
+        run: cargo fmt --manifest-path session-broker/Cargo.toml -- --check
+
+      - name: Lint session broker
+        run: cargo clippy --manifest-path session-broker/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test session broker
+        run: cargo test --manifest-path session-broker/Cargo.toml --all-targets --locked
 
       - name: Check Rust formatting
         run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check

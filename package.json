@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "broker:debug": "node scripts/build-broker-sidecar.mjs --profile debug",
+    "broker:release": "node scripts/build-broker-sidecar.mjs --profile release",
     "dev": "vite",
     "ci:contract": "node --test scripts/desktopCiContract.mutants.mjs && node scripts/check-desktop-ci.mjs",
     "e2e:windows": "wdio run ./wdio.windows.conf.mjs",
