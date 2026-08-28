@@ -57,9 +57,17 @@ describe("writes outrank reads", () => {
     let released = false;
     let finishFirst: (() => void) | undefined;
     let finishSecond: (() => void) | undefined;
-    const first = withWritePriority(() => new Promise<void>((resolve) => (finishFirst = resolve)));
+    const first = withWritePriority(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        }),
+    );
     const second = withWritePriority(
-      () => new Promise<void>((resolve) => (finishSecond = resolve)),
+      () =>
+        new Promise<void>((resolve) => {
+          finishSecond = resolve;
+        }),
     );
     void awaitWriteIdle().then(() => {
       released = true;
