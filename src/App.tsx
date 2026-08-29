@@ -314,7 +314,9 @@ export default function App() {
     }
     workspace.openSession(projectId, sessionId);
     setActiveSection("workspace");
-    setInspectorMode("terminal");
+    // The pane already shows the terminal. Opening the inspector onto a second copy of it buried
+    // the summary and the conversation log behind a click nobody knew to make.
+    setInspectorMode("summary");
   }
 
   function acknowledgeRuntimeNotice(notice: RuntimeAttentionNotice) {

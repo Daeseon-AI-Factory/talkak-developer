@@ -254,6 +254,7 @@ export function Workspace({
           {activeSession && inspectorMode ? (
             <Inspector
               session={activeSession}
+              projectPath={project.path}
               mode={inspectorMode}
               pinned={inspectorPinned}
               onChangeMode={onOpenInspector}

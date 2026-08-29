@@ -1,12 +1,15 @@
 import { useEffect } from "react";
 import type { DevSession, InspectorMode } from "../domain";
 import { useI18n } from "../i18n";
+import { type TranscriptState, useAgentTranscript } from "../runtime/useAgentTranscript";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
 import { TerminalLogView } from "./TerminalLogView";
 
 interface InspectorProps {
   session: DevSession;
+  /** The project directory, which is how an agent transcript on disk is found. */
+  projectPath: string;
   mode: InspectorMode;
   pinned: boolean;
   onChangeMode: (mode: InspectorMode) => void;
@@ -16,6 +19,7 @@ interface InspectorProps {
 
 export function Inspector({
   session,
+  projectPath,
   mode,
   pinned,
   onChangeMode,
@@ -92,9 +96,9 @@ export function Inspector({
         </button>
       </div>
 
-      {mode === "summary" ? <SummaryView session={session} /> : null}
+      {mode === "summary" ? <SummaryView session={session} projectPath={projectPath} /> : null}
       {mode === "terminal" ? <TerminalLogView sessionId={session.id} /> : null}
-      {mode === "conversation" ? <ConversationView session={session} /> : null}
+      {mode === "conversation" ? <ConversationView projectPath={projectPath} /> : null}
     </aside>
   );
 
@@ -112,16 +116,24 @@ export function Inspector({
   );
 }
 
-function SummaryView({ session }: { session: DevSession }) {
+function SummaryView({ session, projectPath }: { session: DevSession; projectPath: string }) {
   const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
+  const { state } = useAgentTranscript(projectPath, true);
   const runtime =
     session.runtime.kind === "unconfigured"
       ? t("runtime.unconfigured")
       : text(runtimeLabel(session));
+  // The agent's own record names the files it edited. `session.summary.changedFiles` is seeded
+  // demo content that nothing has ever written to for a real session.
+  const changedFiles = state.kind === "loaded" ? state.transcript.changedFiles : [];
   return (
     <div className="inspector__content">
       <section className="summary-hero">
-        <div className="summary-hero__source">{t("inspector.localPreview")}</div>
+        <div className="summary-hero__source">
+          {state.kind === "loaded"
+            ? t("transcript.source", { source: state.transcript.source })
+            : t("inspector.localPreview")}
+        </div>
         <div className="summary-hero__status-row">
           <span
             className="state-badge"
@@ -145,7 +157,7 @@ function SummaryView({ session }: { session: DevSession }) {
       </section>
 
       <SummarySection title={t("inspector.changedFiles")} empty={t("inspector.noFiles")}>
-        {session.summary.changedFiles.map((file) => (
+        {changedFiles.map((file) => (
           <div className="file-row" key={file}>
             <Icon name="folder" size={14} />
             <code>{file}</code>
@@ -186,30 +198,70 @@ function SummarySection({ title, empty, children }: SummarySectionProps) {
   );
 }
 
-function ConversationView({ session }: { session: DevSession }) {
+/** Says why there is nothing to show, which is never the same as showing nothing. */
+function TranscriptNotice({ state }: { state: TranscriptState }) {
   const { t } = useI18n();
+  if (state.kind === "loading")
+    return <p className="conversation-disclaimer">{t("transcript.loading")}</p>;
+  if (state.kind === "unsupported")
+    return <p className="conversation-disclaimer">{t("transcript.unsupported")}</p>;
+  if (state.kind === "absent")
+    return <p className="conversation-disclaimer">{t("transcript.absent")}</p>;
+  if (state.kind === "failed")
+    return (
+      <output className="conversation-disclaimer" data-tone="danger">
+        {t("transcript.failed", { message: state.message })}
+      </output>
+    );
+  return null;
+}
+
+function ConversationView({ projectPath }: { projectPath: string }) {
+  const { t } = useI18n();
+  const { state } = useAgentTranscript(projectPath, true);
+
+  if (state.kind !== "loaded") {
+    return (
+      <div className="inspector__content conversation-list">
+        <TranscriptNotice state={state} />
+      </div>
+    );
+  }
+
+  const { transcript } = state;
+  const dropped = transcript.totalEntries - transcript.entries.length;
   return (
     <div className="inspector__content conversation-list">
       <div className="conversation-list__meta">
-        <span>{t("inspector.messageCount", { count: session.conversation.length })}</span>
-        <span>{t("inspector.localPreview")}</span>
+        <span>{t("inspector.messageCount", { count: transcript.totalEntries })}</span>
+        <span>{t("transcript.source", { source: transcript.source })}</span>
       </div>
-      {session.conversation.map((entry) => (
-        <article className="conversation-entry" data-author={entry.author} key={entry.id}>
+      {dropped > 0 ? (
+        <p className="conversation-disclaimer">{t("transcript.trimmed", { count: dropped })}</p>
+      ) : null}
+      {transcript.entries.map((entry, index) => (
+        <article
+          className="conversation-entry"
+          data-author={entry.role === "user" ? "you" : "agent"}
+          // The record has no per-turn id; position plus timestamp is stable for a given read.
+          key={`${entry.at ?? "no-time"}-${index}`}
+        >
           <header>
-            <strong>
-              {entry.author === "you"
-                ? t("inspector.you")
-                : entry.author === "agent"
-                  ? t("inspector.agent")
-                  : t("inspector.system")}
-            </strong>
-            <time>{entry.time}</time>
+            <strong>{entry.role === "user" ? t("inspector.you") : t("inspector.agent")}</strong>
+            <time>{formatTurnTime(entry.at)}</time>
           </header>
           <p>{entry.text}</p>
         </article>
       ))}
-      <div className="conversation-disclaimer">{t("inspector.transcriptHelp")}</div>
     </div>
   );
+}
+
+/** The record stores ISO instants; a reader wants a clock time. */
+function formatTurnTime(at: string | null): string {
+  if (!at) return "";
+  const parsed = new Date(at);
+  return Number.isNaN(parsed.getTime())
+    ? ""
+    : parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
