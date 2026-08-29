@@ -27,6 +27,11 @@ struct HostInfo {
     os: &'static str,
     architecture: &'static str,
     supports_wsl_discovery: bool,
+    /// The Windows build, or None off Windows. xterm needs it to know it is driving a ConPTY:
+    /// without it, it applies its non-Windows buffer heuristics, and growing a pane pulls lines
+    /// back out of scrollback instead of appending blank rows — content duplicates and the
+    /// viewport moves under the reader.
+    windows_build: Option<u32>,
 }
 
 /// Quit chosen from the close-confirmation dialog. `kills` carries the sessions the user chose to
@@ -51,7 +56,29 @@ fn host_info() -> HostInfo {
         os: std::env::consts::OS,
         architecture: std::env::consts::ARCH,
         supports_wsl_discovery: cfg!(target_os = "windows"),
+        windows_build: windows_build(),
     }
+}
+
+/// The OS build number, read from the OS rather than guessed in the renderer.
+#[cfg(windows)]
+fn windows_build() -> Option<u32> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // Prints "Microsoft Windows [Version 10.0.26200.9106]"; the build is the third dotted field.
+    let output = std::process::Command::new("cmd.exe")
+        .args(["/D", "/S", "/C", "ver"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let bracketed = text.split('[').nth(1)?.split(']').next()?;
+    bracketed.split('.').nth(2)?.trim().parse().ok()
+}
+
+#[cfg(not(windows))]
+fn windows_build() -> Option<u32> {
+    None
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

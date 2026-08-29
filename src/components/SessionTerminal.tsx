@@ -12,6 +12,7 @@ import type {
 } from "../domain";
 import { useI18n } from "../i18n";
 import { platformFromUserAgent } from "../platform";
+import { hostInfo, windowsPtyOption } from "../runtime/hostClient";
 import { projectClient } from "../runtime/projectClient";
 import {
   beginRuntimeOperation,
@@ -242,8 +243,8 @@ export function SessionTerminal({
     terminalAttachFailedRef.current = false;
     let disposed = false;
     let disposeTerminal: (() => void) | undefined;
-    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
-      .then(([{ Terminal }, { FitAddon }]) => {
+    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit"), hostInfo()])
+      .then(([{ Terminal }, { FitAddon }, host]) => {
         if (disposed || !hostRef.current) return;
         // Reuse the retained emulator when its buffer belongs to the current run: the pane comes
         // back exactly as it looked and reads only the bytes that arrived while it was away —
@@ -275,6 +276,10 @@ export function SessionTerminal({
             // an agent streaming thousands of lines, that is what made scrolling stutter. It needs
             // to come back as a setting for anyone who runs a screen reader, not as a default.
             screenReaderMode: false,
+            // Tells xterm it is driving a ConPTY. Without it, growing a pane pulls lines back out
+            // of scrollback rather than appending blank rows, so content duplicates and the
+            // viewport moves under the reader — a Windows-only fault by construction.
+            ...windowsPtyOption(host),
             scrollback: 5000,
             theme: TERMINAL_THEME,
           });

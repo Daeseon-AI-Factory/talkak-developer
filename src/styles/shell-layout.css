@@ -354,7 +354,9 @@
 .split-layout__first > .terminal-pane,
 .split-layout__second > .terminal-pane {
   height: 100%;
-  min-height: 0;
+  /* The usable floor lives here, not on the terminal host. A split that squeezes a pane below this
+     is stopped by the layout, instead of the terminal quietly rendering rows nobody can see. */
+  min-height: 180px;
 }
 
 .split-layout {

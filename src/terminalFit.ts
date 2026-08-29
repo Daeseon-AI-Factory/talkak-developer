@@ -63,12 +63,21 @@ export function createTerminalFitter(
       // tick — including the ones a pane fires while output is arriving — moved the viewport,
       // which is how a finished burst of output could end up scrolled somewhere nobody asked for.
       if (terminal.cols !== beforeCols || terminal.rows !== beforeRows) {
-        const line = preservedScrollLine(
-          beforeBaseY,
-          beforeViewportY,
-          terminal.buffer.active.baseY,
-        );
-        if (line !== null) terminal.scrollToLine(line);
+        // Deferred by a frame. xterm 6 scrolls through a new viewport that re-bases its scroll
+        // dimensions asynchronously after a resize, so a scrollToLine issued here was measured
+        // against the OLD geometry and landed somewhere else — usually the bottom. That is the
+        // resize putting the reader somewhere they did not ask to be.
+        requestAnimationFrame(() => {
+          // xterm 6's reflow already holds a scrolled-up reader's absolute line. Correcting again
+          // on top of that moved them twice; only act when the reflow did not preserve it.
+          if (terminal.buffer.active.viewportY === beforeViewportY) return;
+          const line = preservedScrollLine(
+            beforeBaseY,
+            beforeViewportY,
+            terminal.buffer.active.baseY,
+          );
+          if (line !== null) terminal.scrollToLine(line);
+        });
       }
       onSuccess?.();
     } catch (cause: unknown) {

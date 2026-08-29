@@ -210,12 +210,20 @@ fn newest_codex_record(home: &Path, project_path: &str) -> Result<Option<PathBuf
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&first) else {
             continue;
         };
-        let cwd = value
-            .get("payload")
-            .and_then(|payload| payload.get("cwd"))
+        let Some(payload) = value.get("payload") else {
+            continue;
+        };
+        let cwd = payload
+            .get("cwd")
             .and_then(|cwd| cwd.as_str())
             .unwrap_or_default();
         if normalised_path(cwd) != wanted {
+            continue;
+        }
+        // A subagent thread records the SAME cwd as the parent that spawned it, and there are far
+        // more of them — 91 of 100 rollout files on this machine. Matching on the directory alone
+        // picked a subagent's private conversation and showed it as the session's own.
+        if payload.get("thread_source").and_then(|source| source.as_str()) != Some("user") {
             continue;
         }
         if best
