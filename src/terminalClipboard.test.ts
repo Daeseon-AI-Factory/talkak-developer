@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   type TerminalClipboardKeyEvent,
   attachTerminalClipboard,
+  quoteForShell,
   terminalClipboardAction,
 } from "./terminalClipboard";
 
@@ -141,8 +142,9 @@ describe("clipboard failures are surfaced, never swallowed", () => {
 });
 
 describe("pasting a screenshot into a terminal", () => {
-  it("pastes the image's path, since a PTY cannot carry an image", async () => {
+  function pasteHarness() {
     let pasted = "";
+    let press: (event: KeyboardEvent) => boolean = () => true;
     const terminal = {
       hasSelection: () => false,
       getSelection: () => "",
@@ -154,16 +156,72 @@ describe("pasting a screenshot into a terminal", () => {
         press = handler;
       },
     } as unknown as Parameters<typeof attachTerminalClipboard>[0];
-    let press: (event: KeyboardEvent) => boolean = () => true;
+    return {
+      terminal,
+      pasteResult: () => pasted,
+      pressPaste: () => press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as never),
+    };
+  }
 
-    attachTerminalClipboard(terminal, "windows", {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("pastes the image's path when the clipboard holds only an image", async () => {
+    const harness = pasteHarness();
+    attachTerminalClipboard(harness.terminal, "windows", {
       writeText: () => Promise.resolve(),
-      // Text is present too; the image wins because it is the thing that cannot go through a PTY.
-      readText: () => Promise.resolve("some old text"),
-      readImagePath: async () => "C:Temp\talkak-clipboardclipboard-1.png",
+      readText: () => Promise.resolve(""),
+      readImagePath: async () => "C:\\Temp\\talkak-clipboard\\clipboard-1.png",
     });
-    press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as unknown as KeyboardEvent);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(pasted).toBe("C:Temp\talkak-clipboardclipboard-1.png");
+    harness.pressPaste();
+    await settle();
+    expect(harness.pasteResult()).toBe('"C:\\Temp\\talkak-clipboard\\clipboard-1.png"');
+  });
+
+  it("pastes the text when the clipboard holds both, which is what copying from a browser does", async () => {
+    // Windows puts CF_DIB beside the text for rich copies, so asking for the image first answered
+    // an ordinary text copy with a PNG path the user never asked for.
+    const harness = pasteHarness();
+    attachTerminalClipboard(harness.terminal, "windows", {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve("SELECT * FROM users"),
+      readImagePath: async () => "C:\\Temp\\talkak-clipboard\\clipboard-1.png",
+    });
+    harness.pressPaste();
+    await settle();
+    expect(harness.pasteResult()).toBe("SELECT * FROM users");
+  });
+
+  it("quotes a path with a space so it reaches the agent as one argument", async () => {
+    const harness = pasteHarness();
+    attachTerminalClipboard(harness.terminal, "windows", {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve(""),
+      readImagePath: async () => "C:\\Users\\Daeseon Yoo\\AppData\\Local\\Temp\\shot.png",
+    });
+    harness.pressPaste();
+    await settle();
+    // Backslashes stay single: PowerShell's double quotes take them literally, and doubling them
+    // the POSIX way would turn every separator into two.
+    expect(harness.pasteResult()).toBe('"C:\\Users\\Daeseon Yoo\\AppData\\Local\\Temp\\shot.png"');
+  });
+});
+
+describe("quoting a path for the shell that will receive it", () => {
+  it("wraps a Windows path in double quotes without touching its separators", () => {
+    expect(quoteForShell("C:\\Program Files\\a b\\x.png", "windows")).toBe(
+      '"C:\\Program Files\\a b\\x.png"',
+    );
+  });
+
+  it("neutralises a dollar sign, which PowerShell would otherwise expand inside quotes", () => {
+    expect(quoteForShell("C:\\tmp\\$env\\x.png", "windows")).toBe('"C:\\tmp\\`$env\\x.png"');
+  });
+
+  it("uses single quotes off Windows, where they are literal end to end", () => {
+    expect(quoteForShell("/tmp/a b/$HOME`x.png", "other")).toBe("'/tmp/a b/$HOME`x.png'");
+  });
+
+  it("closes and reopens the quoting around a single quote, the only thing it cannot hold", () => {
+    expect(quoteForShell("/tmp/it's.png", "other")).toBe("'/tmp/it'\\''s.png'");
   });
 });

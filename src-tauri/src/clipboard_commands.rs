@@ -7,6 +7,7 @@
 //! macOS. Errors are returned, never swallowed, so a failure can be shown.
 
 use arboard::Clipboard;
+use std::time::{Duration, SystemTime};
 
 fn clipboard() -> Result<Clipboard, String> {
     Clipboard::new().map_err(|error| format!("clipboard unavailable: {error}"))
@@ -51,15 +52,50 @@ pub(crate) fn clipboard_read_image_path() -> Result<Option<String>, String> {
     let directory = std::env::temp_dir().join("talkak-clipboard");
     std::fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create the image directory: {error}"))?;
-    // Named by content time so repeated pastes of the same screenshot do not pile up unbounded,
-    // while two different screenshots never collide.
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_millis())
-        .unwrap_or_default();
-    let path = directory.join(format!("clipboard-{stamp}.png"));
-    buffer
-        .save(&path)
-        .map_err(|error| format!("could not save the image: {error}"))?;
+
+    // Named by CONTENT, so pasting the same screenshot into three panes writes one file instead of
+    // three. The previous name was the wall clock at paste time, which made every paste a new
+    // multi-megabyte file — and the comment above it claimed the opposite.
+    let path = directory.join(format!("clipboard-{}.png", digest(buffer.as_raw())));
+    if !path.exists() {
+        buffer
+            .save(&path)
+            .map_err(|error| format!("could not save the image: {error}"))?;
+    }
+    // Nothing else ever deletes these. The app cannot know when an agent is finished reading one,
+    // so age is the only safe signal: a file older than a day belongs to a session that is over.
+    prune_older_than(&directory, Duration::from_secs(60 * 60 * 24));
     Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// A stable name for a block of pixels. Not cryptographic — it only has to keep two different
+/// screenshots apart, and `DefaultHasher` is fixed-key, so the same image gets the same name across
+/// runs of the same build.
+fn digest(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn prune_older_than(directory: &std::path::Path, age: Duration) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|data| data.modified())
+            .map(|modified| {
+                now.duration_since(modified)
+                    .map(|elapsed| elapsed > age)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+        if stale {
+            // A file another process still holds simply stays; the next paste tries again.
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }

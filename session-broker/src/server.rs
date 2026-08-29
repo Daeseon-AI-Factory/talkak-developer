@@ -79,7 +79,26 @@ where
                         run.session_id, run.run_id
                     ));
                 }
-                dispatch(request, &runtime, store_dir.as_deref())
+                // Off the async workers. Every heavy arm of dispatch blocks: Spawn does openpty
+                // plus CreateProcess, Write blocks in write_all while holding the process writer,
+                // Kill waits on the child, StoredOutput reads a whole file. Run inline, one shell
+                // that stops draining its input parks a tokio worker for as long as it sulks, and
+                // with a worker per core a handful of those starve the runtime — every other
+                // pane's reads stop being served. That is the paste that takes ten seconds.
+                let runtime = Arc::clone(&runtime);
+                let store_dir = store_dir.clone();
+                match tokio::task::spawn_blocking(move || {
+                    dispatch(request, &runtime, store_dir.as_deref())
+                })
+                .await
+                {
+                    Ok(response) => response,
+                    // A panicked request must answer the client, or the lockstep protocol
+                    // desynchronises and the connection is dead with no one told why.
+                    Err(error) => Response::Error {
+                        message: format!("request failed: {error}"),
+                    },
+                }
             }
             Err(error) => Response::Error {
                 message: format!("bad request: {error}"),
@@ -112,12 +131,29 @@ where
 {
     LIVE_CLIENTS.fetch_add(1, Ordering::SeqCst);
     tokio::spawn(async move {
-        serve_connection(stream, Arc::clone(&runtime), store_dir).await;
+        // The decrement has to survive a panic. As a bare statement after the await it was skipped
+        // when a connection task unwound, and since only a transition to zero can retire the
+        // broker, one panic left the count permanently above zero: the broker became immortal,
+        // holding the endpoint and every session for as long as the machine stayed up.
+        let _leaving = ClientGuard {
+            runtime: Arc::clone(&runtime),
+        };
+        serve_connection(stream, runtime, store_dir).await;
+    });
+}
+
+/// Counts a client out however its task ends — returned, cancelled, or unwound.
+struct ClientGuard {
+    runtime: Arc<SessionRuntime>,
+}
+
+impl Drop for ClientGuard {
+    fn drop(&mut self) {
         // Only the last client leaving can retire the broker.
         if LIVE_CLIENTS.fetch_sub(1, Ordering::SeqCst) == 1 {
-            exit_if_idle(&runtime);
+            exit_if_idle(&self.runtime);
         }
-    });
+    }
 }
 
 fn exit_if_idle(runtime: &SessionRuntime) {

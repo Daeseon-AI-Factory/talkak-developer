@@ -327,7 +327,10 @@ export function SessionTerminal({
             async () => {
               // Polls stand aside for the write: on a single-connection broker a keystroke
               // otherwise waits behind every background read in flight.
-              await withWritePriority(() => sessionClient.write(session.id, runId, bytes));
+              await withWritePriority(
+                () => sessionClient.write(session.id, runId, bytes),
+                session.id,
+              );
               // The echo is already in the engine buffer; read it now, not a poll tick later.
               pollKickRef.current?.();
             },
@@ -452,7 +455,7 @@ export function SessionTerminal({
       if (!pollIsCurrent() || inFlight) return;
       // A write is more urgent than this read, and on a single-connection broker they compete
       // for the same wire.
-      await awaitWriteIdle();
+      await awaitWriteIdle(session.id);
       if (!pollIsCurrent() || inFlight) return;
       inFlight = true;
       try {

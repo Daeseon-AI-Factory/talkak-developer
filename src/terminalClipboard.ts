@@ -11,6 +11,27 @@ import { type ClipboardClient, clipboardClient } from "./runtime/clipboardClient
 
 export type TerminalClipboardAction = "copy" | "paste" | "passthrough";
 
+/**
+ * A pasted image path lands on a shell command line, where a space separates arguments. The temp
+ * directory descends from the Windows profile folder, which is named after the account's display
+ * name — `C:\Users\Daeseon Yoo\AppData\Local\Temp\...` is the ordinary case, not the odd one, and
+ * unquoted it reaches the agent as two arguments and opens nothing.
+ *
+ * Each shell's literal form differs, so this cannot be one rule. Inside PowerShell's double quotes
+ * a backslash is an ordinary character and the escape is a backtick, so escaping `\` the POSIX way
+ * would turn every separator in the path into two. POSIX single quotes take everything literally,
+ * which is what a generated path wants.
+ */
+export function quoteForShell(path: string, platform: DesktopPlatform): string {
+  if (platform === "windows") {
+    // A Windows path cannot contain " or `, so quoting is all that is needed. $ is inert inside
+    // cmd's quotes and expands in PowerShell's, so it is neutralised with PowerShell's own escape.
+    return `"${path.replace(/[$`]/g, "`$&")}"`;
+  }
+  // POSIX: single quotes are literal end to end; the only thing they cannot hold is a single quote.
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
 export interface TerminalClipboardKeyEvent {
   type: string;
   code: string;
@@ -62,12 +83,19 @@ export function attachTerminalClipboard(
     }
     if (action === "paste") {
       void clipboard
-        .readImagePath()
-        .then(async (imagePath) => {
-          // A PTY carries bytes, so an image cannot arrive in a terminal as an image, and an agent
-          // running inside one cannot reach the clipboard the way it could in its own window.
-          // Pasting the file path is what actually reaches the agent — and what it wanted.
-          const text = imagePath ?? (await clipboard.readText());
+        .readText()
+        .then(async (text) => {
+          // Text first. Copying from a browser, Word, Excel or Outlook puts CF_DIB on the clipboard
+          // beside the text, so asking for an image first answered a plain text copy with a PNG
+          // path — the user pasted a screenshot they never took.
+          if (text) return text;
+          // No text: a PTY carries bytes, so an image cannot arrive in a terminal as an image, and
+          // an agent running inside one cannot reach the clipboard the way it could in its own
+          // window. Pasting the file path is what actually reaches the agent — and what it wanted.
+          const imagePath = await clipboard.readImagePath();
+          return imagePath === null ? "" : quoteForShell(imagePath, platform);
+        })
+        .then((text) => {
           // terminal.paste() routes through onData with bracketed-paste framing, the same path
           // typed input takes, so a read-only terminal ignores it and a live one forwards it.
           if (text) terminal.paste(text);
