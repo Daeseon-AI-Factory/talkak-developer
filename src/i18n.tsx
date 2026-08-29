@@ -243,6 +243,20 @@ const ko = {
   "pages.activity.running": "실행 중",
   "pages.activity.exited": "끝남",
   "pages.activity.idle": "대기",
+  "pages.closeConfirmTitle": "이 페이지를 닫을까요?",
+  "pages.closeConfirmRunning":
+    "패인 {panes}개가 있고 그중 {running}개가 실행 중입니다. 세션은 계속 돌아가지만 이 페이지에서 떨어져 나가서, 남은 세션 정리 목록에서만 다시 찾을 수 있습니다.",
+  "pages.closeConfirmIdle":
+    "패인 {panes}개가 이 페이지에 있습니다. 세션은 종료되지 않고 화면에서만 떨어져 나갑니다.",
+  "pages.closeConfirmAccept": "페이지 닫기",
+  "pages.closeConfirmAcceptDetail": "레이아웃만 사라지고 세션은 살아 있습니다",
+  "pages.closeConfirmCancel": "그대로 두기",
+  "workspace.detachConfirmTitle": "이 패인을 닫을까요?",
+  "workspace.detachConfirmBody":
+    "{session}이(가) 아직 실행 중입니다. 세션은 종료되지 않지만 화면에서 떨어져 나가서, 남은 세션 정리 목록에서만 다시 찾을 수 있습니다.",
+  "workspace.detachConfirmAccept": "패인 닫기",
+  "workspace.detachConfirmAcceptDetail": "세션은 계속 실행됩니다",
+  "workspace.detachConfirmCancel": "그대로 두기",
   "session.defaultTitle": "세션 {index}",
   "session.defaultProfile": "기본 터미널",
   "session.createdNow": "방금 생성",
@@ -582,6 +596,20 @@ const en: Record<MessageKey, string> = {
   "pages.activity.running": "running",
   "pages.activity.exited": "finished",
   "pages.activity.idle": "idle",
+  "pages.closeConfirmTitle": "Close this page?",
+  "pages.closeConfirmRunning":
+    "{panes} panes here, {running} still running. The sessions keep going but nothing on this page will point at them — you would find them again only in the leftover-session list.",
+  "pages.closeConfirmIdle":
+    "{panes} panes are on this page. Nothing is stopped; they just stop being shown here.",
+  "pages.closeConfirmAccept": "Close page",
+  "pages.closeConfirmAcceptDetail": "The layout goes; the sessions stay alive",
+  "pages.closeConfirmCancel": "Keep it open",
+  "workspace.detachConfirmTitle": "Close this pane?",
+  "workspace.detachConfirmBody":
+    "{session} is still running. It will not be stopped, but nothing on screen will point at it — you would find it again only in the leftover-session list.",
+  "workspace.detachConfirmAccept": "Close pane",
+  "workspace.detachConfirmAcceptDetail": "The session keeps running",
+  "workspace.detachConfirmCancel": "Keep it open",
   "session.defaultTitle": "Session {index}",
   "session.defaultProfile": "Default terminal",
   "session.createdNow": "Created now",

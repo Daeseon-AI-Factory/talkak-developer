@@ -18,8 +18,20 @@ import { ShortcutGuide } from "./components/ShortcutGuide";
 import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
 import { attentionRequests as demoAttentionRequests, projects as demoProjects } from "./demo";
-import type { AppSection, AttentionRequest, InspectorMode, SidebarMode } from "./domain";
+import type {
+  AppSection,
+  AttentionRequest,
+  DevSession,
+  InspectorMode,
+  SidebarMode,
+} from "./domain";
 import { useI18n } from "./i18n";
+import { listPanes } from "./layoutModel";
+import {
+  pageCloseImpact,
+  pageCloseNeedsConfirmation,
+  paneDetachNeedsConfirmation,
+} from "./pageClose";
 import { platformFromUserAgent } from "./platform";
 import { type ProjectDraft, browserProjectStorage } from "./projectStore";
 import {
@@ -43,7 +55,7 @@ import { useWorkspaceController } from "./useWorkspaceController";
 import { hydrateWorkspaceProjects, readWorkspaceSnapshot } from "./workspaceStore";
 
 export default function App() {
-  const { locale, setLocale, t } = useI18n();
+  const { locale, setLocale, t, text } = useI18n();
   const [workspaceSnapshot] = useState(() => readWorkspaceSnapshot(browserProjectStorage()));
   const projectRegistry = useProjectRegistry(demoProjects, (projects) =>
     hydrateWorkspaceProjects(projects, workspaceSnapshot, (project, metadata) =>
@@ -158,6 +170,53 @@ export default function App() {
     workspace.selectProject(projectId);
     setActiveSection("workspace");
     setInspectorMode(null);
+  }
+
+  // The page X is a 12px target sitting beside the tab people click to switch pages, and closing
+  // does not stop the sessions — it just stops anything on screen referring to them. So a misclick
+  // silently loses track of running work rather than announcing itself.
+  const [pageToClose, setPageToClose] = useState<string | null>(null);
+  const sessionsById = useMemo(
+    () => new Map(activeProject.sessions.map((session) => [session.id, session])),
+    [activeProject.sessions],
+  );
+  const closingPage = activePages.find((page) => page.id === pageToClose) ?? null;
+  const closingImpact = closingPage ? pageCloseImpact(closingPage, sessionsById) : null;
+
+  const [paneToDetach, setPaneToDetach] = useState<string | null>(null);
+  const detachingSession = (() => {
+    if (!paneToDetach) return null;
+    for (const page of activePages) {
+      const pane = listPanes(page.root).find((candidate) => candidate.id === paneToDetach);
+      if (pane) return sessionsById.get(pane.sessionId) ?? null;
+    }
+    return null;
+  })();
+
+  function requestDetachPane(paneId: string) {
+    let session: DevSession | undefined;
+    for (const page of activePages) {
+      const pane = listPanes(page.root).find((candidate) => candidate.id === paneId);
+      if (pane) {
+        session = sessionsById.get(pane.sessionId);
+        break;
+      }
+    }
+    if (!paneDetachNeedsConfirmation(session)) {
+      workspace.detachPane(paneId);
+      return;
+    }
+    setPaneToDetach(paneId);
+  }
+
+  function requestClosePage(pageId: string) {
+    const page = activePages.find((candidate) => candidate.id === pageId);
+    if (!page) return;
+    if (!pageCloseNeedsConfirmation(pageCloseImpact(page, sessionsById))) {
+      workspace.closeWorkspacePage(pageId);
+      return;
+    }
+    setPageToClose(pageId);
   }
 
   // The window X asks before anything dies. projectsRef keeps the close handler — registered
@@ -312,7 +371,7 @@ export default function App() {
       newPage: workspace.createWorkspacePage,
       splitRight: () => activePane && workspace.splitActivePane(activePane.id, "horizontal"),
       splitDown: () => activePane && workspace.splitActivePane(activePane.id, "vertical"),
-      closePane: () => activePane && workspace.detachPane(activePane.id),
+      closePane: () => activePane && requestDetachPane(activePane.id),
       summary: () => {
         if (activeSession)
           setInspectorMode((current) => (current === "summary" ? null : "summary"));
@@ -522,13 +581,13 @@ export default function App() {
             onSelectPane={workspace.focusWorkspacePane}
             onSelectPage={workspace.selectPage}
             onCreatePage={workspace.createWorkspacePage}
-            onClosePage={workspace.closeWorkspacePage}
+            onClosePage={requestClosePage}
             onMovePaneToPage={workspace.movePaneToPage}
             onMovePaneToNextPage={workspace.movePaneToNextPage}
             onAttachSession={workspace.attachSession}
             onCreateSessionInPage={workspace.createSessionInActivePage}
             onSplitPane={workspace.splitActivePane}
-            onDetachPane={workspace.detachPane}
+            onDetachPane={requestDetachPane}
             onResizeSplit={workspace.resizeSplit}
             onOpenInspector={setInspectorMode}
             onCloseInspector={() => setInspectorMode(null)}
@@ -586,6 +645,51 @@ export default function App() {
         project={projectRegistry.editingProject}
         onClose={projectRegistry.closeProjectEditor}
         onSave={saveProject}
+      />
+      <ConfirmDialog
+        open={paneToDetach !== null}
+        title={t("workspace.detachConfirmTitle")}
+        body={t("workspace.detachConfirmBody", {
+          session: detachingSession ? text(detachingSession.title) : "",
+        })}
+        cancelLabel={t("workspace.detachConfirmCancel")}
+        onCancel={() => setPaneToDetach(null)}
+        actions={[
+          {
+            label: t("workspace.detachConfirmAccept"),
+            detail: t("workspace.detachConfirmAcceptDetail"),
+            tone: "danger",
+            onSelect: () => {
+              if (paneToDetach) workspace.detachPane(paneToDetach);
+              setPaneToDetach(null);
+            },
+          },
+        ]}
+      />
+      <ConfirmDialog
+        open={closingPage !== null}
+        title={t("pages.closeConfirmTitle")}
+        body={
+          closingImpact && closingImpact.runningCount > 0
+            ? t("pages.closeConfirmRunning", {
+                panes: closingImpact.paneCount,
+                running: closingImpact.runningCount,
+              })
+            : t("pages.closeConfirmIdle", { panes: closingImpact?.paneCount ?? 0 })
+        }
+        cancelLabel={t("pages.closeConfirmCancel")}
+        onCancel={() => setPageToClose(null)}
+        actions={[
+          {
+            label: t("pages.closeConfirmAccept"),
+            detail: t("pages.closeConfirmAcceptDetail"),
+            tone: "danger",
+            onSelect: () => {
+              if (pageToClose) workspace.closeWorkspacePage(pageToClose);
+              setPageToClose(null);
+            },
+          },
+        ]}
       />
       <ConfirmDialog
         open={quitKills !== null}
