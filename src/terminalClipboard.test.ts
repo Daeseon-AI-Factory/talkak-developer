@@ -2,19 +2,32 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   type TerminalClipboardKeyEvent,
   attachTerminalClipboard,
+  pasteTextFor,
   quoteForShell,
   terminalClipboardAction,
 } from "./terminalClipboard";
 
-const key = (overrides: Partial<TerminalClipboardKeyEvent>): TerminalClipboardKeyEvent => ({
-  type: "keydown",
-  code: "",
-  ctrlKey: false,
-  shiftKey: false,
-  altKey: false,
-  metaKey: false,
-  ...overrides,
-});
+// A real KeyboardEvent carries preventDefault, and the handler calls it on every key it consumes:
+// returning false to xterm does not cancel the browser's own handling, so Ctrl+Shift+V — Chromium's
+// "paste as plain text" — could otherwise paste twice.
+const key = (
+  overrides: Partial<TerminalClipboardKeyEvent>,
+): TerminalClipboardKeyEvent & { preventDefault: () => void; defaultPrevented: boolean } => {
+  const event = {
+    type: "keydown",
+    code: "",
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    metaKey: false,
+    defaultPrevented: false,
+    preventDefault: () => {
+      event.defaultPrevented = true;
+    },
+    ...overrides,
+  };
+  return event;
+};
 
 describe("terminal clipboard keys", () => {
   it("copies on Ctrl+C when text is selected, so copying never doubles as an interrupt", () => {
@@ -129,6 +142,28 @@ describe("clipboard failures are surfaced, never swallowed", () => {
     expect(cleared).toBe(true);
   });
 
+  it("cancels the browser's own handling of a key it consumed, so a paste never doubles", async () => {
+    attachTerminalClipboard(terminal("some output"), "windows", {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve("x"),
+      readImagePath: async () => null,
+    });
+    // Ctrl+Shift+V is Chromium's "paste as plain text". Returning false to xterm does not cancel
+    // it, so without preventDefault the same keystroke pasted through both paths.
+    const paste = key({ code: "KeyV", ctrlKey: true, shiftKey: true });
+    press(paste as unknown as KeyboardEvent);
+    expect(paste.defaultPrevented).toBe(true);
+
+    const copy = key({ code: "KeyC", ctrlKey: true });
+    press(copy as unknown as KeyboardEvent);
+    expect(copy.defaultPrevented).toBe(true);
+
+    // A key this does not consume is left entirely alone.
+    const other = key({ code: "KeyA", ctrlKey: true });
+    expect(press(other as unknown as KeyboardEvent)).toBe(true);
+    expect(other.defaultPrevented).toBe(false);
+  });
+
   it("pastes what the OS clipboard holds", async () => {
     attachTerminalClipboard(terminal(""), "windows", {
       writeText: () => Promise.resolve(),
@@ -203,6 +238,45 @@ describe("pasting a screenshot into a terminal", () => {
     // Backslashes stay single: PowerShell's double quotes take them literally, and doubling them
     // the POSIX way would turn every separator into two.
     expect(harness.pasteResult()).toBe('"C:\\Users\\Daeseon Yoo\\AppData\\Local\\Temp\\shot.png"');
+  });
+});
+
+describe("the same paste on either platform", () => {
+  // The parity requirement in one test: whatever the gesture, a clipboard holding only an image
+  // resolves to the same quoted path on Windows and macOS. Image paste used to be Windows-only,
+  // because macOS returns passthrough before the paste branch is ever reached.
+  const onlyAnImage = {
+    writeText: () => Promise.resolve(),
+    readText: () => Promise.resolve(""),
+    readImagePath: async () => "/tmp/talkak/shot.png",
+  };
+
+  it("resolves an image to a quoted path on macOS", async () => {
+    expect(await pasteTextFor(onlyAnImage, "macos")).toBe("'/tmp/talkak/shot.png'");
+  });
+
+  it("resolves an image to a quoted path on Windows", async () => {
+    expect(await pasteTextFor(onlyAnImage, "windows")).toBe('"/tmp/talkak/shot.png"');
+  });
+
+  it("prefers text over the image on every platform", async () => {
+    const both = {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve("real text"),
+      readImagePath: async () => "/tmp/talkak/shot.png",
+    };
+    for (const platform of ["windows", "macos", "other"] as const) {
+      expect(await pasteTextFor(both, platform)).toBe("real text");
+    }
+  });
+
+  it("resolves to nothing when the clipboard holds neither", async () => {
+    const empty = {
+      writeText: () => Promise.resolve(),
+      readText: () => Promise.resolve(""),
+      readImagePath: async () => null,
+    };
+    expect(await pasteTextFor(empty, "windows")).toBe("");
   });
 });
 

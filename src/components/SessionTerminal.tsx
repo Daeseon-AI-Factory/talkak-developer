@@ -283,7 +283,9 @@ export function SessionTerminal({
           terminal.open(hostRef.current);
           retainTerminal(session.id, { terminal, fitAddon, runId: currentRunId, cursor: 0 });
         }
-        attachTerminalClipboard(
+        // Disposed on teardown: the terminal is retained across page switches, so a DOM paste
+        // listener left behind would stack and paste once per past mount.
+        const detachClipboard = attachTerminalClipboard(
           terminal,
           platformFromUserAgent(navigator.userAgent),
           undefined,
@@ -405,6 +407,7 @@ export function SessionTerminal({
           observer.disconnect();
           sendInput.dispose();
           sendResize.dispose();
+          detachClipboard();
           // Detach, never dispose: the emulator and its buffer stay retained for this session so
           // the pane returns without replaying. releaseTerminal() is the only place that disposes.
           terminal.element?.remove();

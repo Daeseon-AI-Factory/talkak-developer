@@ -104,8 +104,13 @@ fn modified_at(path: &Path) -> std::time::SystemTime {
 /// Claude Code's directory name for a working directory: every character that is not a letter or a
 /// digit becomes '-'. `C:\Sources\talkak-developer` becomes `C--Sources-talkak-developer`, and a
 /// UNC path keeps its leading pair as `--`.
+///
+/// Past 200 characters the name is truncated and a hash of the ORIGINAL path is appended, so two
+/// deep paths sharing a long prefix stay apart. The hash is the harness's own `h*31 + charCode`
+/// over UTF-16 units, rendered in base 36; `encode_utf16` rather than `chars` matters the moment a
+/// path contains Korean or an emoji.
 pub(crate) fn claude_project_dir_name(project_path: &str) -> String {
-    project_path
+    let sanitised: String = project_path
         .chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() {
@@ -114,15 +119,60 @@ pub(crate) fn claude_project_dir_name(project_path: &str) -> String {
                 '-'
             }
         })
-        .collect()
+        .collect();
+    // Every replacement is ASCII, so the sanitised string is ASCII and a char count is a unit count.
+    if sanitised.chars().count() <= 200 {
+        return sanitised;
+    }
+    let head: String = sanitised.chars().take(200).collect();
+    format!("{head}-{}", base36(hash32(project_path).wrapping_abs()))
+}
+
+fn hash32(text: &str) -> i32 {
+    let mut hash: i32 = 0;
+    for unit in text.encode_utf16() {
+        hash = hash
+            .wrapping_shl(5)
+            .wrapping_sub(hash)
+            .wrapping_add(i32::from(unit));
+    }
+    hash
+}
+
+fn base36(mut value: i32) -> String {
+    if value == 0 {
+        return "0".to_string();
+    }
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = Vec::new();
+    while value > 0 {
+        out.push(DIGITS[(value % 36) as usize]);
+        value /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
 }
 
 fn newest_claude_record(home: &Path, project_path: &str) -> Option<PathBuf> {
-    let directory = home
-        .join(".claude")
-        .join("projects")
-        .join(claude_project_dir_name(project_path));
-    newest_jsonl(&directory, |name| name.ends_with(".jsonl"))
+    let root = home.join(".claude").join("projects");
+    let wanted = claude_project_dir_name(project_path);
+    // Enumerated, not built. Windows and a default APFS volume are case-insensitive, so two cwds
+    // differing only in drive-letter case produce two different names but land in ONE directory —
+    // building the path and reading it would intermittently find nothing. On a case-sensitive
+    // volume both spellings can exist, so an exact match wins over a case-insensitive one.
+    let entries = std::fs::read_dir(&root).ok()?;
+    let mut fallback: Option<PathBuf> = None;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == wanted {
+            return newest_jsonl(&entry.path(), |file| file.ends_with(".jsonl"));
+        }
+        if fallback.is_none() && name.eq_ignore_ascii_case(&wanted) {
+            fallback = Some(entry.path());
+        }
+    }
+    newest_jsonl(&fallback?, |file| file.ends_with(".jsonl"))
 }
 
 fn newest_jsonl(directory: &Path, accept: impl Fn(&str) -> bool) -> Option<PathBuf> {
@@ -219,6 +269,8 @@ struct Collected {
     total: usize,
     changed: Vec<String>,
     last_at: Option<String>,
+    /// The message id of the turn still being folded into, if any.
+    open_group: Option<String>,
 }
 
 impl Collected {
@@ -228,6 +280,7 @@ impl Collected {
             total: 0,
             changed: Vec::new(),
             last_at: None,
+            open_group: None,
         }
     }
 
@@ -240,6 +293,27 @@ impl Collected {
         while self.entries.len() > limit {
             self.entries.pop_front();
         }
+    }
+
+    /// Appends, or folds into the turn already open under the same id. A merged block joins the
+    /// text it continues rather than starting a new turn, and does not count as another turn.
+    fn push_merging(&mut self, entry: TranscriptEntry, group: Option<String>, limit: usize) {
+        if let Some(id) = group {
+            if self.open_group.as_deref() == Some(id.as_str()) {
+                if let Some(last) = self.entries.back_mut() {
+                    last.text.push_str("\n\n");
+                    last.text.push_str(&entry.text);
+                    if entry.at.is_some() {
+                        self.last_at = entry.at;
+                    }
+                    return;
+                }
+            }
+            self.open_group = Some(id);
+        } else {
+            self.open_group = None;
+        }
+        self.push(entry, limit);
     }
 
     fn touched(&mut self, file: &str) {
@@ -326,12 +400,21 @@ fn read_claude(path: &Path, limit: usize) -> Result<AgentTranscript, String> {
         if text.is_empty() {
             continue;
         }
-        collected.push(
+        // One assistant answer is written as several lines — one per content block — all carrying
+        // the same message.id. Most of them are: 483 of 895 in one file here span more than one
+        // line, up to five. Rendered per line, a single reply appeared as five separate bubbles.
+        let message_id = value
+            .get("message")
+            .and_then(|message| message.get("id"))
+            .and_then(|id| id.as_str())
+            .map(str::to_string);
+        collected.push_merging(
             TranscriptEntry {
                 role: role.to_string(),
                 text,
                 at,
             },
+            message_id.filter(|_| role == "assistant"),
             limit,
         );
     }
@@ -482,6 +565,62 @@ mod tests {
         assert_eq!(transcript.entries[0].text, "turn 7");
         assert_eq!(transcript.entries[2].text, "turn 9");
         assert_eq!(transcript.last_activity.as_deref(), Some("t9"));
+    }
+
+    #[test]
+    fn one_answer_written_as_several_blocks_is_one_turn() {
+        // An assistant reply is written a line per content block, all sharing message.id — 483 of
+        // 895 in one real file here span more than one line. Per line, a single reply rendered as
+        // up to five separate bubbles.
+        let mut collected = Collected::new();
+        let block = |text: &str| TranscriptEntry {
+            role: "assistant".into(),
+            text: text.into(),
+            at: Some("t".into()),
+        };
+        collected.push_merging(block("first"), Some("msg_1".into()), 10);
+        collected.push_merging(block("second"), Some("msg_1".into()), 10);
+        collected.push_merging(block("a new reply"), Some("msg_2".into()), 10);
+
+        let transcript = collected.finish("claude", Path::new("x.jsonl"));
+        assert_eq!(transcript.entries.len(), 2);
+        assert_eq!(transcript.entries[0].text, "first\n\nsecond");
+        assert_eq!(transcript.entries[1].text, "a new reply");
+        // A folded block is not another turn.
+        assert_eq!(transcript.total_entries, 2);
+    }
+
+    #[test]
+    fn a_user_turn_between_two_blocks_of_one_answer_breaks_the_group() {
+        let mut collected = Collected::new();
+        collected.push_merging(
+            TranscriptEntry { role: "assistant".into(), text: "a".into(), at: None },
+            Some("msg_1".into()),
+            10,
+        );
+        collected.push_merging(
+            TranscriptEntry { role: "user".into(), text: "wait".into(), at: None },
+            None,
+            10,
+        );
+        collected.push_merging(
+            TranscriptEntry { role: "assistant".into(), text: "b".into(), at: None },
+            Some("msg_1".into()),
+            10,
+        );
+        let transcript = collected.finish("claude", Path::new("x.jsonl"));
+        assert_eq!(transcript.entries.len(), 3);
+    }
+
+    #[test]
+    fn a_path_past_two_hundred_characters_keeps_a_hash_of_the_original() {
+        let deep = format!("C:\\{}", "segment\\".repeat(40));
+        let name = claude_project_dir_name(&deep);
+        assert!(name.chars().count() > 200, "the hash suffix is appended, not folded in");
+        assert!(name.chars().take(200).all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        // Two long paths sharing the first 200 characters must not collide.
+        let sibling = format!("{deep}other\\");
+        assert_ne!(name, claude_project_dir_name(&sibling));
     }
 
     #[test]
