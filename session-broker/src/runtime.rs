@@ -786,9 +786,13 @@ pub fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
     for suppressor in ["NO_COLOR", "ANSI_COLORS_DISABLED"] {
         command.env_remove(suppressor);
     }
-    // CLICOLOR=0 is the documented way to say "no colour"; CLICOLOR_FORCE is the override. Only the
-    // negative form is removed, so a user who deliberately forces colour keeps it.
-    if std::env::var("CLICOLOR").is_ok_and(|value| value == "0") {
+    // CLICOLOR=0 is the BSD and macOS spelling of the same instruction, and this product has to
+    // behave identically on both platforms — a mac launched from a shell carrying it would lose
+    // colour exactly as Windows did with NO_COLOR. Asked of the builder, which is already seeded
+    // from this process's environment, so the question is what the child would really receive.
+    // Only the disabling "0" goes: CLICOLOR_FORCE and a deliberate CLICOLOR=1 are someone choosing
+    // colour, and removing those would override the user rather than the accident.
+    if command.get_env("CLICOLOR").is_some_and(|value| value == "0") {
         command.env_remove("CLICOLOR");
     }
     command

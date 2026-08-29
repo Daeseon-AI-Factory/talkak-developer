@@ -95,8 +95,10 @@ fn the_client_runs_a_full_session_lifecycle_through_a_detached_broker() {
 
     // The store lives with the broker: the output of the finished run is still readable, and
     // discard removes the record.
-    assert!(runtime.persists());
-    let stored = runtime.stored_output("client-lifecycle");
+    assert!(runtime.persists().expect("the broker should answer"));
+    let stored = runtime
+        .stored_output("client-lifecycle")
+        .expect("the finished run's output should still be readable");
     assert!(
         String::from_utf8_lossy(&stored).contains("talkak-client-marker"),
         "stored output should retain the marker"
@@ -118,7 +120,12 @@ fn the_client_runs_a_full_session_lifecycle_through_a_detached_broker() {
             Err(error) => panic!("discard never succeeded: {error}"),
         }
     }
-    assert!(runtime.restorable().is_empty());
+    // Asserted through Ok, not on emptiness alone: an unreachable broker satisfied this too, so it
+    // passed whether discard worked or nothing ever answered.
+    assert!(runtime
+        .restorable()
+        .expect("the broker should answer")
+        .is_empty());
 }
 
 /// The pool must default to a SINGLE connection. A broker built before the concurrency fix —
@@ -137,7 +144,7 @@ fn talking_to_a_concurrent_broker_opens_the_pool_up() {
         unique_endpoint("concurrent"),
         Some(data.path().to_path_buf()),
     );
-    assert!(runtime.persists(), "the real broker should answer");
+    assert!(runtime.persists().expect("the real broker should answer"));
     assert!(
         runtime.connection_limit() > 1,
         "a concurrent broker's handshake should raise the limit"

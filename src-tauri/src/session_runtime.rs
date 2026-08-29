@@ -161,29 +161,34 @@ impl SessionRuntime {
         }
     }
 
-    /// Errors read as an empty restore list: the workspace can still open, and `persists()`
-    /// reports the store state honestly on its own.
-    pub(crate) fn restorable(&self) -> Vec<RestorableSession> {
-        match self.request(&Request::Restorable) {
-            Ok(Response::Restorable(sessions)) => sessions,
-            _ => Vec::new(),
+    /// What a restart could bring back. The error is RETURNED: an empty list here reads as "there
+    /// is nothing to recover", and this app has already shipped that exact lie twice — a refused
+    /// clipboard that looked like a successful copy, and a broker error that became an empty
+    /// session list while twenty-two shells ran.
+    pub(crate) fn restorable(&self) -> BrokerResult<Vec<RestorableSession>> {
+        match self.request(&Request::Restorable)? {
+            Response::Restorable(sessions) => Ok(sessions),
+            other => Err(unexpected(other)),
         }
     }
 
-    pub(crate) fn stored_output(&self, session_id: &str) -> Vec<u8> {
+    /// The retained tail for a session. Empty bytes and an unreachable broker are different facts:
+    /// the caller offers a relaunch that discards this output, so "I could not read it" must not
+    /// arrive as "there was nothing to read".
+    pub(crate) fn stored_output(&self, session_id: &str) -> BrokerResult<Vec<u8>> {
         let request = Request::StoredOutput(SessionIdRequest {
             session_id: session_id.to_owned(),
         });
-        match self.request(&request) {
-            Ok(Response::Bytes(bytes)) => bytes,
-            _ => Vec::new(),
+        match self.request(&request)? {
+            Response::Bytes(bytes) => Ok(bytes),
+            other => Err(unexpected(other)),
         }
     }
 
-    pub(crate) fn persists(&self) -> bool {
-        match self.request(&Request::Persists) {
-            Ok(Response::Persists(persists)) => persists,
-            _ => false,
+    pub(crate) fn persists(&self) -> BrokerResult<bool> {
+        match self.request(&Request::Persists)? {
+            Response::Persists(persists) => Ok(persists),
+            other => Err(unexpected(other)),
         }
     }
 
@@ -352,27 +357,65 @@ impl SessionRuntime {
         let data_dir = self.data_dir.as_ref()?;
         let broker_dir = data_dir.join("broker");
         std::fs::create_dir_all(&broker_dir).ok()?;
-        let source_len = std::fs::metadata(source).ok()?.len();
-        // The name carries the binary size, not just the version: during development the version
-        // does not move, and a same-named copy locked by a running broker silently pinned every
-        // later build to the first day's binary.
+        let source_bytes = std::fs::read(source).ok()?;
+        // The name carries a digest of the binary, not just the version: during development the
+        // version does not move, and a same-named copy locked by a running broker silently pinned
+        // every later build to the first day's binary.
+        //
+        // It used to carry the byte LENGTH, which made the freshness check below tautological — the
+        // length was already in the path, so `meta.len() == source_len` was true of any complete
+        // file there and could only fail if it was missing or truncated. Any rebuild that did not
+        // change the size went unnoticed, and plenty do not: retuning a constant, flipping `>` to
+        // `>=`, editing a log string to another of the same length. The developer then ran
+        // yesterday's broker with nothing to indicate it.
         let file_name = format!(
-            "talkak-dev-broker-{}-{source_len}{}",
+            "talkak-dev-broker-{}-{}{}",
             env!("CARGO_PKG_VERSION"),
+            digest(&source_bytes),
             std::env::consts::EXE_SUFFIX
         );
         let destination = broker_dir.join(file_name);
-        let up_to_date = std::fs::metadata(&destination)
-            .map(|meta| meta.len() == source_len)
-            .unwrap_or(false);
-        if !up_to_date {
-            // A locked destination means a broker of this exact version is already running from
-            // it; using it as-is is the intended outcome, not an error.
+        // Now that the name IS the content, existence is the whole check.
+        if !destination.exists() {
+            // A locked destination means a broker built from these exact bytes is already running
+            // from it; using it as-is is the intended outcome, not an error.
             if std::fs::copy(source, &destination).is_err() && !destination.exists() {
                 return None;
             }
         }
+        prune_superseded_brokers(&broker_dir, &destination);
         Some(destination)
+    }
+}
+
+/// A stable name for a binary's contents. Not cryptographic — it only has to change when the bytes
+/// change, and `DefaultHasher` is fixed-key, so a given build always resolves to the same name.
+fn digest(bytes: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Every build leaves another megabyte behind, so old copies are swept as new ones land. A binary a
+/// broker is still executing is locked and simply refuses to go, which is exactly right: that
+/// broker is still holding someone's sessions.
+fn prune_superseded_brokers(broker_dir: &Path, keep: &Path) {
+    let Ok(entries) = std::fs::read_dir(broker_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path == keep {
+            continue;
+        }
+        if path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("talkak-dev-broker-"))
+        {
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 

@@ -41,24 +41,43 @@ fn an_inherited_no_color_never_reaches_a_pane() {
 }
 
 #[test]
-fn a_deliberate_clicolor_force_survives() {
-    // Only the negative form is stripped. Someone who forces colour on keeps it.
+fn a_disabling_clicolor_is_dropped_but_a_deliberate_one_survives() {
+    // The macOS spelling of the same instruction. Only the negative form goes — this product has to
+    // behave the same on both platforms, and someone who forces colour on meant it.
+    fn build(id: &str) -> portable_pty::CommandBuilder {
+        command_for_request(&SpawnSessionRequest {
+            session_id: id.into(),
+            cwd: None,
+            command: None,
+            args: Vec::new(),
+            cols: 80,
+            rows: 24,
+        })
+    }
+
+    std::env::set_var("CLICOLOR", "0");
     std::env::set_var("CLICOLOR_FORCE", "1");
-    let command = command_for_request(&SpawnSessionRequest {
-        session_id: "clicolor-force".into(),
-        cwd: None,
-        command: None,
-        args: Vec::new(),
-        cols: 80,
-        rows: 24,
-    });
+    let disabled = build("clicolor-off");
+    std::env::set_var("CLICOLOR", "1");
+    let chosen = build("clicolor-on");
+    std::env::remove_var("CLICOLOR");
     std::env::remove_var("CLICOLOR_FORCE");
 
+    assert!(
+        disabled.get_env("CLICOLOR").is_none(),
+        "CLICOLOR=0 was inherited into the pane environment"
+    );
     assert_eq!(
-        command
+        disabled
             .get_env("CLICOLOR_FORCE")
             .map(|value| value.to_string_lossy()),
-        Some("1".into())
+        Some("1".into()),
+        "the override a user set on purpose must survive"
+    );
+    assert_eq!(
+        chosen.get_env("CLICOLOR").map(|value| value.to_string_lossy()),
+        Some("1".into()),
+        "CLICOLOR=1 is someone choosing colour, not refusing it"
     );
 }
 

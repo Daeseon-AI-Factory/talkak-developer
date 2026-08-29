@@ -20,8 +20,8 @@ pub(crate) fn session_restorable(
     runtime: State<'_, SessionRuntime>,
 ) -> Result<RestorableSessions, String> {
     Ok(RestorableSessions {
-        persisted: runtime.persists(),
-        sessions: runtime.restorable(),
+        persisted: runtime.persists().map_err(|error| error.to_string())?,
+        sessions: runtime.restorable().map_err(|error| error.to_string())?,
     })
 }
 
@@ -32,7 +32,9 @@ pub(crate) fn session_stored_output(
     runtime: State<'_, SessionRuntime>,
     request: SessionIdRequest,
 ) -> Result<Vec<u8>, String> {
-    Ok(runtime.stored_output(&request.session_id))
+    runtime
+        .stored_output(&request.session_id)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
