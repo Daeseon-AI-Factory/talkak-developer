@@ -48,6 +48,16 @@ struct Connection {
 /// visible pane's poll plus keystrokes, without growing unbounded.
 const MAX_CONNECTIONS: usize = 8;
 
+/// How long a caller waits for a free connection before being told the pool is stuck. Long enough
+/// that ordinary contention never trips it, short enough that a wedged request cannot pass for a
+/// hung application.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long one request waits for its answer. A spawn does openpty plus CreateProcess and a
+/// StoredOutput reads a whole retained log, so this is generous; it exists to bound a broker that
+/// has stopped answering at all, not to police normal latency.
+const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// A bounded connection pool. The limit starts at ONE and only opens up when a broker's handshake
 /// says it serves connections concurrently: a broker predating that fix answers one client at a
 /// time, so a second connection to it would wait forever. Requests beyond the limit wait for a
@@ -197,22 +207,30 @@ impl SessionRuntime {
     /// cycle, not a failure.
     fn request(&self, request: &Request) -> BrokerResult<Response> {
         for attempt in 0..2 {
-            let mut connection = self.acquire()?;
-            match exchange(&mut connection, request) {
-                Ok(Response::Error { message }) => {
+            let connection = self.acquire()?;
+            match exchange_within(connection, request, EXCHANGE_TIMEOUT) {
+                Exchanged::Answered(connection, Response::Error { message }) => {
                     self.release(connection);
                     return Err(BrokerError(message));
                 }
-                Ok(response) => {
+                Exchanged::Answered(connection, response) => {
                     self.release(connection);
                     return Ok(response);
                 }
                 // A failed exchange leaves the connection's framing unknown: drop it, never pool it.
-                Err(error) => {
+                Exchanged::Failed(error) => {
                     self.release_slot();
                     if attempt == 1 {
                         return Err(BrokerError(format!("broker connection failed: {error}")));
                     }
+                }
+                // Abandoned, not retried: the request may well have been carried out, so sending it
+                // again could spawn a second shell or write input twice.
+                Exchanged::TimedOut => {
+                    self.release_slot();
+                    return Err(BrokerError(
+                        "the session broker did not answer in time".into(),
+                    ));
                 }
             }
         }
@@ -236,10 +254,19 @@ impl SessionRuntime {
                 drop(pool);
                 return self.establish().inspect_err(|_| self.release_slot());
             }
-            pool = self
+            // Bounded. A request that never comes back is abandoned by `exchange_within` but its
+            // slot is only freed after the timeout, and waiting here forever meant every other
+            // pane's thread parked on this Condvar behind it. Failing says so instead.
+            let (guard, wait) = self
                 .available
-                .wait(pool)
+                .wait_timeout(pool, ACQUIRE_TIMEOUT)
                 .map_err(|_| BrokerError("broker pool lock poisoned".into()))?;
+            pool = guard;
+            if wait.timed_out() && pool.idle.is_empty() && pool.outstanding >= pool.limit {
+                return Err(BrokerError(
+                    "every broker connection is busy — a previous command has not come back".into(),
+                ));
+            }
         }
     }
 
@@ -442,6 +469,67 @@ fn sweep_process_tree(_process_id: Option<u32>) {}
 
 fn unexpected(response: Response) -> BrokerError {
     BrokerError(format!("unexpected broker response: {response:?}"))
+}
+
+/// The outcome of one bounded request/response turn.
+enum Exchanged {
+    Answered(Connection, Response),
+    Failed(std::io::Error),
+    TimedOut,
+}
+
+/// One exchange, on a thread, with a deadline.
+///
+/// `open_stream` can only set a read timeout under cfg(unix) — on Windows the pipe is a plain
+/// `File` and a blocking read has no bound at all, so a broker that never answers held its caller
+/// forever and its pool slot with it. Doing the turn on a thread lets the caller give up while the
+/// read stays where it is: the connection travels WITH the thread and is dropped there whenever the
+/// broker finally replies or the pipe closes, so nothing half-read is ever returned to the pool.
+fn exchange_within(
+    mut connection: Connection,
+    request: &Request,
+    timeout: Duration,
+) -> Exchanged {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let encoded = match serde_json::to_vec(request) {
+        Ok(encoded) => encoded,
+        Err(error) => return Exchanged::Failed(std::io::Error::other(error)),
+    };
+    let worker = std::thread::Builder::new()
+        .name("talkak-broker-exchange".into())
+        .spawn(move || {
+            let outcome = exchange_encoded(&mut connection, &encoded);
+            // If the caller has already given up the send fails, and the connection drops here.
+            let _ = sender.send(outcome.map(|response| (connection, response)));
+        });
+    if let Err(error) = worker {
+        return Exchanged::Failed(error);
+    }
+    match receiver.recv_timeout(timeout) {
+        Ok(Ok((connection, response))) => Exchanged::Answered(connection, response),
+        Ok(Err(error)) => Exchanged::Failed(error),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Exchanged::TimedOut,
+        // The worker died without sending — treat it as a dead connection, not a timeout.
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Exchanged::Failed(
+            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broker exchange thread ended"),
+        ),
+    }
+}
+
+fn exchange_encoded(connection: &mut Connection, encoded: &[u8]) -> std::io::Result<Response> {
+    let mut line = encoded.to_vec();
+    line.push(b'\n');
+    connection.writer.write_all(&line)?;
+    connection.writer.flush()?;
+    let mut reply = String::new();
+    let read = connection.reader.read_line(&mut reply)?;
+    if read == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "broker closed the connection",
+        ));
+    }
+    serde_json::from_str(&reply).map_err(std::io::Error::other)
 }
 
 fn exchange(connection: &mut Connection, request: &Request) -> std::io::Result<Response> {
