@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use crate::runtime::RuntimeError;
 
 /// Exact internal storage limits, not product promises.
-const MAX_LOG_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 /// How much of the tail survives a rotation. Keeping half amortises the rewrite cost.
 const LOG_RETAINED_BYTES: usize = 2 * 1024 * 1024;
 

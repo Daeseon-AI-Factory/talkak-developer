@@ -95,11 +95,11 @@ describe("session recovery", () => {
     expect(input.args).not.toBe(record.args);
   });
 
-  it("states the same bounded-tail limits as the native disk store", () => {
-    expect(sessionRecoveryOutputPolicy).toEqual({
-      kind: "bounded-tail",
-      maximumBytes: 4 * 1024 * 1024,
-      retainedBytesAfterRotation: 2 * 1024 * 1024,
-    });
+  it("describes its output as a bounded tail, never a full transcript", () => {
+    // The byte figures are checked against the Rust store itself in storeBounds.test.ts. Asserting
+    // them here too only compared this file's literals with that file's literals: when the Rust
+    // maximum moved from 4 MiB to 8 MiB, this test kept passing and the app kept telling users a
+    // number that was half the truth.
+    expect(sessionRecoveryOutputPolicy.kind).toBe("bounded-tail");
   });
 });

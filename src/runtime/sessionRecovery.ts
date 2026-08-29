@@ -12,7 +12,7 @@ import { sessionClient } from "./sessionClient";
  */
 export const sessionRecoveryOutputPolicy = {
   kind: "bounded-tail",
-  maximumBytes: 4 * 1024 * 1024,
+  maximumBytes: 8 * 1024 * 1024,
   retainedBytesAfterRotation: 2 * 1024 * 1024,
 } as const;
 
