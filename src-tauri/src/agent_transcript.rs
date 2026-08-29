@@ -110,14 +110,15 @@ fn modified_at(path: &Path) -> std::time::SystemTime {
 /// over UTF-16 units, rendered in base 36; `encode_utf16` rather than `chars` matters the moment a
 /// path contains Korean or an emoji.
 pub(crate) fn claude_project_dir_name(project_path: &str) -> String {
+    // Per UTF-16 CODE UNIT, not per char. The harness does this with a JavaScript regex carrying no
+    // /u flag, so an astral character — an emoji in a path — is two units and becomes two dashes.
+    // Iterating chars would produce one, and the name would not match the directory on disk.
+    // (Hangul is in the BMP, so a Korean path is unaffected either way.)
     let sanitised: String = project_path
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() {
-                character
-            } else {
-                '-'
-            }
+        .encode_utf16()
+        .map(|unit| match u8::try_from(unit) {
+            Ok(byte) if byte.is_ascii_alphanumeric() => byte as char,
+            _ => '-',
         })
         .collect();
     // Every replacement is ASCII, so the sanitised string is ASCII and a char count is a unit count.
@@ -125,7 +126,7 @@ pub(crate) fn claude_project_dir_name(project_path: &str) -> String {
         return sanitised;
     }
     let head: String = sanitised.chars().take(200).collect();
-    format!("{head}-{}", base36(hash32(project_path).wrapping_abs()))
+    format!("{head}-{}", base36(hash32(project_path)))
 }
 
 fn hash32(text: &str) -> i32 {
@@ -139,15 +140,21 @@ fn hash32(text: &str) -> i32 {
     hash
 }
 
-fn base36(mut value: i32) -> String {
-    if value == 0 {
+/// Base 36 of the hash's magnitude, matching `Math.abs(h).toString(36)`.
+///
+/// Widened to i64 before taking the magnitude: `i32::MIN.wrapping_abs()` is still `i32::MIN`, which
+/// is negative, so a `while value > 0` loop produced an EMPTY string and a directory name ending in
+/// a bare dash. JavaScript answers "zik0zk" there.
+fn base36(value: i32) -> String {
+    let mut magnitude = i64::from(value).abs();
+    if magnitude == 0 {
         return "0".to_string();
     }
     const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     let mut out = Vec::new();
-    while value > 0 {
-        out.push(DIGITS[(value % 36) as usize]);
-        value /= 36;
+    while magnitude > 0 {
+        out.push(DIGITS[(magnitude % 36) as usize]);
+        magnitude /= 36;
     }
     out.reverse();
     String::from_utf8(out).unwrap_or_default()
@@ -618,6 +625,28 @@ mod tests {
         );
         let transcript = collected.finish("claude", Path::new("x.jsonl"));
         assert_eq!(transcript.entries.len(), 3);
+    }
+
+    #[test]
+    fn base36_matches_javascript_including_the_edge_that_returned_nothing() {
+        // Math.abs(-2147483648).toString(36) === "zik0zk". Taking the magnitude in i32 leaves
+        // i32::MIN negative, and the loop then produced an empty suffix — a name ending in a dash.
+        assert_eq!(base36(i32::MIN), "zik0zk");
+        assert_eq!(base36(0), "0");
+        assert_eq!(base36(35), "z");
+        assert_eq!(base36(36), "10");
+        // The sign is dropped, never carried into the name.
+        assert_eq!(base36(-36), "10");
+    }
+
+    #[test]
+    fn an_astral_character_counts_as_the_two_units_the_harness_sees() {
+        // The harness sanitises with a JavaScript regex that has no /u flag, so an emoji is two
+        // code units and becomes two dashes. Per char it would be one, and the computed name would
+        // not match the directory that actually exists.
+        assert_eq!(claude_project_dir_name("a\u{1F600}b"), "a--b");
+        // Hangul is in the BMP: one unit, one dash, either way.
+        assert_eq!(claude_project_dir_name("a한b"), "a-b");
     }
 
     #[test]
