@@ -571,3 +571,6 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
   `writePaneDragData`.** Development correctly fell back to a full module reload and the browser
   verification passed; splitting that pre-existing helper is tracked here rather than expanding
   this layout repair.
+- **GitHub CLI could not list the final workflow run because this machine has no `gh`
+  authentication.** No credential or global configuration was changed; the public Actions state
+  was checked through GitHub's unauthenticated web surface instead.
