@@ -1,8 +1,8 @@
-//! On-disk session records so a machine restart does not erase a workspace.
+//! Bounded on-disk session evidence reserved for a future machine-restart workflow.
 //!
-//! A running process cannot outlive a reboot, so what is persisted is what CAN come back: the
-//! session definition (cwd, command, args, size) and its output. After a restart the workspace
-//! shows the previous output and can relaunch the same definition under the same session id.
+//! The current product reattaches only sessions still owned by its live broker. These records are
+//! not exposed as a finished recovery feature; keeping them bounded preserves the raw material
+//! without making a promise the UI cannot fulfil.
 //!
 //! Both platforms use the same layout under one caller-supplied root. Session ids are hex-encoded
 //! into file names so an id containing a path separator, a `..`, or a Windows reserved device name
@@ -24,7 +24,7 @@ const LOG_RETAINED_BYTES: usize = 2 * 1024 * 1024;
 const DEFINITION_EXTENSION: &str = "json";
 const OUTPUT_EXTENSION: &str = "log";
 
-/// What a restart can restore: enough to relaunch the same session, plus when it started.
+/// Stored session definition and start time; currently internal persistence evidence only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
@@ -48,7 +48,7 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// A session record plus the size of its retained output, for the restore list.
+/// A stored session record plus the size of its retained output.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RestorableSession {
@@ -79,8 +79,7 @@ impl SessionStore {
         self.root.is_some()
     }
 
-    /// Record a session definition. Overwrites any previous record for the same id, because a new
-    /// run of that id replaces what a restart should bring back.
+    /// Record a session definition. A new run of the same id replaces its previous internal record.
     pub fn record(&self, session: &StoredSession) -> Result<(), RuntimeError> {
         let Some(root) = self.root.as_deref() else {
             return Ok(());
@@ -125,7 +124,7 @@ impl SessionStore {
         fs::read(entry_path(root, session_id, OUTPUT_EXTENSION)).unwrap_or_default()
     }
 
-    /// Every session a restart could bring back, newest first.
+    /// Every stored session record, newest first.
     pub fn restorable(&self) -> Vec<RestorableSession> {
         let Some(root) = self.root.as_deref() else {
             return Vec::new();
@@ -265,7 +264,7 @@ mod tests {
         first.append_output("pane-1", b"build finished\n");
         drop(first);
 
-        // A new process over the same root is what a machine restart looks like.
+        // A new store instance over the same root can read the internal evidence.
         let reopened = SessionStore::at(&root);
         assert_eq!(reopened.output("pane-1"), b"build finished\n");
         let restorable = reopened.restorable();

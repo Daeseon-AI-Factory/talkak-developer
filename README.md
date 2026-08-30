@@ -25,13 +25,11 @@ This repository contains the interactive product shell and its first native runt
 The Tauri desktop app can start the operating system's default shell in an explicit absolute working
 directory. Executables and arguments remain runtime configuration; no agent is hardcoded as the
 product default. Live output replay is memory-bounded. A detached native broker keeps live processes
-across an app restart; a machine restart cannot keep those processes alive, so recovery instead uses
-their persisted launch definition and bounded output tail.
+across an app restart, and the workspace reconnects to sessions that broker still owns.
 After a PTY has fully exited, an explicit restart discards its old replay buffer before reusing the
 session ID. A running session cannot be discarded. The Terminal Log inspector follows each runtime
-run separately and reads the backend's bounded replay. The broker also keeps up to 4 MiB of output
-per session in the local app-data store so a machine-restart recovery flow can show the previous log;
-when that bound is crossed, only the newest 2 MiB tail is retained before new output accumulates.
+run separately and reads the backend's most recent 1 MiB replay. The broker keeps bounded on-disk
+records internally, but the product does not claim machine-restart session recovery.
 Observed PTY errors and natural exits surface in Attention with their operation or exit code and
 open that real terminal log. Exits requested with Talkak's Stop control do not create another
 attention item. A reviewed runtime notice can be acknowledged for the current app run; a later
@@ -39,9 +37,9 @@ changed error observation appears again. These runtime facts do not claim that a
 or failed.
 Local projects, page layouts, pane focus, generated session metadata, and the active project persist
 without storing terminal output or launch arguments in the workspace snapshot. The native recovery
-data is exposed to the renderer, but its machine-restart selection and relaunch UI is not connected
-yet. Transcript adapters, remote access, voice recognition, and message sending are not claimed. The
-seeded projects, summaries, attention requests, and conversation logs remain visibly preview data.
+records are not exposed to the renderer. Transcript adapters, remote access, voice recognition, and
+message sending are not claimed. The seeded projects, summaries, attention requests, and conversation
+logs remain visibly preview data.
 
 ## Run
 

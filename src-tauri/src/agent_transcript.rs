@@ -69,7 +69,11 @@ pub(crate) fn agent_transcript(
 
     // Whichever agent spoke last is the one the pane is showing.
     let chosen = match (claude, codex) {
-        (Some(a), Some(b)) => Some(if modified_at(&a) >= modified_at(&b) { a } else { b }),
+        (Some(a), Some(b)) => Some(if modified_at(&a) >= modified_at(&b) {
+            a
+        } else {
+            b
+        }),
         (Some(a), None) => Some(a),
         (None, Some(b)) => Some(b),
         (None, None) => None,
@@ -230,7 +234,11 @@ fn newest_codex_record(home: &Path, project_path: &str) -> Result<Option<PathBuf
         // A subagent thread records the SAME cwd as the parent that spawned it, and there are far
         // more of them — 91 of 100 rollout files on this machine. Matching on the directory alone
         // picked a subagent's private conversation and showed it as the session's own.
-        if payload.get("thread_source").and_then(|source| source.as_str()) != Some("user") {
+        if payload
+            .get("thread_source")
+            .and_then(|source| source.as_str())
+            != Some("user")
+        {
             continue;
         }
         if best
@@ -377,7 +385,9 @@ fn read_claude(path: &Path, limit: usize) -> Result<AgentTranscript, String> {
             .get("timestamp")
             .and_then(|t| t.as_str())
             .map(str::to_string);
-        let content = value.get("message").and_then(|message| message.get("content"));
+        let content = value
+            .get("message")
+            .and_then(|message| message.get("content"));
         let mut text = String::new();
         match content {
             Some(serde_json::Value::String(plain)) => text.push_str(plain),
@@ -548,7 +558,9 @@ mod tests {
     #[test]
     fn harness_preamble_never_reaches_the_reader() {
         assert_eq!(
-            strip_harness_wrapper("<environment_context>\n  <cwd>x</cwd>\n</environment_context>\nfix the build"),
+            strip_harness_wrapper(
+                "<environment_context>\n  <cwd>x</cwd>\n</environment_context>\nfix the build"
+            ),
             "fix the build"
         );
         // Nested wrappers are peeled until real text is left.
@@ -557,7 +569,10 @@ mod tests {
             "hello"
         );
         // A wrapper with nothing after it is not a turn at all.
-        assert_eq!(strip_harness_wrapper("<system-reminder>only</system-reminder>"), "");
+        assert_eq!(
+            strip_harness_wrapper("<system-reminder>only</system-reminder>"),
+            ""
+        );
         assert_eq!(strip_harness_wrapper("  plain words  "), "plain words");
     }
 
@@ -609,17 +624,29 @@ mod tests {
     fn a_user_turn_between_two_blocks_of_one_answer_breaks_the_group() {
         let mut collected = Collected::new();
         collected.push_merging(
-            TranscriptEntry { role: "assistant".into(), text: "a".into(), at: None },
+            TranscriptEntry {
+                role: "assistant".into(),
+                text: "a".into(),
+                at: None,
+            },
             Some("msg_1".into()),
             10,
         );
         collected.push_merging(
-            TranscriptEntry { role: "user".into(), text: "wait".into(), at: None },
+            TranscriptEntry {
+                role: "user".into(),
+                text: "wait".into(),
+                at: None,
+            },
             None,
             10,
         );
         collected.push_merging(
-            TranscriptEntry { role: "assistant".into(), text: "b".into(), at: None },
+            TranscriptEntry {
+                role: "assistant".into(),
+                text: "b".into(),
+                at: None,
+            },
             Some("msg_1".into()),
             10,
         );
@@ -653,8 +680,14 @@ mod tests {
     fn a_path_past_two_hundred_characters_keeps_a_hash_of_the_original() {
         let deep = format!("C:\\{}", "segment\\".repeat(40));
         let name = claude_project_dir_name(&deep);
-        assert!(name.chars().count() > 200, "the hash suffix is appended, not folded in");
-        assert!(name.chars().take(200).all(|c| c.is_ascii_alphanumeric() || c == '-'));
+        assert!(
+            name.chars().count() > 200,
+            "the hash suffix is appended, not folded in"
+        );
+        assert!(name
+            .chars()
+            .take(200)
+            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
         // Two long paths sharing the first 200 characters must not collide.
         let sibling = format!("{deep}other\\");
         assert_ne!(name, claude_project_dir_name(&sibling));
@@ -695,7 +728,10 @@ mod live_probe {
                 let text: String = entry.text.chars().take(90).collect();
                 println!("  [{}] {}", entry.role, text.replace('\n', " "));
             }
-            assert!(transcript.total_entries > 0, "a real record should hold turns");
+            assert!(
+                transcript.total_entries > 0,
+                "a real record should hold turns"
+            );
         } else {
             println!("claude: no record for {project}");
         }

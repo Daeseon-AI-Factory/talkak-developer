@@ -180,6 +180,7 @@ export function TerminalPane({
       </div>
 
       <SessionTerminal
+        key={session.id}
         session={session}
         projectPath={projectPath}
         focused={active}

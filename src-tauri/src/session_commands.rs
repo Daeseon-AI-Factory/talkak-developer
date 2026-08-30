@@ -1,41 +1,8 @@
-use crate::session_runtime::RestorableSession;
 use crate::session_runtime::{
     LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
     SessionRead, SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 use tauri::State;
-
-/// What a machine restart can bring back. `persisted` is false when no store is writable, so the
-/// workspace can say plainly that nothing is being kept instead of showing an empty list as if it
-/// were good news.
-#[derive(Debug, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RestorableSessions {
-    persisted: bool,
-    sessions: Vec<RestorableSession>,
-}
-
-#[tauri::command]
-pub(crate) fn session_restorable(
-    runtime: State<'_, SessionRuntime>,
-) -> Result<RestorableSessions, String> {
-    Ok(RestorableSessions {
-        persisted: runtime.persists().map_err(|error| error.to_string())?,
-        sessions: runtime.restorable().map_err(|error| error.to_string())?,
-    })
-}
-
-/// The output kept on disk for a session, so a restarted workspace can repaint what it showed
-/// before. Returns an empty list when nothing was retained.
-#[tauri::command]
-pub(crate) fn session_stored_output(
-    runtime: State<'_, SessionRuntime>,
-    request: SessionIdRequest,
-) -> Result<Vec<u8>, String> {
-    runtime
-        .stored_output(&request.session_id)
-        .map_err(|error| error.to_string())
-}
 
 #[tauri::command]
 pub(crate) fn session_spawn(

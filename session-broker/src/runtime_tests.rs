@@ -1,12 +1,32 @@
 use crate::runtime::{
-    command_for_request, InitialCursorPositionQuery, OutputBuffer, ReadSessionRequest,
+    command_for_request, lock, InitialCursorPositionQuery, OutputBuffer, ReadSessionRequest,
     ResizeSessionRequest, RunSessionRequest, RuntimeError, SessionIdRequest, SessionRuntime,
     SpawnSessionRequest, WriteSessionRequest, MAX_OUTPUT_BYTES,
 };
 use crate::store::SessionStore;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+#[test]
+fn a_poisoned_runtime_lock_recovers_instead_of_bricking_every_later_request() {
+    let value = Arc::new(Mutex::new(1));
+    let worker_value = Arc::clone(&value);
+    let panicked = thread::spawn(move || {
+        let _guard = worker_value.lock().expect("first lock");
+        panic!("intentional poison");
+    })
+    .join();
+    assert!(panicked.is_err());
+
+    *lock(&value, "test").expect("poisoned lock should recover") = 2;
+
+    assert!(
+        !value.is_poisoned(),
+        "recovery should clear the poison flag"
+    );
+    assert_eq!(*value.lock().expect("later lock"), 2);
+}
 
 #[test]
 fn an_inherited_no_color_never_reaches_a_pane() {
@@ -35,7 +55,9 @@ fn an_inherited_no_color_never_reaches_a_pane() {
         "the pane must still be told what it is talking to"
     );
     assert_eq!(
-        command.get_env("COLORTERM").map(|value| value.to_string_lossy()),
+        command
+            .get_env("COLORTERM")
+            .map(|value| value.to_string_lossy()),
         Some("truecolor".into())
     );
 }
@@ -75,7 +97,9 @@ fn a_disabling_clicolor_is_dropped_but_a_deliberate_one_survives() {
         "the override a user set on purpose must survive"
     );
     assert_eq!(
-        chosen.get_env("CLICOLOR").map(|value| value.to_string_lossy()),
+        chosen
+            .get_env("CLICOLOR")
+            .map(|value| value.to_string_lossy()),
         Some("1".into()),
         "CLICOLOR=1 is someone choosing colour, not refusing it"
     );
@@ -645,9 +669,8 @@ fn wait_for_process_exit(runtime: &SessionRuntime, session_id: &str) -> Option<u
     panic!("timed out waiting for interactive PTY process to exit");
 }
 
-/// The machine-restart guarantee, on both platforms: a new runtime process over the same store
-/// root finds the previous session's definition and its output. Nothing here reuses the first
-/// runtime's memory — dropping it is what a restart does to the old process.
+/// Internal persistence on both platforms: a new runtime over the same store root finds the
+/// previous session's definition and output. This does not claim a product recovery workflow.
 #[test]
 fn a_recorded_session_and_its_output_survive_a_new_runtime_over_the_same_root() {
     let root = std::env::temp_dir().join(format!(
@@ -691,7 +714,7 @@ fn a_recorded_session_and_its_output_survive_a_new_runtime_over_the_same_root() 
     };
     assert!(started.run_id > 0);
 
-    // A brand-new runtime, exactly as a restarted app would build one.
+    // A brand-new runtime over the same internal store.
     let restarted = SessionRuntime::with_store(SessionStore::at(&root));
     let restorable = restarted.restorable();
     assert_eq!(restorable.len(), 1, "one session should be restorable");

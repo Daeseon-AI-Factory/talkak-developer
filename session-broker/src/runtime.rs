@@ -142,8 +142,8 @@ pub struct SessionRuntime {
 }
 
 impl SessionRuntime {
-    /// A runtime whose sessions are recorded under `root`, so a machine restart can bring the
-    /// workspace back. `SessionRuntime::default()` keeps nothing, which is what tests want.
+    /// A runtime whose bounded internal session evidence is recorded under `root`.
+    /// `SessionRuntime::default()` keeps nothing, which is what tests want.
     pub fn with_store(store: SessionStore) -> Self {
         Self {
             store: Arc::new(store),
@@ -151,7 +151,7 @@ impl SessionRuntime {
         }
     }
 
-    /// Sessions a restart could bring back, newest first.
+    /// Stored session records, newest first. The current product does not expose this as recovery.
     pub fn restorable(&self) -> Vec<RestorableSession> {
         self.store.restorable()
     }
@@ -181,7 +181,7 @@ impl SessionRuntime {
                 running: snapshot.running,
             })
             .collect::<Vec<_>>();
-        listed.sort_by(|a, b| a.run_id.cmp(&b.run_id));
+        listed.sort_by_key(|session| session.run_id);
         listed
     }
 
@@ -467,8 +467,7 @@ impl SessionRuntime {
             sessions.remove(&request.session_id)
         };
         drop(removed);
-        // Discard is the explicit "this run is over for good", so its record goes too. A restart
-        // must not offer to bring back a session the user deliberately threw away.
+        // Discard is the explicit "this run is over for good", so its internal record goes too.
         self.store.forget(&request.session_id);
         Ok(())
     }
@@ -792,7 +791,10 @@ pub fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
     // from this process's environment, so the question is what the child would really receive.
     // Only the disabling "0" goes: CLICOLOR_FORCE and a deliberate CLICOLOR=1 are someone choosing
     // colour, and removing those would override the user rather than the accident.
-    if command.get_env("CLICOLOR").is_some_and(|value| value == "0") {
+    if command
+        .get_env("CLICOLOR")
+        .is_some_and(|value| value == "0")
+    {
         command.env_remove("CLICOLOR");
     }
     command
@@ -839,8 +841,16 @@ fn pty_size(cols: u16, rows: u16) -> PtySize {
     }
 }
 
-fn lock<'a, T>(mutex: &'a Mutex<T>, name: &str) -> Result<MutexGuard<'a, T>, RuntimeError> {
-    mutex
-        .lock()
-        .map_err(|_| RuntimeError::Internal(format!("{name} lock was poisoned")))
+pub(crate) fn lock<'a, T>(
+    mutex: &'a Mutex<T>,
+    name: &str,
+) -> Result<MutexGuard<'a, T>, RuntimeError> {
+    match mutex.lock() {
+        Ok(guard) => Ok(guard),
+        Err(poisoned) => {
+            crate::logging::log(&format!("recovering poisoned {name} lock"));
+            mutex.clear_poison();
+            Ok(poisoned.into_inner())
+        }
+    }
 }

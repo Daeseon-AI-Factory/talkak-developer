@@ -2,16 +2,14 @@
 //!
 //! The engine that used to live here (PTY runtime + on-disk store) now runs inside
 //! `talkak-dev-broker`, a detached process that outlives this app — that is what lets a terminal
-//! session, and the agent working in it, survive an app restart or reinstall. This module keeps
-//! the exact same ten call signatures and forwards them over a local transport (unix socket /
-//! named pipe) as newline-delimited JSON in strict request→response lockstep, so
-//! `session_commands.rs` and the renderer are unchanged.
+//! session, and the agent working in it, survive an app restart. This module keeps
+//! the current session command boundary and forwards it over a local transport (unix socket /
+//! named pipe) as newline-delimited JSON in strict request→response lockstep.
 
 pub(crate) use session_broker::runtime::{
     LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
     SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
-pub(crate) use session_broker::store::RestorableSession;
 use session_broker::{Request, Response, PROTOCOL_VERSION};
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
@@ -53,9 +51,9 @@ const MAX_CONNECTIONS: usize = 8;
 /// hung application.
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// How long one request waits for its answer. A spawn does openpty plus CreateProcess and a
-/// StoredOutput reads a whole retained log, so this is generous; it exists to bound a broker that
-/// has stopped answering at all, not to police normal latency.
+/// How long one request waits for its answer. A spawn does openpty plus CreateProcess, so this is
+/// generous; it exists to bound a broker that has stopped answering at all, not to police normal
+/// latency.
 const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// A bounded connection pool. The limit starts at ONE and only opens up when a broker's handshake
@@ -171,37 +169,6 @@ impl SessionRuntime {
         }
     }
 
-    /// What a restart could bring back. The error is RETURNED: an empty list here reads as "there
-    /// is nothing to recover", and this app has already shipped that exact lie twice — a refused
-    /// clipboard that looked like a successful copy, and a broker error that became an empty
-    /// session list while twenty-two shells ran.
-    pub(crate) fn restorable(&self) -> BrokerResult<Vec<RestorableSession>> {
-        match self.request(&Request::Restorable)? {
-            Response::Restorable(sessions) => Ok(sessions),
-            other => Err(unexpected(other)),
-        }
-    }
-
-    /// The retained tail for a session. Empty bytes and an unreachable broker are different facts:
-    /// the caller offers a relaunch that discards this output, so "I could not read it" must not
-    /// arrive as "there was nothing to read".
-    pub(crate) fn stored_output(&self, session_id: &str) -> BrokerResult<Vec<u8>> {
-        let request = Request::StoredOutput(SessionIdRequest {
-            session_id: session_id.to_owned(),
-        });
-        match self.request(&request)? {
-            Response::Bytes(bytes) => Ok(bytes),
-            other => Err(unexpected(other)),
-        }
-    }
-
-    pub(crate) fn persists(&self) -> BrokerResult<bool> {
-        match self.request(&Request::Persists)? {
-            Response::Persists(persists) => Ok(persists),
-            other => Err(unexpected(other)),
-        }
-    }
-
     /// One lockstep exchange on a connection checked out of the pool. A broken connection is
     /// dropped and retried once — the broker may have exited while idle, which is its normal life
     /// cycle, not a failure.
@@ -252,7 +219,19 @@ impl SessionRuntime {
             if pool.outstanding < pool.limit {
                 pool.outstanding += 1;
                 drop(pool);
-                return self.establish().inspect_err(|_| self.release_slot());
+                for attempt in 0..2 {
+                    match self.establish() {
+                        Ok(connection) => return Ok(connection),
+                        // No product request was sent, so one transient startup/connect failure is
+                        // safe to retry and cannot duplicate a spawn or terminal input.
+                        Err(_) if attempt == 0 => continue,
+                        Err(error) => {
+                            self.release_slot();
+                            return Err(error);
+                        }
+                    }
+                }
+                unreachable!("both establishment attempts return");
             }
             // Bounded. A request that never comes back is abandoned by `exchange_within` but its
             // slot is only freed after the timeout, and waiting here forever meant every other
@@ -485,11 +464,7 @@ enum Exchanged {
 /// forever and its pool slot with it. Doing the turn on a thread lets the caller give up while the
 /// read stays where it is: the connection travels WITH the thread and is dropped there whenever the
 /// broker finally replies or the pipe closes, so nothing half-read is ever returned to the pool.
-fn exchange_within(
-    mut connection: Connection,
-    request: &Request,
-    timeout: Duration,
-) -> Exchanged {
+fn exchange_within(mut connection: Connection, request: &Request, timeout: Duration) -> Exchanged {
     let (sender, receiver) = std::sync::mpsc::channel();
     let encoded = match serde_json::to_vec(request) {
         Ok(encoded) => encoded,
@@ -510,9 +485,12 @@ fn exchange_within(
         Ok(Err(error)) => Exchanged::Failed(error),
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Exchanged::TimedOut,
         // The worker died without sending — treat it as a dead connection, not a timeout.
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Exchanged::Failed(
-            std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broker exchange thread ended"),
-        ),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Exchanged::Failed(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "broker exchange thread ended",
+            ))
+        }
     }
 }
 

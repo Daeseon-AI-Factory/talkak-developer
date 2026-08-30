@@ -26,6 +26,10 @@ import {
 import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
 import {
+  type TerminalOutputWriter,
+  createTerminalOutputWriter,
+} from "../runtime/terminalOutputWriter";
+import {
   nextReadDelayMs,
   partitionTerminalOutput,
   terminalOutputDrained,
@@ -57,13 +61,14 @@ interface ObservedRuntimeCursor {
 interface PendingTerminalOutput {
   bytes: Uint8Array;
   suppressProtocolInput: boolean;
-  resolve: () => void;
+  resolve: (written: boolean) => void;
+  reject: (cause: unknown) => void;
 }
-
-type TerminalOutputWriter = (bytes: Uint8Array, suppressProtocolInput: boolean) => Promise<void>;
 
 const observedRuntimeCursors = new Map<string, ObservedRuntimeCursor>();
 const runtimeMutationQueue = createRuntimeMutationQueue();
+const terminalReadQueue = createRuntimeMutationQueue();
+const protocolInputSuppressedSessions = new Set<string>();
 
 interface SessionTerminalProps {
   session: DevSession;
@@ -104,7 +109,6 @@ export function SessionTerminal({
   const replayThroughRef = useRef(0);
   const pendingOutputRef = useRef<PendingTerminalOutput[]>([]);
   const outputWriterRef = useRef<TerminalOutputWriter | null>(null);
-  const suppressProtocolInputRef = useRef(false);
   const terminalAttachFailedRef = useRef(false);
   // Wakes the poll loop right after a write lands, so a keystroke's echo pays one RPC round-trip
   // instead of waiting out the poll interval — typing latency, not throughput.
@@ -297,32 +301,17 @@ export function SessionTerminal({
           setError,
         );
         terminalRef.current = terminal;
-        let writeChain = Promise.resolve();
-        const activeWrites = new Set<() => void>();
-        const enqueueOutput: TerminalOutputWriter = (bytes, suppressProtocolInput) => {
-          let settled = false;
-          return new Promise<void>((resolve) => {
-            const finish = () => {
-              if (settled) return;
-              settled = true;
-              activeWrites.delete(finish);
-              suppressProtocolInputRef.current = false;
-              resolve();
-            };
-            activeWrites.add(finish);
-            writeChain = writeChain.then(() => {
-              if (disposed) {
-                finish();
-                return;
-              }
-              suppressProtocolInputRef.current = suppressProtocolInput;
-              terminal.write(bytes, finish);
-            });
-          });
-        };
+        const output = createTerminalOutputWriter(
+          (bytes, done) => terminal.write(bytes, done),
+          (suppressed) => {
+            if (suppressed) protocolInputSuppressedSessions.add(session.id);
+            else protocolInputSuppressedSessions.delete(session.id);
+          },
+        );
+        const enqueueOutput = output.write;
         outputWriterRef.current = enqueueOutput;
         const sendInput = terminal.onData((data) => {
-          if (suppressProtocolInputRef.current) return;
+          if (protocolInputSuppressedSessions.has(session.id)) return;
           const current = runtimeStatusRef.current;
           if (!current || current.phase !== "running" || current.runId === null) return;
           const runId = current.runId;
@@ -355,7 +344,10 @@ export function SessionTerminal({
           );
         });
         for (const pending of pendingOutputRef.current.splice(0)) {
-          void enqueueOutput(pending.bytes, pending.suppressProtocolInput).then(pending.resolve);
+          void enqueueOutput(pending.bytes, pending.suppressProtocolInput).then(
+            pending.resolve,
+            pending.reject,
+          );
         }
         const sendResize = terminal.onResize(({ cols, rows }) => {
           const current = runtimeStatusRef.current;
@@ -406,7 +398,7 @@ export function SessionTerminal({
         disposeTerminal = () => {
           disposed = true;
           if (outputWriterRef.current === enqueueOutput) outputWriterRef.current = null;
-          for (const finish of [...activeWrites]) finish();
+          output.dispose();
           cancelAnimationFrame(frame);
           fitter.dispose();
           observer.disconnect();
@@ -467,54 +459,67 @@ export function SessionTerminal({
       if (!pollIsCurrent() || inFlight) return;
       inFlight = true;
       try {
-        const read = await sessionClient.read(session.id, cursorRef.current);
-        if (!pollIsCurrent()) return;
-        if (read.truncated) {
-          await writeOutput(
-            new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`),
-            true,
-          );
-          if (!pollIsCurrent()) return;
-        }
-        const output = Uint8Array.from(read.bytes);
-        const replayThrough = read.running ? replayThroughRef.current : Number.POSITIVE_INFINITY;
-        for (const chunk of partitionTerminalOutput(output, read.start, replayThrough)) {
-          if (!pollIsCurrent()) return;
-          await writeOutput(chunk.bytes, chunk.suppressProtocolInput);
-          if (!pollIsCurrent()) return;
-        }
-        cursorRef.current = read.next;
-        updateRetainedCursor(session.id, read.runId, read.next);
-        setRestartReady(terminalOutputDrained(read.running, read.bytes.length));
-        observedRuntimeCursors.set(session.id, { runId: read.runId, next: read.next });
-        const previous = currentRuntimeStatus(phase);
-        const fault = read.readError
-          ? { operation: "read" as const, message: read.readError }
-          : previous.fault?.operation === "read"
-            ? null
-            : previous.fault;
-        const nextPhase = terminalRuntimePhase(previous.phase, read.running, read.readError);
-        reportRuntimeStatus("runtime-event", {
-          phase: nextPhase,
-          runId: read.runId,
-          exitCode: read.exitCode,
-          termination: !read.running
-            ? (previous.termination ?? "observed-exit")
-            : nextPhase === "stopping"
-              ? "requested-stop"
-              : null,
-          fault,
-        });
-        if (terminalReadShouldContinue(read.running, read.readClosed, read.bytes.length)) {
-          const delay = kicked
-            ? 0
-            : nextReadDelayMs(read.running, read.bytes.length, POLL_INTERVAL_MS);
-          kicked = false;
-          timer = window.setTimeout(poll, delay);
-        }
-      } catch (cause: unknown) {
-        if (!pollIsCurrent()) return;
-        reportRuntimeFault("read", cause, "error");
+        await enqueueRuntimeMutation(
+          terminalReadQueue,
+          session.id,
+          async () => {
+            if (!pollIsCurrent()) return;
+            syncObservedReadCursor();
+            const read = await sessionClient.read(session.id, cursorRef.current);
+            if (!pollIsCurrent()) return;
+            if (read.truncated) {
+              const markerWritten = await writeOutput(
+                new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`),
+                true,
+              );
+              if (!markerWritten || !recordReadCursor(read.runId, read.start) || !pollIsCurrent()) {
+                return;
+              }
+            }
+            const output = Uint8Array.from(read.bytes);
+            const replayThrough = read.running
+              ? replayThroughRef.current
+              : Number.POSITIVE_INFINITY;
+            let writtenThrough = read.start;
+            for (const chunk of partitionTerminalOutput(output, read.start, replayThrough)) {
+              if (!pollIsCurrent()) return;
+              const written = await writeOutput(chunk.bytes, chunk.suppressProtocolInput);
+              if (!written) return;
+              writtenThrough += chunk.bytes.length;
+              if (!recordReadCursor(read.runId, writtenThrough) || !pollIsCurrent()) return;
+            }
+            if (!recordReadCursor(read.runId, read.next)) return;
+            setRestartReady(terminalOutputDrained(read.running, read.bytes.length));
+            const previous = currentRuntimeStatus(phase);
+            const fault = read.readError
+              ? { operation: "read" as const, message: read.readError }
+              : previous.fault?.operation === "read"
+                ? null
+                : previous.fault;
+            const nextPhase = terminalRuntimePhase(previous.phase, read.running, read.readError);
+            reportRuntimeStatus("runtime-event", {
+              phase: nextPhase,
+              runId: read.runId,
+              exitCode: read.exitCode,
+              termination: !read.running
+                ? (previous.termination ?? "observed-exit")
+                : nextPhase === "stopping"
+                  ? "requested-stop"
+                  : null,
+              fault,
+            });
+            if (terminalReadShouldContinue(read.running, read.readClosed, read.bytes.length)) {
+              const delay = kicked
+                ? 0
+                : nextReadDelayMs(read.running, read.bytes.length, POLL_INTERVAL_MS);
+              kicked = false;
+              timer = window.setTimeout(poll, delay);
+            }
+          },
+          (cause) => {
+            if (pollIsCurrent()) reportRuntimeFault("read", cause, "error");
+          },
+        );
       } finally {
         inFlight = false;
       }
@@ -550,14 +555,28 @@ export function SessionTerminal({
   function writeOutput(bytes: Uint8Array, suppressProtocolInput: boolean) {
     const writer = outputWriterRef.current;
     if (writer) return writer(bytes, suppressProtocolInput);
-    if (terminalAttachFailedRef.current) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      pendingOutputRef.current.push({ bytes, suppressProtocolInput, resolve });
+    if (terminalAttachFailedRef.current) return Promise.resolve(false);
+    return new Promise<boolean>((resolve, reject) => {
+      pendingOutputRef.current.push({ bytes, suppressProtocolInput, resolve, reject });
     });
   }
 
   function resolvePendingOutput() {
-    for (const pending of pendingOutputRef.current.splice(0)) pending.resolve();
+    for (const pending of pendingOutputRef.current.splice(0)) pending.resolve(false);
+  }
+
+  function syncObservedReadCursor() {
+    const observed = observedRuntimeCursors.get(session.id);
+    if (!observed || observed.runId !== runtimeStatusRef.current?.runId) return;
+    cursorRef.current = Math.max(cursorRef.current, observed.next);
+  }
+
+  function recordReadCursor(runId: number, next: number): boolean {
+    if (runtimeStatusRef.current?.runId !== runId) return false;
+    cursorRef.current = next;
+    updateRetainedCursor(session.id, runId, next);
+    observedRuntimeCursors.set(session.id, { runId, next });
+    return true;
   }
 
   function reportRuntimeStatus(

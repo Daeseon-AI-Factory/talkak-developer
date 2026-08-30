@@ -612,6 +612,13 @@
     grid-template-columns: 0 minmax(0, 1fr);
   }
 
+  /* The expanded sidebar becomes absolute in this range, so it no longer occupies grid column
+     one. Keep the main surface in the visible column instead of letting auto-placement put it in
+     the deliberate 0px sidebar track. Phone layout switches to one column below 721px. */
+  .app-shell[data-presentation="tablet"][data-sidebar-mode="expanded"] .app-main {
+    grid-column: 2;
+  }
+
   .sidebar[data-mode="expanded"] {
     position: absolute;
     z-index: 20;

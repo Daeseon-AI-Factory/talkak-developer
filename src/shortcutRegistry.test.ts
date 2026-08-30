@@ -24,8 +24,17 @@ describe("shortcut registry", () => {
     expect(shortcutDisplay("macos", "splitDown")).toBe("⌘⇧D");
     expect(shortcutDisplay("macos", "terminalLog")).toBe("⌘L");
     expect(shortcutDisplay("windows", "splitRight")).toBe("Ctrl+Shift+D");
-    expect(shortcutDisplay("windows", "splitDown")).toBe("Ctrl+Shift+S");
+    expect(shortcutDisplay("windows", "splitDown")).toBe("Ctrl+Alt+D");
     expect(shortcutDisplay("windows", "terminalLog")).toBe("Ctrl+Shift+L");
+  });
+
+  it("uses the same split key on both platforms without colliding on Windows", () => {
+    expect(
+      commandForShortcut(event({ code: "KeyD", ctrlKey: true, altKey: true }), "windows", true)?.id,
+    ).toBe("splitDown");
+    expect(
+      commandForShortcut(event({ code: "KeyS", ctrlKey: true, shiftKey: true }), "windows", true),
+    ).toBeNull();
   });
 
   it("does not consume plain Windows terminal control chords", () => {

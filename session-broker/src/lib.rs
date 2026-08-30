@@ -7,7 +7,7 @@
 //! The engine (`runtime`, `store`) is the desktop app's original in-process session layer, moved
 //! here wholesale so the wire protocol IS the contract the renderer already depends on: run_id
 //! validation, `read(after)` start/next/truncated replay, exit codes, on-disk session records.
-//! The app keeps the same ten call signatures and forwards them over a local transport.
+//! The app forwards its current session command boundary over a local transport.
 
 pub mod detach;
 pub mod logging;

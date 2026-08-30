@@ -28,6 +28,11 @@
   "bundle": {
     "active": false,
     "targets": "all",
-    "externalBin": ["binaries/talkak-dev-broker"]
+    "externalBin": ["binaries/talkak-dev-broker"],
+    "windows": {
+      "nsis": {
+        "languages": ["English", "Korean"]
+      }
+    }
   }
 }

@@ -4,10 +4,173 @@ Every failure observed while bringing this repository up on a real Windows 11 ma
 evidence for each. Newest section first. This is a record, not law: it says what was seen and on
 which build, never what someone should do.
 
-Machine: Windows 11 Pro 26200, 12 cores / 15.4 GB RAM, WebView2 151.0.4129.93.
+Machine: Windows 11 Pro 26200, 12 cores / 15.4 GB RAM, WebView2 151.0.4129.107
+(151.0.4129.93 during the earlier browser pass).
 Toolchain: Node 24.15.0, pnpm 9.12.0, Rust 1.95.0 (pinned by `rust-toolchain.toml`),
 MSVC 14.29.30133 (Visual Studio Build Tools 2019).
-Branch: `agent/developer-workspace-ci` at `bc8fd5b`.
+Branch: `agent/developer-workspace-ci`; this handoff work started from `3638780`.
+
+---
+
+## W-020 — A cancelled terminal write could repaint the same output after a page switch
+
+**Severity:** high — repeated output and cursor crawl made ordinary terminal review unreliable.
+**Status:** fixed in this branch.
+
+The poller previously advanced its backend cursor independently of xterm's asynchronous write
+callback. If a page switch or Stop transition cancelled the effect in that gap, the retained xterm
+could still parse the submitted bytes while the backend cursor stayed behind; the next poll read and
+painted those bytes again. React could also reuse one `SessionTerminal` instance for another session,
+and replay/live chunks could change the cursor-query suppression flag before the prior chunk parsed.
+
+Reads now serialize per session through `read -> xterm write -> cursor commit`. A write already
+submitted to a retained emulator finishes across detach, while a queued write that never reached
+xterm is abandoned. Foreground terminals are keyed by session id, protocol-input suppression is
+session-scoped, and a truncation marker commits the backend's new start offset before a cancelled
+poll can repeat it. Three focused writer tests pin detach, replay/live ordering, and real write-error
+propagation. The isolated native Windows WebDriver flow then passed 1/1, including three PTYs, a page
+switch, live output, Attention log review, Stop confirmations and focus restoration. The installed-
+package run remains the clean-runner CI gate.
+
+---
+
+## W-019 — The packaged broker depended on an unbundled VC++ runtime
+
+**Severity:** high — the app could install successfully and then fail to start sessions on a clean PC.
+**Status:** fixed in this branch.
+
+`dumpbin /dependents` showed that the packaged session broker imported `VCRUNTIME140.dll`; the app
+executable itself did not. The Windows MSVC target now uses Rust's supported `crt-static` target
+feature, avoiding a second installer and keeping the change outside macOS builds. The release
+sidecar was rebuilt and its PE import table rechecked: `VCRUNTIME140.dll` is no longer present.
+
+The NSIS bundle now includes only its two product languages, `English` and `Korean`. Tauri/NSIS
+selects the operating-system language by default, so no extra first-run language dialog was added.
+`tauri build --bundles nsis --no-sign --ci` produced a 5,657,976-byte installer; its generated NSIS
+source contains both language macros and the release broker sidecar. `dumpbin /dependents` found no
+`VCRUNTIME*.dll` or `MSVCP*.dll` import in either the release app or broker. The installer is still
+unsigned because no signing certificate is available (W-001).
+
+The local clean-install script was deliberately not run over the owner's active installation: it
+uses the same install directory, bundle id and uninstall registry key, and correctly rejects that
+non-clean precondition. Installation and WebDriver validation must run on the clean Windows CI
+runner unless the owner first authorizes replacing the active app and its live broker sessions.
+
+---
+
+## W-018 — The renderer advertised a recovery path that no product screen used
+
+**Severity:** medium — dead code claimed a restart workflow that would fail for live broker sessions.
+**Status:** removed in this branch.
+
+`sessionRecovery.ts` had no importer outside its own tests. Its `prepare()` path always built a
+new spawn request under the stored session id, even when the broker still owned that id, and its
+output read moved the entire retained tail through one JSON number array. The renderer module,
+its unused `SessionClient` methods, the two unused Tauri commands and runtime wrappers, and tests
+that only proved that dead facade were removed.
+
+The actual recovery path is unchanged: workspace panes reattach to broker-owned sessions through
+their live snapshot, and the orphan-session view lists and controls sessions the broker still
+holds. The broker's bounded on-disk records remain an internal persistence primitive; this change
+does not present them as a finished machine-restart feature.
+
+---
+
+## W-017 — Broker retirement could kill a newly connected client or orphan its shells
+
+**Severity:** high — an app reconnect or broker upgrade could lose a live terminal boundary.
+**Status:** fixed in this branch.
+
+Client counting and process exit previously happened from a connection task's `Drop`: it could
+observe zero clients while the accept loop already held a new OS connection but had not incremented
+the global counter. `Shutdown` was also a permanent process-global bit, and `process::exit` skipped
+the PTY cleanup owned by `SessionProcess`.
+
+The accept loop now owns the client count and gives ready accepts priority over close events. A
+per-connection flag follows `Shutdown` only to the connection that sent it; when that connection
+closes the server returns normally, allowing the runtime and its PTYs to drop. Runtime mutex poison
+is recovered and cleared once instead of making every later request fail while the broker remains
+immortal. The broker suite passes 30 tests, including a real two-client shutdown boundary test and
+a poisoned-lock recovery test. Those tests prove graceful server retirement and runtime drop; they
+do not claim a separate live-child PID reaping integration test.
+
+The client-side acquisition gap from the same review is also closed: when opening or starting the
+broker fails before any product request is sent, acquisition retries once. Busy-pool and poisoned-
+lock errors are still returned directly; only connection establishment gets the safe retry.
+
+Connection/task/line backpressure remains the separate known risk recorded in HANDOFF §2.3; it was
+not expanded into this shutdown fix.
+
+---
+
+## W-016 — Split-down used a different mnemonic on Windows
+
+**Severity:** low — the same workspace action required memorising a different letter per OS.
+**Status:** fixed in this branch.
+
+Split-right was ⌘D / Ctrl+Shift+D, while split-down was ⇧⌘D / Ctrl+Shift+S. The Windows helper's
+default Shift modifier caused the same-letter collision; changing the letter hid that implementation
+detail in the user-facing keymap. Split-down is now Ctrl+Alt+D on Windows, preserving D on both
+platforms while remaining distinct from split-right and ordinary terminal Ctrl+D.
+
+---
+
+## W-015 — “Open terminal log” opened the summary instead
+
+**Severity:** high — the direct log-review action never showed the requested log.
+**Status:** fixed in this branch.
+
+The Attention detail button was labelled “Open terminal log”, but its desktop handler selected the
+session and explicitly set the inspector to `summary`. The native E2E reached this path and waited
+20 seconds for `terminal-log-view`; it never existed. The handler now opens the `terminal`
+inspector mode named by the action. Phone mode already selected the terminal tab and was unchanged.
+
+---
+
+## W-014 — The Windows E2E assumed the default shell was `cmd.exe`
+
+**Severity:** medium — the product gate blocked on a valid default PowerShell session.
+**Status:** fixed in this branch.
+
+The probe sent bare `echo` and waited for `ECHO is on/off.`, which is `cmd.exe` behaviour. This
+machine correctly selected PowerShell 7 as its default shell; there `echo` aliases `Write-Output`
+and, with no argument, prompts for `InputObject` instead. The gate now runs lowercase `whoami` and
+compares the output with `whoami.exe` from the same Windows test process, so it remains valid for
+both PowerShell and Command Prompt.
+
+---
+
+## W-013 — WebView2 WebDriver duplicated xterm text sent through W3C key actions
+
+**Severity:** medium — the real Windows gate could not get past its first terminal command.
+**Status:** fixed in this branch.
+
+The first WebDriver run against a release build reached the live xterm textarea, focused it, and
+sent the lowercase command `echo`. PowerShell received and attempted to execute `eecchhoo`; this
+was not a display-only echo because PowerShell reported that exact doubled token as an unknown
+command. The run stopped at the first terminal assertion, before any later workflow checks.
+
+A controlled event trace showed one xterm-handled `keydown` per character with
+`defaultPrevented === true`, followed anyway by a WebDriver-generated `input` event carrying the
+same character. xterm correctly treated those as two input routes. The helper now uses WebDriver's
+textarea value operation for the command text, which still crosses xterm's `input -> onData -> PTY`
+path, and retains a native key action for Enter. No production keyboard handling changed.
+
+---
+
+## W-012 — The tablet layout rendered the entire main surface into a 0px grid track
+
+**Severity:** high — the app looked blank at a normal narrow desktop width.
+**Status:** fixed in this branch.
+
+At a 767px viewport the responsive rule made the expanded sidebar absolute and changed the app
+grid to `0px minmax(0, 1fr)`. Because the absolute sidebar no longer occupied column one, CSS auto
+placement put `.app-main` into that 0px column. Browser measurement showed `main.width === 0` while
+the pane existed and had content.
+
+The tablet-only expanded-sidebar rule now pins `.app-main` to column two. Measured after hot reload:
+the same 767px viewport gives the main surface the full 767px track, while the 720px phone boundary
+still uses one 720px column with the sidebar hidden.
 
 ---
 
@@ -254,7 +417,7 @@ appears and keeps a single button: it reads **세션 시작** when the command r
 ## W-003 — `native_pty_closes_after_command_exits_without_kill` is flaky under load
 
 **Severity:** medium — wrong exit codes reach the product's Attention surface.
-**Status:** open.
+**Status:** root race open; user-facing presentation mitigated in this branch.
 
 ```
 session_runtime_tests::native_pty_closes_after_command_exits_without_kill
@@ -270,55 +433,65 @@ Measured on this machine:
 | full `cargo test --lib`, 8 consecutive runs | 7 passed, 1 failed |
 | full suite, first run of the session | failed |
 
+A separate process-level stress run then reproduced the baseline once in 32 runs. Starting the PTY
+reader before the child still failed 2 of 64, and pre-queuing the cursor-position response also
+failed 2 of 64, always with the same `0xC000013A`. Both speculative runtime changes were removed.
+
 So roughly 2 failures in 9 full-suite runs, and never in isolation — a race that only appears when
 all 22 tests contend for the machine. The fixture is
-`cmd.exe /D /S /C exit /B 7` (`session_runtime_tests.rs:482`), which exits almost immediately.
+`cmd.exe /D /S /C exit /B 7` (`session_runtime_tests.rs:398`), which exits almost immediately.
 `0xC000013A` is what a console process reports when it dies from a console control event rather
 than returning on its own, so the ConPTY teardown is racing the child's natural exit.
 
-`refresh_status()` (`session_runtime.rs:456`) records whatever `try_wait()` returns at that instant
-and makes no distinction between "exited on its own" and "was terminated by a console control
+`refresh_status()` (`session-broker/src/runtime.rs:504`) records whatever `try_wait()` returns at
+that instant and makes no distinction between "exited on its own" and "was terminated by a console control
 event". README states that observed exits surface in Attention with their exit code, so a
 short-lived process under load can show `3221225786` to a user.
 
-The precise trigger has not been isolated. Candidates not yet ruled out: the timing of
-`close_master_async()` relative to the child's exit, and `drop(pair.slave)` at
-`session_runtime.rs:275`. This needs a targeted repro before anyone changes the teardown.
+The precise trigger has not been isolated. The shipped minimal mitigation recognizes
+`0xC000013A` as an interrupted Windows console process and shows **Interrupted / 중단됨** in both
+the terminal phase and Attention detail instead of the misleading decimal `3221225786`. No retry,
+wrapper process, dependency fork, or unproven teardown change was added.
 
 ---
 
-## W-002 — The product gates have probably never run on this code
+## W-002 — CORRECTED: the product gates have run on pull request #1
 
-**Severity:** high — every claim of Windows verification rests on CI.
-**Status:** open, needs confirmation.
+**Original claim (wrong):** CI had probably never run because branch pushes do not match the
+workflow's `main` filter.
+**Status:** corrected; the latest remote revision fails formatting before its native gates.
 
-`.github/workflows/desktop.yml` triggers only on `push: branches: [main]` and
-`pull_request: branches: [main]`. All 28 commits live on `agent/developer-workspace-ci`, and `main`
-is still `df9a4ca Initial commit` carrying nothing but `README.md`. Unless a pull request was
-opened, `macOS / product gate` and `Windows / product gate` have never executed against this code.
+The repository has an open pull request from `agent/developer-workspace-ci` to `main`, so the
+`pull_request` trigger does match. GitHub Actions showed 35 runs for `Desktop product gates`,
+including successful runs #17 and #22. The latest, #35 on 2026-08-29, passed the renderer's 191
+tests on both operating systems and then failed `cargo fmt --manifest-path
+session-broker/Cargo.toml -- --check` on both. It therefore did not reach broker tests, native
+tests, packaging, or the installed-product E2E.
 
-Not confirmed from this machine: `gh` is unauthenticated here, so the run history was not read.
+The formatter diff shown by Actions is already applied in this working tree. A new run is still
+required after these changes are committed and pushed; local success must not be reported as a
+green remote gate.
 
 ---
 
 ## W-001 — Packaging gaps that CI structurally cannot catch
 
 **Severity:** high for a paid product.
-**Status:** open.
+**Status:** VC++ runtime and Korean installer fixed; signing blocked on a certificate.
 
-`src-tauri/tauri.conf.json` carries no `bundle.windows` section at all, so every Windows packaging
-decision is a Tauri default.
+`src-tauri/tauri.conf.json` now carries the product's explicit NSIS language choice, and the Windows
+MSVC target uses static CRT linkage.
 
 1. **Unsigned installer.** Both CI and local builds pass `--no-sign`. A buyer downloading the NSIS
    installer meets SmartScreen's "Windows protected your PC" screen and has to click through
-   *More info → Run anyway*. This needs a code-signing certificate; no amount of code fixes it.
-2. **No VC++ runtime bundled.** The Rust MSVC target links `vcruntime140.dll` and friends
-   dynamically. GitHub's `windows-latest` runners always have them, so the clean-install smoke in
-   `verify-windows-package.ps1` cannot fail for their absence — the gap is invisible to CI by
-   construction. This machine had the DLLs present in `System32` but no VC++ redistributable
-   registry entry, which is closer to an ordinary user's machine than the runner is.
-3. **English-only installer.** `nsis.languages` is unset, so a Korean buyer gets an English
-   installer for a product whose UI ships Korean.
+   *More info → Run anyway*. This needs a code-signing certificate. Neither CurrentUser nor
+   LocalMachine has a usable code-signing certificate on this machine, and no signing/Azure
+   credential environment is configured, so this cannot be completed honestly in code.
+2. **VC++ runtime: fixed.** `.cargo/config.toml` enables Rust's supported `crt-static` target
+   feature only for Windows MSVC. The rebuilt app and broker PE import tables were inspected and no
+   longer name `VCRUNTIME` or `MSVCP` DLLs.
+3. **Installer language: fixed.** NSIS now embeds `English` and `Korean`; the generated installer
+   source was checked after a real bundle build.
 
 Working as intended and worth keeping: the NSIS default `installMode` is `currentUser`, so the app
 lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
@@ -328,6 +501,55 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
 
 ## Notes on failures that were not product defects
 
+- **The first E2E wrapper was rejected before launch by the command policy.** It combined product
+  execution, broker cleanup and recursive deletion in one shell. The work was split into explicit
+  run, exact-session discard and filesystem cleanup commands; no app or directory was created by the
+  rejected command. `New-Item -LiteralPath` then failed because that cmdlet takes `-Path`; correcting
+  that parameter allowed the product test to run.
+- **Recursive cleanup of the isolated E2E directory was also rejected by policy.** The directory was
+  resolved under `%TEMP%`, inspected as empty, and removed non-recursively by its exact literal path.
+  The three stopped sessions whose stored `cwd` exactly matched that directory were discarded first;
+  zero matching records remain and the owner's nine running sessions are unchanged.
+- **`pnpm` was not on PATH when the packaging preflight queried it.** `Get-Command pnpm` failed as
+  HANDOFF warned. Corepack shims were generated under a task-owned temporary directory and only
+  prepended for the build process; no global install or shell-profile change was made.
+- **Rust 1.95 clippy rejected `sort_by(|a, b| a.run_id.cmp(&b.run_id))`.** It was the standard
+  `unnecessary_sort_by` lint under `-D warnings`; replacing it with `sort_by_key` made both broker
+  clippy and its 30-test suite pass without changing order.
+- **The first typecheck of the detach-safe terminal writer failed with `TS18048`, and Biome also
+  rejected one import order.** The optional cursor lookup is now explicitly narrowed and the import
+  sorted. A later focused Biome pass rejected one multiline assertion; it was formatted and rerun.
+- **Two combined documentation patches missed exact wrapped-line contexts and applied nothing.**
+  They were split into narrow patches, then `git diff --check` and the rendered text were rechecked;
+  product files were not touched by either failed patch.
+- **Waiting for ConPTY's initial cursor exchange before spawning the child always timed out.** The
+  first W-003 experiment assumed the query was observable immediately after pseudoconsole creation.
+  On this Windows build it was not emitted until a client process was attached, so the two-second
+  startup wait was removed rather than shipped as latency in every new pane.
+- **Neither starting the PTY reader before the child nor pre-queuing the cursor-position response
+  fixed W-003.** The original stress run failed 1 of 32; each experiment still failed 2 of 64 with
+  exactly `0xC000013A`. Both speculative runtime changes were removed.
+- **The Windows E2E clicked Stop but did not confirm the destructive action.** The product correctly
+  kept the PTY alive behind its confirmation dialog, while the stale helper waited for an exited
+  phase. The helper now opens the dialog and clicks its danger action before waiting.
+- **The Windows E2E diagnostic warned that `tauri-driver` was missing even though the embedded
+  driver then started and opened the app.** The preflight and the actual runner disagree about the
+  embedded-driver path; keep the warning until that diagnostic is corrected.
+- **WebdriverIO cleanup warned `Failed to clear mock store: A sessionId is required` after both a
+  failed run and the final successful run had already deleted their WebDriver sessions.** This is
+  teardown noise after the product assertion result, but the service cleanup order should be made
+  idempotent upstream.
+- **The first typecheck after making terminal writes report completion failed with `TS7006`.**
+  The local `finish(written)` callback lacked its explicit `boolean` annotation. Add the annotation
+  and rerun the typecheck; no runtime code changed.
+- **The browser verification adapter rejected `networkidle` while opening the Vite preview.**
+  Although the browser API advertises that load state, this connected Chrome adapter returned
+  `playwright_wait_for_load_state does not support networkidle`. Continue with
+  `domcontentloaded` and an explicit DOM assertion.
+- **Starting `pnpm dev` through the verification shell with PTY allocation failed before Vite
+  launched.** `CreateProcessW` returned `-1073283067` while creating the PowerShell wrapper. This
+  was a verification-runner launch failure, not a Talkak process error; retry without PTY
+  allocation.
 - **NSIS packaging failed with `os error 32`.** `pnpm tauri build --bundles nsis` finished the Rust
   release build in 2m41s, then `makensis` could not read `talkak-dev.exe` because that executable
   had just been launched by hand. Build the bundle with the app closed.

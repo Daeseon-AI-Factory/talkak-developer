@@ -1,8 +1,9 @@
 import { strict as assert } from "node:assert";
+import { execFileSync } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
 
-const echoStatusPattern = /ECHO is (?:on|off)\./u;
+const windowsIdentity = execFileSync("whoami.exe", { encoding: "utf8" }).trim();
 const projectPath = process.env.TALKAK_WINDOWS_PROJECT;
 if (!projectPath || !isAbsolute(projectPath)) {
   throw new Error("TALKAK_WINDOWS_PROJECT must be an absolute external test directory.");
@@ -28,11 +29,11 @@ describe("installed Windows product path", () => {
     await startSession.click();
     await waitForRunningTerminalCount(1);
 
-    await typeTerminalCommand("echo");
+    await typeTerminalCommand("whoami");
 
-    await browser.waitUntil(async () => echoStatusPattern.test(await terminalText()), {
+    await browser.waitUntil(async () => (await terminalText()).includes(windowsIdentity), {
       timeout: 20_000,
-      timeoutMsg: "PTY did not report the Windows echo state",
+      timeoutMsg: "PTY did not report the current Windows identity",
     });
 
     await (await $('[data-testid="split-right"]')).click();
@@ -48,10 +49,10 @@ describe("installed Windows product path", () => {
     assert.equal((await $$('[data-testid="page-tab"]')).length, 2);
     assert.equal((await $$('[data-testid="live-terminal"]')).length, 1);
 
-    await typeTerminalCommand("echo");
-    await browser.waitUntil(async () => echoStatusPattern.test(await terminalText()), {
+    await typeTerminalCommand("whoami");
+    await browser.waitUntil(async () => (await terminalText()).includes(windowsIdentity), {
       timeout: 20_000,
-      timeoutMsg: "The Attention probe did not report the Windows echo state",
+      timeoutMsg: "The Attention probe did not report the current Windows identity",
     });
     await exitVisibleSession();
     await (await $('[data-testid="nav-attention"]')).click();
@@ -65,10 +66,10 @@ describe("installed Windows product path", () => {
     await terminalLog.waitForExist();
     await (await terminalLog.$('[data-phase="exited"]')).waitForExist({ timeout: 20_000 });
     await browser.waitUntil(
-      async () => echoStatusPattern.test(await terminalLogText(terminalLog)),
+      async () => (await terminalLogText(terminalLog)).includes(windowsIdentity),
       {
         timeout: 20_000,
-        timeoutMsg: "Terminal log did not retain the Windows echo state",
+        timeoutMsg: "Terminal log did not retain the current Windows identity",
       },
     );
 
@@ -114,6 +115,9 @@ async function stopVisibleSessions() {
     const pane = await stop.$("./ancestor::article[1]");
     const phase = await pane.$('[data-testid="runtime-phase"]');
     await stop.click();
+    const confirmation = await $("dialog[open].confirm-dialog");
+    await confirmation.waitForExist();
+    await (await confirmation.$('button[data-tone="danger"]')).click();
     await browser.waitUntil(async () => (await phase.getAttribute("data-phase")) === "exited", {
       timeout: 20_000,
       timeoutMsg: "A PTY session did not report an exited runtime",
@@ -149,6 +153,6 @@ async function typeTerminalCommand(command) {
   const input = await $('[data-testid="live-terminal"] .xterm-helper-textarea');
   await input.waitForExist();
   await input.click();
-  await browser.keys(command);
+  await input.addValue(command);
   await browser.keys(Key.Enter);
 }

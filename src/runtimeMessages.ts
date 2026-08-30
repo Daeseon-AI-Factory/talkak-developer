@@ -12,6 +12,7 @@ export const runtimeMessages = {
     "attention.runtimeErrorDescription": "{operation} 작업 실패 · {message}",
     "attention.runtimeUnknownError": "PTY 작업이 오류 상태로 전환되었습니다.",
     "attention.runtimeExitedCode": "종료 코드 {code}",
+    "attention.runtimeExitedInterrupted": "Windows 제어 이벤트로 중단되었습니다.",
     "attention.runtimeExitedUnknown": "종료 코드가 보고되지 않았습니다.",
     "attention.runtimeObserved":
       "Talkak이 관찰한 로컬 PTY 상태입니다. AI 작업 결과를 의미하지 않습니다.",
@@ -39,6 +40,7 @@ export const runtimeMessages = {
     "attention.runtimeErrorDescription": "{operation} failed · {message}",
     "attention.runtimeUnknownError": "The PTY entered an error state.",
     "attention.runtimeExitedCode": "Exit code {code}",
+    "attention.runtimeExitedInterrupted": "Interrupted by a Windows console control event.",
     "attention.runtimeExitedUnknown": "No exit code was reported.",
     "attention.runtimeObserved":
       "Observed local PTY status from Talkak. This is not an AI task outcome.",

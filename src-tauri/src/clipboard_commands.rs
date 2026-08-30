@@ -46,8 +46,9 @@ pub(crate) fn clipboard_read_image_path() -> Result<Option<String>, String> {
     };
     let width = u32::try_from(image.width).map_err(|_| "image is too wide".to_string())?;
     let height = u32::try_from(image.height).map_err(|_| "image is too tall".to_string())?;
-    let buffer: image::RgbaImage = image::ImageBuffer::from_raw(width, height, image.bytes.into_owned())
-        .ok_or_else(|| "clipboard image had an unexpected size".to_string())?;
+    let buffer: image::RgbaImage =
+        image::ImageBuffer::from_raw(width, height, image.bytes.into_owned())
+            .ok_or_else(|| "clipboard image had an unexpected size".to_string())?;
 
     let directory = std::env::temp_dir().join("talkak-clipboard");
     std::fs::create_dir_all(&directory)

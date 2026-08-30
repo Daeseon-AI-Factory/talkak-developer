@@ -15,8 +15,8 @@ use agent_transcript::agent_transcript;
 use clipboard_commands::{clipboard_read_image_path, clipboard_read_text, clipboard_write_text};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
-    session_discard, session_kill, session_live, session_read, session_resize, session_restorable,
-    session_snapshot, session_spawn, session_stored_output, session_write,
+    session_discard, session_kill, session_live, session_read, session_resize, session_snapshot,
+    session_spawn, session_write,
 };
 use session_runtime::SessionRuntime;
 use tauri::Manager;
@@ -86,10 +86,8 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            // The client of the detached session broker. Sessions and their records live in the
-            // broker process under the OS application-data directory, so both a machine restart
-            // AND an app restart bring the workspace back — with still-running sessions attached
-            // live, exactly as they were left.
+            // The client of the detached session broker. It outlives the app, so an app restart
+            // reattaches still-running sessions exactly as they were left.
             app.manage(SessionRuntime::attach(app.path().app_data_dir().ok()));
             Ok(())
         });
@@ -116,9 +114,7 @@ pub fn run() {
             session_write,
             session_resize,
             session_kill,
-            session_discard,
-            session_restorable,
-            session_stored_output
+            session_discard
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Talkak Dev");

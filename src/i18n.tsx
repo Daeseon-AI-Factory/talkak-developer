@@ -1,6 +1,7 @@
 import { type ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { SessionState, TerminalRuntimePhase } from "./domain";
 import { type LocalizedText, resolveLocalizedText } from "./localizedText";
+import { exitWasInterrupted } from "./runtime/exitStatus";
 import { runtimeMessages } from "./runtimeMessages";
 
 export type Locale = "ko" | "en";
@@ -64,7 +65,7 @@ const ko = {
   "projectDialog.argumentsPlaceholder": "--mode\nreview",
   "projectDialog.argumentsHint": "빈 줄을 제외한 한 줄이 정확히 한 개의 인자로 전달됩니다.",
   "projectDialog.localOnly":
-    "프로젝트 설정과 페이지·세션 배치를 이 기기에 저장합니다. 세션 복구를 위해 터미널 출력은 세션별 최대 4MB까지 로컬에 보관됩니다.",
+    "프로젝트 설정과 페이지·세션 배치를 이 기기에 저장합니다. 실행 중인 터미널은 앱을 닫아도 로컬 브로커가 유지합니다.",
   "projectDialog.cancel": "취소",
   "projectDialog.add": "프로젝트 추가",
   "projectDialog.update": "설정 저장",
@@ -184,6 +185,7 @@ const ko = {
   "terminal.stopping": "종료 중…",
   "terminal.exited": "종료됨",
   "terminal.exitedCode": "종료 코드 {code}",
+  "terminal.interrupted": "중단됨",
   "terminal.failed": "실행 실패",
   "terminal.readyToStart": "시작 준비",
   "terminal.stop": "종료",
@@ -205,7 +207,7 @@ const ko = {
   "inspector.terminal": "터미널",
   "inspector.conversation": "대화 로그",
   "inspector.terminalAria": "읽기 전용 실제 터미널 로그",
-  "inspector.terminalMemoryOnly": "로컬 복구 로그 · 세션별 최대 4MB",
+  "inspector.terminalMemoryOnly": "브로커 터미널 로그 · 최근 출력 최대 1MB",
   "inspector.terminalTruncated": "오래된 출력은 메모리 제한으로 생략되었습니다.",
   "inspector.terminalDesktopOnly": "실제 터미널 로그는 Talkak 데스크톱 앱에서 표시됩니다.",
   "inspector.terminalLoading": "로그 불러오는 중",
@@ -279,7 +281,7 @@ const ko = {
   "shortcuts.description": "버튼과 키보드가 같은 명령을 실행합니다.",
   "shortcuts.close": "단축키 닫기",
   "shortcuts.terminalSafe":
-    "Windows 앱 명령은 Ctrl+Shift를 사용해 터미널의 일반 Ctrl 입력을 보존합니다.",
+    "Windows 앱 명령은 Ctrl+Shift 또는 Ctrl+Alt를 사용해 터미널의 일반 Ctrl 입력을 보존합니다.",
   "shortcut.palette": "빠른 이동",
   "shortcut.guide": "단축키 보기",
   "shortcut.settings": "설정 열기",
@@ -424,7 +426,7 @@ const en: Record<MessageKey, string> = {
   "projectDialog.argumentsPlaceholder": "--mode\nreview",
   "projectDialog.argumentsHint": "Each non-empty line is passed as exactly one argument.",
   "projectDialog.localOnly":
-    "Project settings and page/session layout are stored on this device. Terminal output is kept locally up to 4 MB per session for recovery.",
+    "Project settings and page/session layout stay on this device. The local broker keeps running terminals alive when the app closes.",
   "projectDialog.cancel": "Cancel",
   "projectDialog.add": "Add project",
   "projectDialog.update": "Save settings",
@@ -544,6 +546,7 @@ const en: Record<MessageKey, string> = {
   "terminal.stopping": "Stopping…",
   "terminal.exited": "Exited",
   "terminal.exitedCode": "Exited with code {code}",
+  "terminal.interrupted": "Interrupted",
   "terminal.failed": "Launch failed",
   "terminal.readyToStart": "Ready to start",
   "terminal.stop": "Stop",
@@ -565,7 +568,7 @@ const en: Record<MessageKey, string> = {
   "inspector.terminal": "Terminal",
   "inspector.conversation": "Conversation log",
   "inspector.terminalAria": "Read-only live terminal log",
-  "inspector.terminalMemoryOnly": "Local recovery log · up to 4 MB per session",
+  "inspector.terminalMemoryOnly": "Broker terminal log · latest 1 MB per session",
   "inspector.terminalTruncated": "Older output was omitted by the memory limit.",
   "inspector.terminalDesktopOnly": "The real terminal log is available in the Talkak desktop app.",
   "inspector.terminalLoading": "Loading log",
@@ -639,7 +642,7 @@ const en: Record<MessageKey, string> = {
   "shortcuts.description": "Toolbar buttons and keys run the same commands.",
   "shortcuts.close": "Close shortcuts",
   "shortcuts.terminalSafe":
-    "Windows app commands use Ctrl+Shift so ordinary terminal Ctrl input remains available.",
+    "Windows app commands use Ctrl+Shift or Ctrl+Alt so ordinary terminal Ctrl input remains available.",
   "shortcut.palette": "Quick switcher",
   "shortcut.guide": "Show shortcuts",
   "shortcut.settings": "Open settings",
@@ -793,6 +796,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
         if (phase === "running") return t("terminal.running");
         if (phase === "stopping") return t("terminal.stopping");
         if (phase === "exited") {
+          if (exitWasInterrupted(exitCode)) return t("terminal.interrupted");
           return exitCode === null || exitCode === undefined
             ? t("terminal.exited")
             : t("terminal.exitedCode", { code: exitCode });

@@ -29,11 +29,13 @@ const windowsE2e = [
   "process.env.TALKAK_WINDOWS_PROJECT",
   "!projectPath || !isAbsolute(projectPath)",
   "setValue(projectPath)",
-  'typeTerminalCommand("echo")',
+  'execFileSync("whoami.exe"',
+  'typeTerminalCommand("whoami")',
   "if (!/^[a-z]+$/u.test(command))",
   ".xterm-helper-textarea",
   "await input.click();",
-  "browser.keys(command)",
+  "input.addValue(command)",
+  "browser.keys(Key.Enter)",
   '[data-testid="runtime-attention-card"]',
   '[data-testid="terminal-log-view"]',
   '[data-testid="ack-runtime-notice"]',
@@ -351,8 +353,8 @@ test("rejects an installed-product test that does not inspect terminal log rows"
   );
 });
 
-test("rejects element value injection for terminal commands", () => {
-  const mutated = windowsE2e.replace("browser.keys(command)", "input.addValue(command)");
+test("rejects bypassing xterm input for terminal commands", () => {
+  const mutated = windowsE2e.replace("input.addValue(command)", "browser.execute(() => command)");
   assert.match(
     validate(
       baseWorkflow,

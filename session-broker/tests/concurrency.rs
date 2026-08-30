@@ -24,6 +24,17 @@ fn endpoint() -> String {
     }
 }
 
+fn shutdown_endpoint() -> String {
+    #[cfg(unix)]
+    {
+        format!("/tmp/talkak-dev-shutdown-{}.sock", std::process::id())
+    }
+    #[cfg(windows)]
+    {
+        format!(r"\\.\pipe\talkak-dev-shutdown-{}", std::process::id())
+    }
+}
+
 fn connect(endpoint: &str) -> std::io::Result<Conn> {
     #[cfg(unix)]
     {
@@ -115,4 +126,49 @@ fn a_second_client_is_served_while_the_first_holds_its_connection_open() {
 
     let _ = broker.kill();
     let _ = broker.wait();
+}
+
+#[test]
+fn shutdown_belongs_to_the_requesting_connection_and_retires_when_it_leaves() {
+    let endpoint = shutdown_endpoint();
+    let bin = env!("CARGO_BIN_EXE_talkak-dev-broker");
+    let mut broker = Command::new(bin)
+        .arg(&endpoint)
+        .spawn()
+        .expect("spawn broker");
+
+    let mut app = Client::connect_within(&endpoint, Duration::from_secs(5));
+    app.hello();
+    let mut retiring = Client::connect_within(&endpoint, Duration::from_secs(5));
+    retiring.hello();
+    assert!(matches!(
+        retiring.request(&Request::Shutdown),
+        Response::ShuttingDown
+    ));
+
+    // Merely sending Shutdown does not affect another live client. The requester's close is the
+    // boundary promised by the protocol.
+    app.hello();
+    assert!(
+        broker.try_wait().expect("broker status").is_none(),
+        "broker retired before the shutdown-requesting connection closed"
+    );
+
+    drop(retiring);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match broker.try_wait() {
+            Ok(Some(status)) => {
+                assert!(status.success(), "graceful shutdown failed: {status}");
+                break;
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                let _ = broker.kill();
+                panic!("broker did not retire with the shutdown-requesting client");
+            }
+            Err(error) => panic!("broker wait failed: {error}"),
+        }
+    }
+    drop(app);
 }

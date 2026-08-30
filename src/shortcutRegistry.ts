@@ -108,7 +108,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     id: "splitDown",
     scope: "workspace",
     macos: mac("KeyD", "D", { shift: true }),
-    windows: windows("KeyS", "S"),
+    windows: windows("KeyD", "D", { alt: true, shift: false }),
     repeat: false,
   },
   {

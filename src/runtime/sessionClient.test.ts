@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   type InvokeCommand,
   type SessionClient,
-  type SessionRecoveryCatalog,
   type SessionSnapshot,
   createBrowserSessionClient,
   createSessionClient,
@@ -22,34 +21,15 @@ describe("session client", () => {
       readError: null,
       next: 0,
     };
-    const recoveryCatalog: SessionRecoveryCatalog = {
-      persisted: true,
-      sessions: [
-        {
-          sessionId: "session-1",
-          cwd: "/project",
-          command: null,
-          args: [],
-          cols: 80,
-          rows: 24,
-          startedAtMs: 1_755_255_600_000,
-          outputBytes: 12,
-        },
-      ],
-    };
     const invokeCommand: InvokeCommand = async <T>(
       command: string,
       args?: Record<string, unknown>,
     ) => {
       calls.push({ command, args });
-      if (command === "session_restorable") return recoveryCatalog as T;
-      if (command === "session_stored_output") return [65, 13] as T;
       return snapshot as T;
     };
     const client = createSessionClient(invokeCommand, () => true);
 
-    await expect(client.recoveryCatalog()).resolves.toEqual(recoveryCatalog);
-    await expect(client.readStoredOutput("session-1")).resolves.toEqual([65, 13]);
     await client.spawn({
       sessionId: "session-1",
       cwd: "/project",
@@ -64,14 +44,6 @@ describe("session client", () => {
     await client.discard("session-1");
 
     expect(calls).toEqual([
-      {
-        command: "session_restorable",
-        args: undefined,
-      },
-      {
-        command: "session_stored_output",
-        args: { request: { sessionId: "session-1" } },
-      },
       {
         command: "session_spawn",
         args: {
@@ -104,12 +76,11 @@ describe("session client", () => {
     ]);
   });
 
-  it("has an honest browser counterpart without pretending that an empty restore list persisted", async () => {
+  it("has an honest browser counterpart without pretending native sessions exist", async () => {
     const client = createBrowserSessionClient();
 
     expect(client.available()).toBe(false);
-    await expect(client.recoveryCatalog()).resolves.toEqual({ persisted: false, sessions: [] });
-    await expect(client.readStoredOutput("session-1")).resolves.toEqual([]);
+    await expect(client.liveSessions()).resolves.toEqual([]);
     await expect(
       client.spawn({
         sessionId: "session-1",
@@ -138,8 +109,6 @@ describe("session client", () => {
     const client = {
       available: () => true,
       liveSessions: async () => uncalled("liveSessions"),
-      recoveryCatalog: async () => uncalled("recoveryCatalog"),
-      readStoredOutput: async () => uncalled("readStoredOutput"),
       snapshot: async () => {
         snapshots += 1;
         return null;
@@ -186,8 +155,6 @@ describe("session client", () => {
     const client = {
       available: () => true,
       liveSessions: async () => uncalled("liveSessions"),
-      recoveryCatalog: async () => uncalled("recoveryCatalog"),
-      readStoredOutput: async () => uncalled("readStoredOutput"),
       snapshot: async () => existing,
       spawn: async () => {
         spawns += 1;
@@ -237,8 +204,6 @@ describe("session client", () => {
     const client = {
       available: () => true,
       liveSessions: async () => uncalled("liveSessions"),
-      recoveryCatalog: async () => uncalled("recoveryCatalog"),
-      readStoredOutput: async () => uncalled("readStoredOutput"),
       snapshot: async () => exited,
       spawn: async () => {
         operations.push("spawn");
@@ -283,8 +248,6 @@ describe("session client", () => {
     const client = {
       available: () => true,
       liveSessions: async () => uncalled("liveSessions"),
-      recoveryCatalog: async () => uncalled("recoveryCatalog"),
-      readStoredOutput: async () => uncalled("readStoredOutput"),
       snapshot: async () => draining,
       spawn: async () => uncalled("spawn"),
       read: async () => uncalled("read"),
@@ -331,8 +294,6 @@ describe("session client", () => {
     const client = {
       available: () => true,
       liveSessions: async () => uncalled("liveSessions"),
-      recoveryCatalog: async () => uncalled("recoveryCatalog"),
-      readStoredOutput: async () => uncalled("readStoredOutput"),
       snapshot: async () => draining,
       spawn: async () => {
         operations.push("spawn");

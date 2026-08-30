@@ -11,11 +11,10 @@
 
 use crate::protocol::{Request, Response, PROTOCOL_VERSION};
 use crate::runtime::SessionRuntime;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-
-static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 
 pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&str>) -> Response {
     fn reply<T>(
@@ -51,15 +50,16 @@ pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&s
         Request::Sessions => Response::Sessions(runtime.live_sessions()),
         Request::StoredOutput(id) => Response::Bytes(runtime.stored_output(&id.session_id)),
         Request::Persists => Response::Persists(runtime.persists()),
-        Request::Shutdown => {
-            SHUTDOWN_REQUESTED.store(true, Ordering::SeqCst);
-            Response::ShuttingDown
-        }
+        Request::Shutdown => Response::ShuttingDown,
     }
 }
 
-async fn serve_connection<S>(stream: S, runtime: Arc<SessionRuntime>, store_dir: Option<String>)
-where
+async fn serve_connection<S>(
+    stream: S,
+    runtime: Arc<SessionRuntime>,
+    store_dir: Option<String>,
+    shutdown_requested: Arc<AtomicBool>,
+) where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     let (read_half, mut write_half) = tokio::io::split(stream);
@@ -70,6 +70,9 @@ where
         }
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(request) => {
+                if matches!(&request, Request::Shutdown) {
+                    shutdown_requested.store(true, Ordering::SeqCst);
+                }
                 if let Request::Spawn(spawn) = &request {
                     crate::logging::log(&format!("spawn requested: {}", spawn.session_id));
                 }
@@ -118,54 +121,78 @@ where
     }
 }
 
-static LIVE_CLIENTS: AtomicUsize = AtomicUsize::new(0);
+#[derive(Clone, Copy)]
+struct ClientClosed {
+    shutdown_requested: bool,
+}
 
 /// Serve a connection on its own task and keep accepting. Awaiting a connection inline meant the
 /// broker handled exactly ONE client at a time for that client's whole lifetime: with the app
 /// holding a permanent connection, every other connection hung forever, and the app's own panes
 /// queued single-file behind each other — the typing lag. The runtime is internally synchronised,
 /// so concurrent connections are safe.
-fn serve_detached<S>(stream: S, runtime: Arc<SessionRuntime>, store_dir: Option<String>)
-where
+fn serve_detached<S>(
+    stream: S,
+    runtime: Arc<SessionRuntime>,
+    store_dir: Option<String>,
+    closed_clients: UnboundedSender<ClientClosed>,
+) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
-    LIVE_CLIENTS.fetch_add(1, Ordering::SeqCst);
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
     tokio::spawn(async move {
         // The decrement has to survive a panic. As a bare statement after the await it was skipped
         // when a connection task unwound, and since only a transition to zero can retire the
         // broker, one panic left the count permanently above zero: the broker became immortal,
         // holding the endpoint and every session for as long as the machine stayed up.
         let _leaving = ClientGuard {
-            runtime: Arc::clone(&runtime),
+            shutdown_requested: Arc::clone(&shutdown_requested),
+            closed_clients,
         };
-        serve_connection(stream, runtime, store_dir).await;
+        serve_connection(stream, runtime, store_dir, shutdown_requested).await;
     });
 }
 
 /// Counts a client out however its task ends — returned, cancelled, or unwound.
 struct ClientGuard {
-    runtime: Arc<SessionRuntime>,
+    shutdown_requested: Arc<AtomicBool>,
+    closed_clients: UnboundedSender<ClientClosed>,
 }
 
 impl Drop for ClientGuard {
     fn drop(&mut self) {
-        // Only the last client leaving can retire the broker.
-        if LIVE_CLIENTS.fetch_sub(1, Ordering::SeqCst) == 1 {
-            exit_if_idle(&self.runtime);
-        }
+        let _ = self.closed_clients.send(ClientClosed {
+            shutdown_requested: self.shutdown_requested.load(Ordering::SeqCst),
+        });
     }
 }
 
-fn exit_if_idle(runtime: &SessionRuntime) {
-    let shutdown = SHUTDOWN_REQUESTED.load(Ordering::SeqCst);
+fn should_stop_server(
+    live_clients: &mut usize,
+    closed: ClientClosed,
+    runtime: &SessionRuntime,
+) -> bool {
+    if *live_clients == 0 {
+        crate::logging::log("ignored an unmatched client-close event");
+        return false;
+    }
+    *live_clients -= 1;
+    if closed.shutdown_requested {
+        crate::logging::log("exiting: shutdown-requesting client left");
+        return true;
+    }
+    if *live_clients != 0 {
+        return false;
+    }
     let running = runtime.has_running_sessions();
     crate::logging::log(&format!(
-        "last client left: shutdown_requested={shutdown} sessions_running={running}"
+        "last client left: shutdown_requested=false sessions_running={running}"
     ));
-    if shutdown || !running {
+    if !running {
         crate::logging::log("exiting: idle");
-        std::process::exit(0);
+        return true;
     }
+    false
 }
 
 #[cfg(unix)]
@@ -183,9 +210,27 @@ pub async fn serve_unix(
     }
     let _ = std::fs::remove_file(socket_path);
     let listener = tokio::net::UnixListener::bind(socket_path)?;
+    let (closed_clients, mut client_events) = unbounded_channel();
+    let mut live_clients = 0;
     loop {
-        let (stream, _) = listener.accept().await?;
-        serve_detached(stream, Arc::clone(&runtime), store_dir.clone());
+        tokio::select! {
+            biased;
+            accepted = listener.accept() => {
+                let (stream, _) = accepted?;
+                live_clients += 1;
+                serve_detached(
+                    stream,
+                    Arc::clone(&runtime),
+                    store_dir.clone(),
+                    closed_clients.clone(),
+                );
+            }
+            Some(closed) = client_events.recv() => {
+                if should_stop_server(&mut live_clients, closed, &runtime) {
+                    return Ok(());
+                }
+            }
+        }
     }
 }
 
@@ -202,12 +247,30 @@ pub async fn serve_pipe(
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(pipe_name)?;
+    let (closed_clients, mut client_events) = unbounded_channel();
+    let mut live_clients = 0;
     loop {
-        server.connect().await?;
-        let connected = server;
-        // The next instance exists before this connection is served, so a client arriving
-        // mid-conversation is queued by the OS instead of rejected.
-        server = ServerOptions::new().create(pipe_name)?;
-        serve_detached(connected, Arc::clone(&runtime), store_dir.clone());
+        tokio::select! {
+            biased;
+            connected = server.connect() => {
+                connected?;
+                let connected = server;
+                // The next instance exists before this connection is served, so a client arriving
+                // mid-conversation is queued by the OS instead of rejected.
+                server = ServerOptions::new().create(pipe_name)?;
+                live_clients += 1;
+                serve_detached(
+                    connected,
+                    Arc::clone(&runtime),
+                    store_dir.clone(),
+                    closed_clients.clone(),
+                );
+            }
+            Some(closed) = client_events.recv() => {
+                if should_stop_server(&mut live_clients, closed, &runtime) {
+                    return Ok(());
+                }
+            }
+        }
     }
 }

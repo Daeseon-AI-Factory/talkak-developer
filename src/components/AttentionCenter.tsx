@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { openAttentionRequests } from "../attentionModel";
 import type { AttentionRequest, Project, TerminalRuntimeOperation } from "../domain";
 import { type Locale, useI18n } from "../i18n";
+import { exitWasInterrupted } from "../runtime/exitStatus";
 import type { RuntimeAttentionNotice } from "../runtime/runtimeAttentionModel";
 import { Icon } from "./Icon";
 
@@ -374,6 +375,9 @@ function runtimeNoticeDescription(
           message: notice.event.fault.message,
         })
       : t("attention.runtimeUnknownError");
+  }
+  if (exitWasInterrupted(notice.event.exitCode)) {
+    return t("attention.runtimeExitedInterrupted");
   }
   return notice.event.exitCode === null
     ? t("attention.runtimeExitedUnknown")
