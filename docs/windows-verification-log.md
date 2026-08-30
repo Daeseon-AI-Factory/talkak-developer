@@ -586,3 +586,6 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
   release output byte-for-byte.** They differ by exactly three bytes at `BUNDLE_TYPE_VAR`: the
   installed payload says `NSS`, while Tauri restores the build output to `UNK`. All other
   12,987,901 bytes match; the installed broker sidecar matches its release SHA-256 exactly.
+- **A final read-only artifact summary used a PowerShell `foreach` statement directly before a
+  pipeline and failed to parse.** Wrapping the loop result in an array fixed the diagnostic; no
+  product, package, process, or user data was touched by the failed command.
