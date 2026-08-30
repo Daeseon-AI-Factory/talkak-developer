@@ -574,3 +574,15 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
 - **GitHub CLI could not list the final workflow run because this machine has no `gh`
   authentication.** No credential or global configuration was changed; the public Actions state
   was checked through GitHub's unauthenticated web surface instead.
+- **The browser fetcher could not open the public Actions URL or API URL directly.** One request
+  returned a cache miss and the other rejected the API URL; a read-only PowerShell request to the
+  same unauthenticated GitHub API returned the workflow state successfully.
+- **The first backup comparison treated the friendly session ID as the log filename.** The broker
+  store hex-encodes that ID, so the one live log kept growing and produced the expected size
+  mismatch. The second pass resolved the log through its JSON record, excluded only that active
+  relative path and `broker.log`, and hash-verified 68 stable Roaming files plus all 615 Local
+  files. The active log itself was present, non-empty, and no larger than its current source.
+- **The first post-install app hash comparison expected the NSIS payload to equal Tauri's final
+  release output byte-for-byte.** They differ by exactly three bytes at `BUNDLE_TYPE_VAR`: the
+  installed payload says `NSS`, while Tauri restores the build output to `UNK`. All other
+  12,987,901 bytes match; the installed broker sidecar matches its release SHA-256 exactly.
