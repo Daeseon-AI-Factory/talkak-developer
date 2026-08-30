@@ -459,8 +459,7 @@ wrapper process, dependency fork, or unproven teardown change was added.
 
 **Original claim (wrong):** CI had probably never run because branch pushes do not match the
 workflow's `main` filter.
-**Status:** corrected; run #36 passed the complete Windows gate and exposed one macOS-only test
-expectation, fixed in the current change.
+**Status:** corrected; run #37 is green on both macOS and Windows.
 
 The repository has an open pull request from `agent/developer-workspace-ci` to `main`, so the
 `pull_request` trigger does match. Run #36 for `4756626` completed the entire Windows product gate,
@@ -468,8 +467,9 @@ including the release installer clean-install smoke and the installed-product We
 macOS job reached its native tests and then found that
 `two_spellings_of_one_directory_match` incorrectly expected Windows case folding on every OS.
 The test now checks separator and trailing-slash normalization everywhere, case folding on Windows,
-and case preservation on macOS/Unix. Its focused test, Rust formatting and clippy pass locally; a
-new pull-request run is required for the final remote result.
+and case preservation on macOS/Unix. Run #37 for `42874e1` then passed both product gates: 34
+renderer test files / 189 tests per OS, broker and native Rust checks, the macOS app bundle, the
+Windows release installer clean-install smoke, and the installed-product WebDriver E2E.
 
 ---
 
