@@ -156,41 +156,42 @@ export function Workspace({
               className="toolbar-button"
               type="button"
               data-testid="split-right"
+              aria-label={t("workspace.splitRight")}
               title={`${t("workspace.splitRight")} · ${shortcutDisplay(platform, "splitRight")}`}
               onClick={() => activePane && onSplitPane(activePane.id, "horizontal")}
               disabled={!activePane || paneCount >= (maxPaneCount ?? Number.POSITIVE_INFINITY)}
             >
               <Icon name="columns" size={16} />
               <span>{t("workspace.splitRight")}</span>
-              <kbd>{shortcutDisplay(platform, "splitRight")}</kbd>
             </button>
             <button
               className="toolbar-button"
               type="button"
               data-testid="split-down"
+              aria-label={t("workspace.splitDown")}
               title={`${t("workspace.splitDown")} · ${shortcutDisplay(platform, "splitDown")}`}
               onClick={() => activePane && onSplitPane(activePane.id, "vertical")}
               disabled={!activePane || paneCount >= (maxPaneCount ?? Number.POSITIVE_INFINITY)}
             >
               <Icon name="rows" size={16} />
               <span>{t("workspace.splitDown")}</span>
-              <kbd>{shortcutDisplay(platform, "splitDown")}</kbd>
             </button>
             <button
               className="toolbar-button"
               type="button"
+              aria-label={t("workspace.closePane")}
               title={`${t("workspace.closePane")} · ${shortcutDisplay(platform, "closePane")}`}
               onClick={() => activePane && onDetachPane(activePane.id)}
               disabled={!activePane}
             >
               <Icon name="x" size={15} />
               <span>{t("workspace.closePane")}</span>
-              <kbd>{shortcutDisplay(platform, "closePane")}</kbd>
             </button>
             <span className="toolbar-divider" />
             <button
               className="toolbar-button"
               type="button"
+              aria-label={t("workspace.summary")}
               title={`${t("workspace.summary")} · ${shortcutDisplay(platform, "summary")}`}
               data-active={inspectorMode === "summary"}
               onClick={() =>
@@ -200,11 +201,11 @@ export function Workspace({
             >
               <Icon name="summary" size={16} />
               <span>{t("workspace.summary")}</span>
-              <kbd>{shortcutDisplay(platform, "summary")}</kbd>
             </button>
             <button
               className="toolbar-button"
               type="button"
+              aria-label={t("workspace.terminalLog")}
               title={`${t("workspace.terminalLog")} · ${shortcutDisplay(platform, "terminalLog")}`}
               data-active={inspectorMode === "terminal"}
               onClick={() =>
@@ -214,7 +215,6 @@ export function Workspace({
             >
               <Icon name="terminal" size={16} />
               <span>{t("workspace.terminalLog")}</span>
-              <kbd>{shortcutDisplay(platform, "terminalLog")}</kbd>
             </button>
           </div>
         </div>

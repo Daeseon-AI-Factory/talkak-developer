@@ -48,6 +48,17 @@ describe("installed Windows product path", () => {
 
     assert.equal((await $$('[data-testid="page-tab"]')).length, 2);
     assert.equal((await $$('[data-testid="live-terminal"]')).length, 1);
+    const pageNavigation = await browser.execute(() => ({
+      tabListWidth: document.querySelector(".page-tabs")?.getBoundingClientRect().width ?? 0,
+      inlineShortcutCount: document.querySelectorAll(".workspace-toolbar--pages kbd").length,
+      addButtonIsPinned:
+        document
+          .querySelector('[data-testid="add-page"]')
+          ?.parentElement?.classList.contains("page-tabs-shell") ?? false,
+    }));
+    assert.ok(pageNavigation.tabListWidth >= 96, "Page tabs must retain one visible tab width");
+    assert.equal(pageNavigation.inlineShortcutCount, 0);
+    assert.equal(pageNavigation.addButtonIsPinned, true);
 
     await typeTerminalCommand("whoami");
     await browser.waitUntil(async () => (await terminalText()).includes(windowsIdentity), {

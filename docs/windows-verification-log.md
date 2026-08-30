@@ -556,3 +556,18 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
   It was never needed: Build Tools 2019 with `VC.Tools.x86.x64` was already present and links this
   project fine. An earlier report that MSVC was missing came from calling `vswhere` with several
   names in a single `-property` argument, which silently returns nothing.
+- **A final package build could invoke Corepack at the outer command but still failed inside
+  Tauri's bare `pnpm` `beforeBuildCommand`.** The successful build used a task-local Tauri config
+  override with `corepack pnpm`; the temporary file was removed afterward and no global shim or
+  shell profile was changed.
+- **The first lint pass for the page-toolbar repair rejected Biome formatting and an unnecessary
+  effect dependency.** Formatting was corrected; an eight-page browser check then proved the page
+  count is in fact required because page creation and active-page state can settle separately. The
+  dependency was retained and referenced explicitly before rerunning the complete verification.
+- **The browser adapter does not expose screenshots on `tab.playwright`.** The failed call changed
+  no application state; the final visual check used the documented top-level `tab.screenshot()`
+  method.
+- **Vite declined Fast Refresh for `PageTabs.tsx` because that component file also exports
+  `writePaneDragData`.** Development correctly fell back to a full module reload and the browser
+  verification passed; splitting that pre-existing helper is tracked here rather than expanding
+  this layout repair.

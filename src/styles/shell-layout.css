@@ -145,11 +145,19 @@
   padding-left: 8px;
 }
 
-.page-tabs {
+.page-tabs-shell {
   display: flex;
   min-width: 0;
   flex: 1;
   align-self: stretch;
+  align-items: center;
+  gap: 6px;
+}
+
+.page-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
   align-items: center;
   gap: 3px;
   overflow-x: auto;
@@ -320,11 +328,6 @@
 
 .workspace-toolbar__actions::-webkit-scrollbar {
   display: none;
-}
-
-.workspace-toolbar__actions .toolbar-button kbd {
-  padding-left: 2px;
-  opacity: 0.72;
 }
 
 .workspace-shell__body {
@@ -563,6 +566,12 @@
   font-size: 11px;
 }
 
+@media (max-width: 1400px) {
+  .workspace-toolbar__actions .toolbar-button span {
+    display: none;
+  }
+}
+
 @media (max-width: 1180px) {
   .app-shell[data-sidebar-mode="expanded"] {
     grid-template-columns: 226px minmax(0, 1fr);
@@ -575,35 +584,6 @@
   .terminal-pane__profile,
   .runtime-chip {
     display: none;
-  }
-
-  /* The key used to vanish here, which is where it is needed most: the toolbar is tight, so this
-     is exactly when someone should be learning the keyboard instead of hunting for the button.
-     It leaves the flow instead — no button grows — and covers the button face on hover or
-     keyboard focus. Staying inside the button matters: .workspace-toolbar__actions scrolls on the
-     x axis, and anything positioned outside it would be clipped. */
-  .workspace-toolbar__actions .toolbar-button {
-    position: relative;
-  }
-
-  .workspace-toolbar__actions .toolbar-button kbd {
-    position: absolute;
-    z-index: 2;
-    display: grid;
-    padding: 0;
-    border-radius: inherit;
-    background: var(--surface-raised);
-    inset: 0;
-    opacity: 0;
-    place-items: center;
-    pointer-events: none;
-    transition: opacity 120ms ease;
-  }
-
-  .workspace-toolbar__actions .toolbar-button:hover kbd,
-  .workspace-toolbar__actions .toolbar-button:focus-visible kbd {
-    color: var(--accent);
-    opacity: 1;
   }
 }
 
@@ -652,10 +632,6 @@
   .toolbar-divider {
     display: none;
   }
-
-  .workspace-toolbar__actions .toolbar-button span {
-    display: none;
-  }
 }
 
 @media (max-width: 760px) {
@@ -675,7 +651,6 @@
   }
 
   .page-tabs__add span,
-  .page-tabs__add kbd,
   .shell-control--label kbd {
     display: none;
   }
