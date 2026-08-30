@@ -547,8 +547,19 @@ mod tests {
     fn two_spellings_of_one_directory_match() {
         assert_eq!(
             normalised_path("C:\\Sources\\talkak-developer\\"),
-            normalised_path("c:/sources/talkak-developer")
+            normalised_path("C:/Sources/talkak-developer")
         );
+        if cfg!(windows) {
+            assert_eq!(
+                normalised_path("C:/Sources/talkak-developer"),
+                normalised_path("c:/sources/talkak-developer")
+            );
+        } else {
+            assert_ne!(
+                normalised_path("C:/Sources/talkak-developer"),
+                normalised_path("c:/sources/talkak-developer")
+            );
+        }
         assert_ne!(
             normalised_path("C:/Sources/talkak"),
             normalised_path("C:/Sources/talkak-developer")

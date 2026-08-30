@@ -459,18 +459,17 @@ wrapper process, dependency fork, or unproven teardown change was added.
 
 **Original claim (wrong):** CI had probably never run because branch pushes do not match the
 workflow's `main` filter.
-**Status:** corrected; the latest remote revision fails formatting before its native gates.
+**Status:** corrected; run #36 passed the complete Windows gate and exposed one macOS-only test
+expectation, fixed in the current change.
 
 The repository has an open pull request from `agent/developer-workspace-ci` to `main`, so the
-`pull_request` trigger does match. GitHub Actions showed 35 runs for `Desktop product gates`,
-including successful runs #17 and #22. The latest, #35 on 2026-08-29, passed the renderer's 191
-tests on both operating systems and then failed `cargo fmt --manifest-path
-session-broker/Cargo.toml -- --check` on both. It therefore did not reach broker tests, native
-tests, packaging, or the installed-product E2E.
-
-The formatter diff shown by Actions is already applied in this working tree. A new run is still
-required after these changes are committed and pushed; local success must not be reported as a
-green remote gate.
+`pull_request` trigger does match. Run #36 for `4756626` completed the entire Windows product gate,
+including the release installer clean-install smoke and the installed-product WebDriver E2E. The
+macOS job reached its native tests and then found that
+`two_spellings_of_one_directory_match` incorrectly expected Windows case folding on every OS.
+The test now checks separator and trailing-slash normalization everywhere, case folding on Windows,
+and case preservation on macOS/Unix. Its focused test, Rust formatting and clippy pass locally; a
+new pull-request run is required for the final remote result.
 
 ---
 
