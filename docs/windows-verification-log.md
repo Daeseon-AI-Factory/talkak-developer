@@ -818,3 +818,14 @@ suite now places a computed PowerShell command on the native clipboard, presses 
 - **One final read-only TALKAK parity search used an unclosed `rg` group.** The malformed search
   changed nothing; direct, narrower searches located the scroll, Claude-folding, and clipboard
   anchors in both repositories and found no important parity gap.
+- **A docs-only rerun exposed a macOS WebDriver startup race before the paste test began.** Run
+  `33432410477` reached `browser.execute(localStorage.clear)` only 566 ms into the test and WebKit
+  rejected `execute/sync` with `The operation is insecure`; the immediately preceding identical
+  product build had passed the full Command+V path. Both OS E2E suites now wait for Talkak's
+  always-present add-project control before clearing storage and refreshing, so WebDriver cannot
+  execute against its transient startup document. Biome and all 34 CI-contract tests pass.
+- **The public GitHub job-log endpoint and web fetcher could not return that macOS failure log.**
+  The unauthenticated REST download returned 403 and the direct web fetch returned a cache miss;
+  the existing signed-in GitHub page exposed the exact failing line read-only. One related `rg`
+  command also repeated a Windows-invalid wildcard before explicit paths returned the files. None
+  of these diagnostics changed product or user state.

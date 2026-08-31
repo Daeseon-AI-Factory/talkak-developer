@@ -12,6 +12,7 @@ if (!projectPath || !isAbsolute(projectPath)) {
 
 describe("built macOS product path", () => {
   it("pastes native clipboard text into a real PTY with Command+V", async () => {
+    await (await $('[data-testid="add-project-global"]')).waitForExist();
     await browser.execute(() => {
       localStorage.clear();
     });

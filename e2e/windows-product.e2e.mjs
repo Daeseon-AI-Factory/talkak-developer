@@ -11,6 +11,7 @@ if (!projectPath || !isAbsolute(projectPath)) {
 
 describe("installed Windows product path", () => {
   it("exercises PTYs, pages, runtime status, and the real terminal-log attention path", async () => {
+    await (await $('[data-testid="add-project-global"]')).waitForExist();
     await browser.execute(() => {
       localStorage.clear();
     });
