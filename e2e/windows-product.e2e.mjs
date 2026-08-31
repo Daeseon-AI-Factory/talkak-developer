@@ -187,6 +187,10 @@ async function verifyPlainCtrlVPaste() {
     await input.waitForExist();
     await input.click();
     await browser.keys([Key.Control, "v"]);
+    await browser.waitUntil(async () => (await terminalText()).includes("write-output"), {
+      timeout: 20_000,
+      timeoutMsg: "Ctrl+V did not deliver clipboard text to the PTY before Enter",
+    });
     await browser.keys(Key.Enter);
     await browser.waitUntil(async () => (await terminalText()).includes(marker), {
       timeout: 20_000,

@@ -12,6 +12,29 @@ Branch: `agent/developer-workspace-ci`; this handoff work started from `3638780`
 
 ---
 
+## W-021 — The macOS gate built an app but never exercised the product paste path
+
+**Severity:** high — Windows had a real packaged-product paste test while macOS parity was only
+inferred from compilation and bundle existence.
+**Status:** fixed in this branch; the hosted macOS product job is the runtime acceptance gate.
+
+The macOS job still builds and checks the ordinary unsigned app bundle, then builds a second
+CI-only bundle with the existing embedded WebDriver feature. On an ephemeral `macos-latest` host it
+launches the executable inside that `.app`, creates a project outside the checkout, starts a real
+default-shell PTY, writes a computed `printf` command through the native pasteboard command, sends
+`Command+V`, waits until the pasted bytes are visibly echoed before Enter, and proves that only the
+executed command can emit the expected marker. The original text clipboard is restored in
+`finally`; a screenshot clipboard is never overwritten, and a failed run stops its PTY through the
+same confirmation UI as a user.
+
+The instrumented app has a distinct bundle identifier, and the native-paste test is pinned to a
+disposable hosted Mac so it cannot clear a developer's WebKit data, attach to a personal broker, or
+replace a rich local pasteboard. This verifies the packaged WKWebView handler, native clipboard
+command, PTY and macOS shell path. WebDriver synthesizes the `metaKey` keyboard event inside the
+WebView, so it is not evidence of a physical key press or an installation on the owner's MacBook.
+
+---
+
 ## W-020 — A cancelled terminal write could repaint the same output after a page switch
 
 **Severity:** high — repeated output and cursor crawl made ordinary terminal review unreliable.
@@ -689,3 +712,22 @@ suite now places a computed PowerShell command on the native clipboard, presses 
   path had been resolved beneath `%TEMP%`, but no retry or alternate deletion mechanism was used.
   The generated shim remains at `talkak-pnpm-shim-20260831-logfix`; it contains no project or user
   data and was used only to make Tauri's bare `pnpm` build hook resolvable.
+- **The first macOS E2E draft had four review failures before it was pushed.** It handed the
+  WebDriver a `.app` directory instead of its inner executable, sent Enter before the asynchronous
+  native paste was known to have reached the PTY, left a running session behind on assertion
+  failure, and relied on a `dataDirectory` setting that WKWebView does not use on macOS. The final
+  test targets `Contents/MacOS/talkak-dev`, waits for the command echo, cleans up in `finally`, uses
+  a distinct bundle identifier, and runs only on an ephemeral hosted Mac. A proposed isolated
+  `HOME` override was also removed during review because repurposing that system variable violates
+  the repository execution rules and would suppress the real shell profile.
+- **Several read-only macOS E2E diagnostics used bad paths or syntax.** The misses included a root
+  `tauri.conf.json` instead of `src-tauri/tauri.conf.json`, non-existent `talkak-session-broker`,
+  `broker`, and `@wdio/tauri-service/{build,src}` paths, and Windows-invalid package globs. One `rg`
+  expression had an unclosed group, one exploratory PowerShell `.Prepend` command was malformed,
+  and GitHub's API URL was rejected by the web fetcher before the encoded read-only request found
+  pull request #1. `gh run view` also had no authentication. Exact paths and the unauthenticated
+  public API provided the intended evidence; none of these checks wrote state.
+- **The first macOS CI-contract fixture did not escape GitHub's `${{ }}` inside a JavaScript
+  template literal, and two formatting passes failed.** Escaping the fixture fixed its SyntaxError.
+  Biome then requested ordinary wrapping in the contract files and, after the paste-race cleanup,
+  one `waitUntil` call; those lines were formatted and the full checks rerun.

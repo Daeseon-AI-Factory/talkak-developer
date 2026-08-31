@@ -14,8 +14,7 @@ const PINNED_ACTIONS = [
 const JOBS = {
   "macos-product": {
     name: "macOS / product gate",
-    runner:
-      "${{ github.event_name == 'pull_request' && 'macos-latest' || vars.CI_MACOS_RUNNER || 'macos-latest' }}",
+    runner: "macos-latest",
     commands: [
       "pnpm ci:contract",
       "pnpm test",
@@ -31,6 +30,9 @@ const JOBS = {
       "cargo test --manifest-path src-tauri/Cargo.toml --lib --locked",
       "pnpm tauri build --bundles app --no-sign --ci",
       'test -x "src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev"',
+      "pnpm tauri build --features webdriver-ci --bundles app --no-sign --ci --config src-tauri/tauri.macos-ci.conf.json",
+      'mkdir -p "$TALKAK_MACOS_PROJECT"',
+      "pnpm e2e:macos",
     ],
   },
   "windows-product": {
@@ -65,6 +67,9 @@ export function validateDesktopCi(
   webdriverBoundarySource = "",
   windowsCiConfigSource = "",
   windowsE2eSource = "",
+  macosWebdriverConfigSource = "",
+  macosCiConfigSource = "",
+  macosE2eSource = "",
 ) {
   const document = parseDocument(workflowSource);
   if (document.errors.length > 0) {
@@ -209,6 +214,39 @@ export function validateDesktopCi(
   }
 
   for (const fragment of [
+    'driverProvider: "embedded"',
+    "appBinaryPath,",
+    "application: appBinaryPath",
+    'specs: ["./e2e/macos-product.e2e.mjs"]',
+  ]) {
+    if (!macosWebdriverConfigSource.includes(fragment)) {
+      errors.push(`macOS WebDriver config is missing: ${fragment}`);
+    }
+  }
+
+  for (const fragment of [
+    'process.platform !== "darwin"',
+    "process.env.TALKAK_MACOS_PROJECT",
+    "!projectPath || !isAbsolute(projectPath)",
+    "setValue(projectPath)",
+    ".xterm-helper-textarea",
+    "await input.click();",
+    'browser.keys([Key.Command, "v"])',
+    'terminalText()).includes("printf")',
+    'invokeApp("clipboard_read_text")',
+    'invokeApp("clipboard_write_text", { text: command })',
+    "finally",
+    'invokeApp("clipboard_write_text", { text: originalText })',
+    "talkakplaincommandvpaste",
+    '[data-phase="exited"]',
+    "stopRunningSession",
+  ]) {
+    if (!macosE2eSource.includes(fragment)) {
+      errors.push(`macOS product E2E is missing: ${fragment}`);
+    }
+  }
+
+  for (const fragment of [
     'import { isAbsolute } from "node:path";',
     "process.env.TALKAK_WINDOWS_PROJECT",
     "!projectPath || !isAbsolute(projectPath)",
@@ -281,6 +319,55 @@ export function validateDesktopCi(
         errors.push(`Windows CI capability is missing ${permission}.`);
       }
     }
+  }
+
+  let macosCiConfig;
+  try {
+    macosCiConfig = JSON.parse(macosCiConfigSource);
+  } catch {
+    errors.push("macOS CI Tauri config must be valid JSON.");
+  }
+  const macosCapabilities = macosCiConfig?.app?.security?.capabilities;
+  if (macosCiConfig?.identifier !== "dev.talkak.desktop.macosci") {
+    errors.push("macOS CI app must use an isolated application identifier.");
+  }
+  if (macosCiConfig?.build?.beforeBuildCommand !== "pnpm build:webdriver-ci") {
+    errors.push("macOS CI Tauri build must compile the WebDriver frontend mode.");
+  }
+  if (macosCiConfig?.app?.withGlobalTauri !== true) {
+    errors.push("macOS CI Tauri config must expose its API only to the test frontend.");
+  }
+  if (!Array.isArray(macosCapabilities)) {
+    errors.push("macOS CI WebDriver capability must be under app.security.capabilities.");
+  } else {
+    const webdriverCapability = macosCapabilities.find(
+      (capability) => capability?.identifier === "macos-ci",
+    );
+    const permissions = webdriverCapability?.permissions;
+    for (const permission of ["wdio:default", "wdio-webdriver:default"]) {
+      if (!Array.isArray(permissions) || !permissions.includes(permission)) {
+        errors.push(`macOS CI capability is missing ${permission}.`);
+      }
+    }
+  }
+
+  const macosSteps = Array.isArray(jobs?.["macos-product"]?.steps)
+    ? jobs["macos-product"].steps
+    : [];
+  const macosE2eStep = macosSteps.find((step) => normalizeCommand(step?.run) === "pnpm e2e:macos");
+  if (
+    typeof macosE2eStep?.env?.TALKAK_MACOS_APP !== "string" ||
+    !macosE2eStep.env.TALKAK_MACOS_APP.endsWith(
+      "/src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev",
+    )
+  ) {
+    errors.push("macOS E2E must launch the executable inside the built .app.");
+  }
+  if (
+    typeof macosE2eStep?.env?.TALKAK_MACOS_PROJECT !== "string" ||
+    !macosE2eStep.env.TALKAK_MACOS_PROJECT.startsWith("${{ runner.temp }}/")
+  ) {
+    errors.push("macOS E2E project must stay under runner.temp.");
   }
   return errors;
 }

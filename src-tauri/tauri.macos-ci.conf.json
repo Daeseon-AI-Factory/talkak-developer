@@ -1,0 +1,24 @@
+{
+  "identifier": "dev.talkak.desktop.macosci",
+  "build": {
+    "beforeBuildCommand": "pnpm build:webdriver-ci"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "macos-ci",
+          "description": "CI-only capability for the embedded macOS WebDriver test build",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "dialog:allow-open",
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    }
+  }
+}

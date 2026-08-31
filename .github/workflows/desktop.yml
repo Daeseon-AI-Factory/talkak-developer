@@ -22,10 +22,8 @@ env:
 jobs:
   macos-product:
     name: macOS / product gate
-    # cost-ok(PR code must not execute on a persistent self-hosted runner)
-    runs-on: >-
-      ${{ github.event_name == 'pull_request' && 'macos-latest' ||
-      vars.CI_MACOS_RUNNER || 'macos-latest' }}
+    # The E2E touches the native pasteboard, so it must run on an ephemeral hosted Mac.
+    runs-on: macos-latest
     timeout-minutes: 45
 
     steps:
@@ -95,6 +93,22 @@ jobs:
 
       - name: Verify macOS app bundle
         run: test -x "src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev"
+
+      - name: Build unsigned macOS WebDriver E2E app
+        run: >-
+          pnpm tauri build --features webdriver-ci --bundles app --no-sign --ci
+          --config src-tauri/tauri.macos-ci.conf.json
+
+      - name: Create isolated macOS E2E project
+        env:
+          TALKAK_MACOS_PROJECT: ${{ runner.temp }}/Talkak empty macOS project-${{ github.run_id }}-${{ github.run_attempt }}
+        run: mkdir -p "$TALKAK_MACOS_PROJECT"
+
+      - name: Exercise macOS product Command+V path
+        env:
+          TALKAK_MACOS_APP: ${{ github.workspace }}/src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev
+          TALKAK_MACOS_PROJECT: ${{ runner.temp }}/Talkak empty macOS project-${{ github.run_id }}-${{ github.run_attempt }}
+        run: pnpm e2e:macos
 
   windows-product:
     name: Windows / product gate

@@ -24,6 +24,12 @@ const smokeScript = [
 const webdriverConfig = ['driverProvider: "embedded"', "appBinaryPath: installedAppPath"].join(
   "\n",
 );
+const macosWebdriverConfig = [
+  'driverProvider: "embedded"',
+  "appBinaryPath,",
+  "application: appBinaryPath",
+  'specs: ["./e2e/macos-product.e2e.mjs"]',
+].join("\n");
 const windowsE2e = [
   'import { isAbsolute } from "node:path";',
   "process.env.TALKAK_WINDOWS_PROJECT",
@@ -43,6 +49,24 @@ const windowsE2e = [
   "attentionList.isFocused()",
   '[data-phase="exited"]',
   ".terminal-log__host .xterm-rows",
+].join("\n");
+const macosE2e = [
+  'import { isAbsolute } from "node:path";',
+  'process.platform !== "darwin"',
+  "process.env.TALKAK_MACOS_PROJECT",
+  "!projectPath || !isAbsolute(projectPath)",
+  "setValue(projectPath)",
+  ".xterm-helper-textarea",
+  "await input.click();",
+  'browser.keys([Key.Command, "v"])',
+  'terminalText()).includes("printf")',
+  'invokeApp("clipboard_read_text")',
+  'invokeApp("clipboard_write_text", { text: command })',
+  "finally",
+  'invokeApp("clipboard_write_text", { text: originalText })',
+  "talkakplaincommandvpaste",
+  '[data-phase="exited"]',
+  "stopRunningSession",
 ].join("\n");
 
 const webdriverBoundary = [
@@ -74,6 +98,21 @@ const windowsCiConfig = JSON.stringify({
     },
   },
 });
+const macosCiConfig = JSON.stringify({
+  identifier: "dev.talkak.desktop.macosci",
+  build: { beforeBuildCommand: "pnpm build:webdriver-ci" },
+  app: {
+    withGlobalTauri: true,
+    security: {
+      capabilities: [
+        {
+          identifier: "macos-ci",
+          permissions: ["wdio:default", "wdio-webdriver:default"],
+        },
+      ],
+    },
+  },
+});
 
 const baseWorkflow = `
 on:
@@ -90,7 +129,7 @@ concurrency:
 jobs:
   macos-product:
     name: macOS / product gate
-    runs-on: \${{ github.event_name == 'pull_request' && 'macos-latest' || vars.CI_MACOS_RUNNER || 'macos-latest' }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
@@ -110,6 +149,14 @@ jobs:
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
       - run: pnpm tauri build --bundles app --no-sign --ci
       - run: test -x "src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev"
+      - run: pnpm tauri build --features webdriver-ci --bundles app --no-sign --ci --config src-tauri/tauri.macos-ci.conf.json
+      - env:
+          TALKAK_MACOS_PROJECT: \${{ runner.temp }}/Talkak-macos-project
+        run: mkdir -p "$TALKAK_MACOS_PROJECT"
+      - env:
+          TALKAK_MACOS_APP: \${{ github.workspace }}/src-tauri/target/release/bundle/macos/Talkak Dev.app/Contents/MacOS/talkak-dev
+          TALKAK_MACOS_PROJECT: \${{ runner.temp }}/Talkak-macos-project
+        run: pnpm e2e:macos
   windows-product:
     name: Windows / product gate
     runs-on: \${{ github.event_name == 'pull_request' && 'windows-latest' || vars.CI_WINDOWS_RUNNER || 'windows-latest' }}
@@ -143,8 +190,21 @@ function validate(
   tauriConfig = windowsCiConfig,
   smoke = smokeScript,
   e2e = windowsE2e,
+  macConfig = macosWebdriverConfig,
+  macTauriConfig = macosCiConfig,
+  macE2e = macosE2e,
 ) {
-  return validateDesktopCi(workflow, smoke, config, boundary, tauriConfig, e2e);
+  return validateDesktopCi(
+    workflow,
+    smoke,
+    config,
+    boundary,
+    tauriConfig,
+    e2e,
+    macConfig,
+    macTauriConfig,
+    macE2e,
+  );
 }
 
 test("accepts the complete desktop gate", () => {
@@ -430,4 +490,70 @@ test("rejects release and instrumented Windows builds in the wrong order", () =>
     .replace(second, first)
     .replace("__FIRST__\n", second);
   assert.match(validate(mutated).join("\n"), /out of contract order/u);
+});
+
+test("rejects a missing instrumented macOS app build", () => {
+  const mutated = baseWorkflow.replace(
+    "      - run: pnpm tauri build --features webdriver-ci --bundles app --no-sign --ci --config src-tauri/tauri.macos-ci.conf.json\n",
+    "",
+  );
+  assert.match(validate(mutated).join("\n"), /missing command/u);
+});
+
+test("rejects a macOS WebDriver config that does not use the embedded provider", () => {
+  const mutated = macosWebdriverConfig.replace(
+    'driverProvider: "embedded"',
+    'driverProvider: "external"',
+  );
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      windowsE2e,
+      mutated,
+    ).join("\n"),
+    /macOS WebDriver config is missing/u,
+  );
+});
+
+test("rejects a macOS paste test that sends Control+V instead of Command+V", () => {
+  const mutated = macosE2e.replace("Key.Command", "Key.Control");
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      windowsE2e,
+      macosWebdriverConfig,
+      macosCiConfig,
+      mutated,
+    ).join("\n"),
+    /macOS product E2E is missing/u,
+  );
+});
+
+test("rejects a macOS paste test that does not restore the native clipboard", () => {
+  const mutated = macosE2e.replace(
+    'invokeApp("clipboard_write_text", { text: originalText })',
+    "clipboard left changed",
+  );
+  assert.match(
+    validate(
+      baseWorkflow,
+      webdriverConfig,
+      webdriverBoundary,
+      windowsCiConfig,
+      smokeScript,
+      windowsE2e,
+      macosWebdriverConfig,
+      macosCiConfig,
+      mutated,
+    ).join("\n"),
+    /macOS product E2E is missing/u,
+  );
 });

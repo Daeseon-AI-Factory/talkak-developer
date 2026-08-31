@@ -11,6 +11,7 @@ const smokeScript = readFileSync(
   "utf8",
 );
 const webdriverConfig = readFileSync(resolve(repositoryRoot, "wdio.windows.conf.mjs"), "utf8");
+const macosWebdriverConfig = readFileSync(resolve(repositoryRoot, "wdio.macos.conf.mjs"), "utf8");
 const webdriverBoundary = [
   readFileSync(resolve(repositoryRoot, "src-tauri/Cargo.toml"), "utf8"),
   readFileSync(resolve(repositoryRoot, "src-tauri/src/lib.rs"), "utf8"),
@@ -24,6 +25,11 @@ const windowsCiConfig = readFileSync(
   "utf8",
 );
 const windowsE2e = readFileSync(resolve(repositoryRoot, "e2e/windows-product.e2e.mjs"), "utf8");
+const macosCiConfig = readFileSync(
+  resolve(repositoryRoot, "src-tauri/tauri.macos-ci.conf.json"),
+  "utf8",
+);
+const macosE2e = readFileSync(resolve(repositoryRoot, "e2e/macos-product.e2e.mjs"), "utf8");
 const errors = validateDesktopCi(
   workflow,
   smokeScript,
@@ -31,6 +37,9 @@ const errors = validateDesktopCi(
   webdriverBoundary,
   windowsCiConfig,
   windowsE2e,
+  macosWebdriverConfig,
+  macosCiConfig,
+  macosE2e,
 );
 
 if (errors.length > 0) {
@@ -38,5 +47,5 @@ if (errors.length > 0) {
 }
 
 console.log(
-  "DESKTOP_CI_CONTRACT_OK: macOS and Windows source, native PTY, packaging, and Windows installed-product E2E gates are declared.",
+  "DESKTOP_CI_CONTRACT_OK: macOS and Windows source, native PTY, packaging, and real-product E2E gates are declared.",
 );
