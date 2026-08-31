@@ -59,19 +59,22 @@ describe("terminal clipboard keys", () => {
     ).toBe("paste");
   });
 
-  it("leaves plain Ctrl+V with the WebView, whose native paste already reaches xterm", () => {
+  it("consumes plain Ctrl+V before xterm can send Codex a literal ^V", () => {
     expect(terminalClipboardAction(key({ code: "KeyV", ctrlKey: true }), false, "windows")).toBe(
-      "passthrough",
+      "paste",
     );
   });
 
-  it("stays out of macOS entirely — ⌘C is native and Ctrl+C must remain an interrupt", () => {
+  it("uses ⌘C/⌘V on macOS while Ctrl+C remains a terminal interrupt", () => {
     expect(terminalClipboardAction(key({ code: "KeyC", ctrlKey: true }), true, "macos")).toBe(
       "passthrough",
     );
-    expect(
-      terminalClipboardAction(key({ code: "KeyC", ctrlKey: true, shiftKey: true }), true, "macos"),
-    ).toBe("passthrough");
+    expect(terminalClipboardAction(key({ code: "KeyC", metaKey: true }), true, "macos")).toBe(
+      "copy",
+    );
+    expect(terminalClipboardAction(key({ code: "KeyV", metaKey: true }), false, "macos")).toBe(
+      "paste",
+    );
   });
 
   it("acts only on keydown and only without other modifiers", () => {
@@ -98,6 +101,7 @@ describe("clipboard failures are surfaced, never swallowed", () => {
       paste: (text: string) => {
         pasted = text;
       },
+      onSelectionChange: () => ({ dispose: () => {} }),
       attachCustomKeyEventHandler: (handler: (event: KeyboardEvent) => boolean) => {
         press = handler;
       },
@@ -148,9 +152,9 @@ describe("clipboard failures are surfaced, never swallowed", () => {
       readText: () => Promise.resolve("x"),
       readImagePath: async () => null,
     });
-    // Ctrl+Shift+V is Chromium's "paste as plain text". Returning false to xterm does not cancel
-    // it, so without preventDefault the same keystroke pasted through both paths.
-    const paste = key({ code: "KeyV", ctrlKey: true, shiftKey: true });
+    // Returning false to xterm does not cancel the browser default by itself. More importantly,
+    // letting xterm see plain Ctrl+V sends ^V to Codex, which invokes Codex's image-paste command.
+    const paste = key({ code: "KeyV", ctrlKey: true });
     press(paste as unknown as KeyboardEvent);
     expect(paste.defaultPrevented).toBe(true);
 
@@ -170,9 +174,101 @@ describe("clipboard failures are surfaced, never swallowed", () => {
       readText: () => Promise.resolve("pasted text"),
       readImagePath: async () => null,
     });
-    press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as unknown as KeyboardEvent);
+    press(key({ code: "KeyV", ctrlKey: true }) as unknown as KeyboardEvent);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(pasted).toBe("pasted text");
+  });
+});
+
+describe("one clipboard gesture produces one terminal paste", () => {
+  it("coalesces the key and WebView paste event while the native clipboard read is pending", async () => {
+    let press: (event: KeyboardEvent) => boolean = () => true;
+    let onPaste: (event: Event) => void = () => {};
+    let resolveText: (text: string) => void = () => {};
+    let reads = 0;
+    const pasted: string[] = [];
+    const element = {
+      addEventListener: (_type: string, listener: (event: Event) => void) => {
+        onPaste = listener;
+      },
+      removeEventListener: () => {},
+    };
+    const terminal = {
+      element,
+      hasSelection: () => false,
+      getSelection: () => "",
+      clearSelection: () => {},
+      paste: (text: string) => pasted.push(text),
+      onSelectionChange: () => ({ dispose: () => {} }),
+      attachCustomKeyEventHandler: (handler: (event: KeyboardEvent) => boolean) => {
+        press = handler;
+      },
+    } as unknown as Parameters<typeof attachTerminalClipboard>[0];
+
+    attachTerminalClipboard(terminal, "windows", {
+      writeText: async () => {},
+      readText: () => {
+        reads += 1;
+        return new Promise<string>((resolve) => {
+          resolveText = resolve;
+        });
+      },
+      readImagePath: async () => null,
+    });
+
+    press(key({ code: "KeyV", ctrlKey: true }) as unknown as KeyboardEvent);
+    onPaste({
+      preventDefault: () => {},
+      stopImmediatePropagation: () => {},
+    } as unknown as Event);
+    expect(reads).toBe(1);
+
+    resolveText("once");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pasted).toEqual(["once"]);
+  });
+});
+
+describe("copy on selection", () => {
+  it("copies the settled selection once and disposes the listener with the pane", async () => {
+    let selection = "";
+    let selectionChanged: () => void = () => {};
+    let listenerDisposed = false;
+    const copied: string[] = [];
+    const terminal = {
+      hasSelection: () => selection.length > 0,
+      getSelection: () => selection,
+      clearSelection: () => {
+        selection = "";
+      },
+      paste: () => {},
+      onSelectionChange: (handler: () => void) => {
+        selectionChanged = handler;
+        return {
+          dispose: () => {
+            listenerDisposed = true;
+          },
+        };
+      },
+      attachCustomKeyEventHandler: () => {},
+    } as unknown as Parameters<typeof attachTerminalClipboard>[0];
+
+    const detach = attachTerminalClipboard(terminal, "windows", {
+      writeText: async (text) => {
+        copied.push(text);
+      },
+      readText: async () => "",
+      readImagePath: async () => null,
+    });
+    selection = "first drag position";
+    selectionChanged();
+    selection = "settled selection";
+    selectionChanged();
+
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    expect(copied).toEqual(["settled selection"]);
+    detach();
+    expect(listenerDisposed).toBe(true);
   });
 });
 
@@ -187,6 +283,7 @@ describe("pasting a screenshot into a terminal", () => {
       paste: (text: string) => {
         pasted = text;
       },
+      onSelectionChange: () => ({ dispose: () => {} }),
       attachCustomKeyEventHandler: (handler: (event: KeyboardEvent) => boolean) => {
         press = handler;
       },
@@ -194,7 +291,7 @@ describe("pasting a screenshot into a terminal", () => {
     return {
       terminal,
       pasteResult: () => pasted,
-      pressPaste: () => press(key({ code: "KeyV", ctrlKey: true, shiftKey: true }) as never),
+      pressPaste: () => press(key({ code: "KeyV", ctrlKey: true }) as never),
     };
   }
 

@@ -5,13 +5,14 @@ mod clipboard_commands;
 mod project_commands;
 mod session_commands;
 mod session_runtime;
+mod transcript_line_filter;
+mod transcript_service;
 
 #[cfg(test)]
 mod project_commands_tests;
 #[cfg(test)]
 mod session_client_tests;
 
-use agent_transcript::agent_transcript;
 use clipboard_commands::{clipboard_read_image_path, clipboard_read_text, clipboard_write_text};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
@@ -20,6 +21,7 @@ use session_commands::{
 };
 use session_runtime::SessionRuntime;
 use tauri::Manager;
+use transcript_service::{agent_transcript, TranscriptService};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,7 +90,11 @@ pub fn run() {
         .setup(|app| {
             // The client of the detached session broker. It outlives the app, so an app restart
             // reattaches still-running sessions exactly as they were left.
-            app.manage(SessionRuntime::attach(app.path().app_data_dir().ok()));
+            let app_data_dir = app.path().app_data_dir().ok();
+            app.manage(SessionRuntime::attach(app_data_dir.clone()));
+            app.manage(TranscriptService::new(
+                app_data_dir.map(|directory| directory.join("sessions")),
+            ));
             Ok(())
         });
 

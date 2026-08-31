@@ -330,6 +330,7 @@ impl SessionRuntime {
         // definition on disk. A store failure must not stop a session the user asked for.
         let _ = self.store.record(&StoredSession {
             session_id: request.session_id.clone(),
+            run_id: Some(run_id),
             cwd: request.cwd.clone(),
             command: request.command.clone(),
             args: request.args.clone(),

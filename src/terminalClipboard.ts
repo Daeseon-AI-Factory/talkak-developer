@@ -3,10 +3,10 @@ import type { DesktopPlatform } from "./platform";
 import { type ClipboardClient, clipboardClient } from "./runtime/clipboardClient";
 
 /**
- * Clipboard keys for a terminal pane, the way Windows Terminal settled them: Ctrl+C copies when
- * text is selected and interrupts when none is, Ctrl+Shift+C always copies, Ctrl+Shift+V pastes.
- * Plain Ctrl+V stays with the WebView, whose native paste already reaches xterm. macOS is left
- * entirely native — ⌘C/⌘V work through the WebView, and Ctrl+C there must stay an interrupt.
+ * Clipboard keys for a terminal pane. The app owns the platform paste chord so xterm cannot also
+ * send it to the PTY as a control character: Ctrl+V is ^V, which Codex treats as its own image
+ * command. Windows uses Ctrl+C/Ctrl+V and macOS uses ⌘C/⌘V; Ctrl+C on macOS still reaches the
+ * terminal as an interrupt.
  */
 
 export type TerminalClipboardAction = "copy" | "paste" | "passthrough";
@@ -46,11 +46,14 @@ export function terminalClipboardAction(
   hasSelection: boolean,
   platform: DesktopPlatform,
 ): TerminalClipboardAction {
-  if (platform === "macos") return "passthrough";
   if (event.type !== "keydown") return "passthrough";
-  if (!event.ctrlKey || event.altKey || event.metaKey) return "passthrough";
-  if (event.code === "KeyC" && (event.shiftKey || hasSelection)) return "copy";
-  if (event.code === "KeyV" && event.shiftKey) return "paste";
+  const primaryModifier = platform === "macos" ? event.metaKey : event.ctrlKey;
+  const wrongModifier = platform === "macos" ? event.ctrlKey : event.metaKey;
+  if (!primaryModifier || wrongModifier || event.altKey) return "passthrough";
+  if (event.code === "KeyC" && (hasSelection || (platform !== "macos" && event.shiftKey))) {
+    return "copy";
+  }
+  if (event.code === "KeyV") return "paste";
   return "passthrough";
 }
 
@@ -75,12 +78,9 @@ export async function pasteTextFor(
 /**
  * Wires the decision above into an xterm instance, and returns the disposer.
  *
- * Two hooks, because one gesture is not enough. The key handler covers Ctrl+Shift+V, the chord
- * Windows Terminal established. A capture-phase DOM `paste` listener covers everything else — plain
- * Ctrl+V, ⌘V, the context menu, the Edit menu — which is the only way macOS gets image paste at
- * all: `terminalClipboardAction` returns passthrough there before any branch runs (correctly, since
- * Ctrl+C must stay an interrupt), so the app's own paste code never executed on a mac and ⌘V with
- * an image on the clipboard sent an empty bracketed paste and nothing else.
+ * Two hooks, because paste can come from either a key or a menu. The key handler consumes Ctrl+V
+ * (Windows) or ⌘V (macOS) before xterm can turn it into PTY input. A capture-phase DOM `paste`
+ * listener covers the context menu and Edit menu.
  *
  * Both consumed paths call preventDefault. Returning false to xterm does NOT cancel the browser's
  * own handling, and Ctrl+Shift+V is Chromium's "paste as plain text" — so the same keystroke could
@@ -99,19 +99,47 @@ export function attachTerminalClipboard(
   const report = (verb: string) => (cause: unknown) =>
     onError?.(`${verb}: ${cause instanceof Error ? cause.message : String(cause)}`);
 
+  let pasteInFlight: Promise<void> | null = null;
   const pasteFromClipboard = () => {
-    void pasteTextFor(clipboard, platform)
+    // A WebView can dispatch a paste event around the same keydown even after preventDefault.
+    // Share the pending native read so one gesture still reaches the PTY exactly once.
+    if (pasteInFlight) return;
+    pasteInFlight = pasteTextFor(clipboard, platform)
       .then((text) => {
         // terminal.paste() routes through onData with bracketed-paste framing, the same path typed
         // input takes, so a read-only terminal ignores it and a live one forwards it.
         if (text) terminal.paste(text);
       })
-      .catch(report("paste failed"));
+      .catch(report("paste failed"))
+      .finally(() => {
+        pasteInFlight = null;
+      });
   };
+
+  let selectionCopyTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelSelectionCopy = () => {
+    if (selectionCopyTimer !== undefined) clearTimeout(selectionCopyTimer);
+    selectionCopyTimer = undefined;
+  };
+  const selectionChange = terminal.onSelectionChange(() => {
+    cancelSelectionCopy();
+    const selection = terminal.getSelection();
+    if (!selection) return;
+    // Dragging changes the selection many times. Copy the settled selection once, with the same
+    // short debounce used by the original TALKAK terminal.
+    selectionCopyTimer = setTimeout(() => {
+      selectionCopyTimer = undefined;
+      const settledSelection = terminal.getSelection();
+      if (settledSelection) {
+        void clipboard.writeText(settledSelection).catch(report("copy failed"));
+      }
+    }, 120);
+  });
 
   terminal.attachCustomKeyEventHandler((event) => {
     const action = terminalClipboardAction(event, terminal.hasSelection(), platform);
     if (action === "copy") {
+      cancelSelectionCopy();
       const selection = terminal.getSelection();
       if (selection) {
         // The selection is cleared only once the write actually lands, so a failed copy stays
@@ -137,12 +165,14 @@ export function attachTerminalClipboard(
     // The OS clipboard is read natively rather than from the event: a WebView paste of an image
     // pasteboard carries no text/plain at all, which is exactly the case this exists to serve.
     event.preventDefault();
-    event.stopPropagation();
+    event.stopImmediatePropagation();
     pasteFromClipboard();
   };
   element?.addEventListener("paste", onPaste, true);
 
   return () => {
+    cancelSelectionCopy();
+    selectionChange.dispose();
     element?.removeEventListener("paste", onPaste, true);
     terminal.attachCustomKeyEventHandler(() => true);
   };

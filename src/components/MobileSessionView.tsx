@@ -1,6 +1,14 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useState } from "react";
 import type { DevSession, Project } from "../domain";
 import { useI18n } from "../i18n";
+import {
+  INITIAL_TRANSCRIPT_TURNS,
+  OLDER_TRANSCRIPT_PAGE,
+  formatTranscriptActivity,
+  formatTranscriptTime,
+  latestAssistantExcerpt,
+} from "../runtime/transcriptPresentation";
+import { type TranscriptState, useAgentTranscript } from "../runtime/useAgentTranscript";
 import { TerminalLogView } from "./TerminalLogView";
 
 export type MobileSessionTab = "conversation" | "terminal" | "summary";
@@ -47,6 +55,20 @@ export function MobileSessionView({
 }: MobileSessionViewProps) {
   const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const visibleReview = reviewedDraft === draft ? reviewedDraft : null;
+  const preview = project.source === "preview";
+  const { state: transcriptState } = useAgentTranscript(
+    !preview && session
+      ? {
+          sessionId: session.id,
+          runId: session.runtimeStatus?.runId ?? null,
+          projectPath: project.path,
+          startedAt: session.startedAt,
+          agentCommand: session.launchProfile.command,
+        }
+      : null,
+    !preview && Boolean(session) && activeTab !== "terminal",
+    session?.runtimeStatus?.phase ?? null,
+  );
 
   function updateDraft(value: string) {
     onDraftChange(value);
@@ -136,11 +158,20 @@ export function MobileSessionView({
                   : t("mobile.summary")
             }
           >
-            {activeTab === "conversation" ? <ConversationTab session={session} /> : null}
+            {activeTab === "conversation" ? (
+              <ConversationTab
+                key={`${project.path}:${session.id}:${session.runtimeStatus?.runId ?? "no-run"}`}
+                session={session}
+                state={transcriptState}
+                preview={preview}
+              />
+            ) : null}
             {activeTab === "terminal" ? (
               <TerminalTab session={session} local={project.source === "local"} />
             ) : null}
-            {activeTab === "summary" ? <SummaryTab session={session} /> : null}
+            {activeTab === "summary" ? (
+              <SummaryTab session={session} state={transcriptState} preview={preview} />
+            ) : null}
           </div>
         </>
       ) : (
@@ -241,12 +272,66 @@ function MobileTab({ id, activeTab, label, onSelect }: MobileTabProps) {
   );
 }
 
-function ConversationTab({ session }: { session: DevSession }) {
+function ConversationTab({
+  session,
+  state,
+  preview,
+}: {
+  session: DevSession;
+  state: TranscriptState;
+  preview: boolean;
+}) {
   const { t } = useI18n();
+  const [visibleCount, setVisibleCount] = useState(INITIAL_TRANSCRIPT_TURNS);
+
+  if (!preview && state.kind !== "loaded") return <MobileTranscriptNotice state={state} />;
+
+  const transcript = state.kind === "loaded" ? state.transcript : null;
+  const nativeStartIndex = transcript
+    ? Math.max(0, transcript.totalEntries - transcript.entries.length)
+    : 0;
+  const entries = preview
+    ? session.conversation.map((entry) => ({
+        key: entry.id,
+        author: entry.author,
+        time: entry.time,
+        text: entry.text,
+      }))
+    : (transcript?.entries ?? []).map((entry, index) => ({
+        key: `${entry.at ?? "no-time"}-${nativeStartIndex + index}`,
+        author: entry.role === "user" ? ("you" as const) : ("agent" as const),
+        time: formatTranscriptTime(entry.at),
+        text: entry.text,
+      }));
+  const visibleEntries = entries.slice(-visibleCount);
+  const availableOlder = entries.length - visibleEntries.length;
+  const nextPageSize = Math.min(OLDER_TRANSCRIPT_PAGE, availableOlder);
+  const unavailableOlder = transcript
+    ? Math.max(0, transcript.totalEntries - transcript.entries.length)
+    : 0;
+
   return (
     <div className="mobile-conversation-list">
-      {session.conversation.map((entry) => (
-        <article className="mobile-conversation-entry" data-author={entry.author} key={entry.id}>
+      {preview ? <p className="conversation-disclaimer">{t("inspector.previewData")}</p> : null}
+      {unavailableOlder > 0 ? (
+        <p className="conversation-disclaimer">
+          {t("transcript.trimmed", { count: unavailableOlder })}
+        </p>
+      ) : null}
+      {availableOlder > 0 ? (
+        <button
+          className="conversation-list__older"
+          type="button"
+          onClick={() => setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE)}
+        >
+          {t("transcript.showOlder", { count: nextPageSize })}
+        </button>
+      ) : null}
+      {visibleEntries.length === 0 ? (
+        <p className="conversation-disclaimer">{t("transcript.noMessages")}</p>
+      ) : null}
+      {visibleEntries.map((entry) => (
+        <article className="mobile-conversation-entry" data-author={entry.author} key={entry.key}>
           <header>
             <strong>
               {entry.author === "you"
@@ -266,7 +351,10 @@ function ConversationTab({ session }: { session: DevSession }) {
 
 function TerminalTab({ session, local }: { session: DevSession; local: boolean }) {
   const { text } = useI18n();
-  if (local) return <TerminalLogView sessionId={session.id} />;
+  if (local)
+    return (
+      <TerminalLogView sessionId={session.id} currentRunId={session.runtimeStatus?.runId ?? null} />
+    );
   return (
     <div className="mobile-terminal" aria-live="off">
       {session.lines.map((line) => (
@@ -278,26 +366,44 @@ function TerminalTab({ session, local }: { session: DevSession; local: boolean }
   );
 }
 
-function SummaryTab({ session }: { session: DevSession }) {
+function SummaryTab({
+  session,
+  state,
+  preview,
+}: {
+  session: DevSession;
+  state: TranscriptState;
+  preview: boolean;
+}) {
   const { t, text } = useI18n();
+  if (!preview && state.kind !== "loaded") return <MobileTranscriptNotice state={state} />;
+
+  if (!preview && state.kind === "loaded") {
+    const latestReply = latestAssistantExcerpt(state.transcript.entries);
+    const lastActivity = formatTranscriptActivity(state.transcript.lastActivity);
+    return (
+      <div className="mobile-summary">
+        <section>
+          <h2>{t("inspector.latestReply")}</h2>
+          <p className="mobile-summary__outcome">
+            {latestReply ?? t("inspector.noAssistantReply")}
+          </p>
+        </section>
+        <section>
+          <h2>{t("inspector.lastActivity")}</h2>
+          <p>{lastActivity ?? t("inspector.noActivity")}</p>
+        </section>
+        <MobileChangedFiles files={state.transcript.changedFiles} />
+      </div>
+    );
+  }
+
   return (
     <div className="mobile-summary">
+      <p className="conversation-disclaimer">{t("inspector.previewData")}</p>
       <p className="mobile-summary__outcome">{text(session.summary.outcome)}</p>
 
-      <section>
-        <h2>{t("inspector.changedFiles")}</h2>
-        {session.summary.changedFiles.length > 0 ? (
-          <ul>
-            {session.summary.changedFiles.map((file) => (
-              <li key={file}>
-                <code>{file}</code>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>{t("inspector.noFiles")}</p>
-        )}
-      </section>
+      <MobileChangedFiles files={session.summary.changedFiles} />
 
       <section>
         <h2>{t("inspector.decisions")}</h2>
@@ -318,4 +424,41 @@ function SummaryTab({ session }: { session: DevSession }) {
       </section>
     </div>
   );
+}
+
+function MobileChangedFiles({ files }: { files: readonly string[] }) {
+  const { t } = useI18n();
+  return (
+    <section>
+      <h2>{t("inspector.changedFiles")}</h2>
+      {files.length > 0 ? (
+        <ul>
+          {files.map((file) => (
+            <li key={file}>
+              <code>{file}</code>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p>{t("inspector.noFiles")}</p>
+      )}
+    </section>
+  );
+}
+
+function MobileTranscriptNotice({ state }: { state: TranscriptState }) {
+  const { t } = useI18n();
+  if (state.kind === "loading")
+    return <p className="conversation-disclaimer">{t("transcript.loading")}</p>;
+  if (state.kind === "unsupported")
+    return <p className="conversation-disclaimer">{t("transcript.unsupported")}</p>;
+  if (state.kind === "absent")
+    return <p className="conversation-disclaimer">{t("transcript.absent")}</p>;
+  if (state.kind === "failed")
+    return (
+      <output className="conversation-disclaimer" data-tone="danger">
+        {t("transcript.failed", { message: state.message })}
+      </output>
+    );
+  return null;
 }

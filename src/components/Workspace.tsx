@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import type { InspectorMode, Project, TerminalRuntimeObservation } from "../domain";
 import { useI18n } from "../i18n";
 import {
@@ -8,6 +8,7 @@ import {
   listPanes,
 } from "../layoutModel";
 import type { DesktopPlatform } from "../platform";
+import { transcriptClient } from "../runtime/transcriptClient";
 import { shortcutDisplay, shortcutPairDisplay } from "../shortcutRegistry";
 import { countSessions } from "../workspaceModel";
 import { Icon } from "./Icon";
@@ -98,6 +99,39 @@ export function Workspace({
     : (activePage?.root ?? null);
   const displayPaneCount = listPanes(displayRoot).length;
   const displayIsProjection = displayRoot !== (activePage?.root ?? null);
+
+  const activeTranscriptSessionId = activeSession?.id ?? null;
+  const activeTranscriptRunId = activeSession?.runtimeStatus?.runId ?? null;
+  const activeTranscriptStartedAt = activeSession?.startedAt ?? null;
+  const activeTranscriptCommand = activeSession?.launchProfile.command ?? null;
+  useEffect(() => {
+    if (
+      project.source !== "local" ||
+      !activeTranscriptSessionId ||
+      !activeTranscriptStartedAt ||
+      !transcriptClient.available()
+    )
+      return;
+
+    // Warm only the selected session. An immediately opened Inspector shares this in-flight read;
+    // after it finishes, the renderer discards the result and the native cache makes opening cheap.
+    void transcriptClient
+      .prewarm({
+        sessionId: activeTranscriptSessionId,
+        runId: activeTranscriptRunId,
+        projectPath: project.path,
+        startedAt: activeTranscriptStartedAt,
+        agentCommand: activeTranscriptCommand,
+      })
+      .catch(() => {});
+  }, [
+    project.source,
+    project.path,
+    activeTranscriptSessionId,
+    activeTranscriptRunId,
+    activeTranscriptStartedAt,
+    activeTranscriptCommand,
+  ]);
 
   return (
     <div className="workspace-screen" data-testid="workspace-screen">
@@ -255,6 +289,7 @@ export function Workspace({
             <Inspector
               session={activeSession}
               projectPath={project.path}
+              projectSource={project.source}
               mode={inspectorMode}
               pinned={inspectorPinned}
               onChangeMode={onOpenInspector}

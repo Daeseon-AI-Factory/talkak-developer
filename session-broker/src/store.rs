@@ -29,6 +29,10 @@ const OUTPUT_EXTENSION: &str = "log";
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub session_id: String,
+    /// The broker-owned run identity. Older installed records do not carry it, so `None` remains
+    /// a valid compatibility value until that session is spawned again and atomically replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<u64>,
     pub cwd: Option<String>,
     pub command: Option<String>,
     #[serde(default)]
@@ -122,6 +126,16 @@ impl SessionStore {
             return Vec::new();
         };
         fs::read(entry_path(root, session_id, OUTPUT_EXTENSION)).unwrap_or_default()
+    }
+
+    /// The current definition for one Talkak session. A spawn replaces this record before its
+    /// reader starts, so `run_id`, `started_at_ms`, cwd, and command identify the latest run even
+    /// after the desktop app process restarts.
+    pub fn definition(&self, session_id: &str) -> Option<StoredSession> {
+        let root = self.root.as_deref()?;
+        fs::read(entry_path(root, session_id, DEFINITION_EXTENSION))
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
     }
 
     /// Every stored session record, newest first.
@@ -232,6 +246,7 @@ mod tests {
     fn sample(session_id: &str, started_at_ms: u64) -> StoredSession {
         StoredSession {
             session_id: session_id.to_owned(),
+            run_id: Some(1),
             cwd: Some("/projects/app".into()),
             command: None,
             args: vec![],
@@ -251,6 +266,13 @@ mod tests {
         store.append_output("pane-1", b"hello");
         assert!(store.output("pane-1").is_empty());
         assert!(store.restorable().is_empty());
+    }
+
+    #[test]
+    fn a_definition_from_an_older_install_without_run_id_still_loads() {
+        let legacy = r#"{"sessionId":"pane-1","cwd":"/projects/app","command":"codex","args":[],"cols":80,"rows":24,"startedAtMs":1755255600000}"#;
+        let session: StoredSession = serde_json::from_str(legacy).expect("legacy definition");
+        assert_eq!(session.run_id, None);
     }
 
     #[test]

@@ -142,6 +142,15 @@
   line-height: 1.4;
 }
 
+.summary-hero__label {
+  display: block;
+  margin-top: 14px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 0.8em;
+  font-weight: 700;
+}
+
 .progress-track {
   height: 4px;
   overflow: hidden;
@@ -222,6 +231,11 @@
 
 .summary-section__empty {
   color: var(--text-dim);
+}
+
+.summary-activity {
+  margin: 0;
+  color: var(--text-secondary);
 }
 
 .next-step-card {
@@ -306,6 +320,25 @@
   color: var(--text-secondary);
   font-size: 1em;
   line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.conversation-list__older {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.conversation-list__older:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
 }
 
 .conversation-disclaimer {

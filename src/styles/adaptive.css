@@ -465,6 +465,8 @@
     color: var(--text-secondary);
     font-size: 15px;
     line-height: 1.6;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
 
   .mobile-terminal {

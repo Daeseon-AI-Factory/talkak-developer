@@ -498,6 +498,59 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
 
 ---
 
+## W-013 — Terminal and agent-record review paid the full replay cost on every open
+
+**Severity:** high — switching to a log panel felt stalled even when the session had already ended.
+**Status:** fixed and locally verified in this branch; the declared product gates cover both OSes.
+
+The terminal-log reader inserted 200 ms after every 64 KiB chunk, including an already accumulated
+backlog. Reopening also rebuilt xterm from cursor zero, enabled `screenReaderMode`, and kept polling
+after an exited log was drained. A 1 MiB retained log therefore carried 3.2 seconds of artificial
+sleep before rendering time. The reader now drains backlog without delay, awaits xterm's write
+callback before committing its cursor, retains the parsed xterm instance across Inspector tabs,
+stops after the final drained frame, and restarts only when the broker run id changes. The focused
+regression proves the artificial 1 MiB delay is now 0 ms and that a detach during a pending write
+cannot duplicate bytes after remount.
+
+Agent records were rescanned and reparsed every four seconds behind one process-wide cache mutex.
+The replacement binds an exact Talkak session and broker run to one Claude/Codex record, parses only
+complete appended JSONL lines after the first read, and uses a short registry lock plus one lock per
+session. Canonical Codex telemetry/tool records are rejected from their small header instead of
+being allocated as full JSON values. The renderer prewarms only the active session, initially mounts
+60 turns, adds 80 older turns on demand, and stops refreshing completed/error/idle sessions after
+one final read. On the current 30.3 MB / 138-turn Codex record, the release probe measured 756 ms
+cold (off the UI thread and prewarmed) and 134 microseconds warm; 6,097 irrelevant lines were
+rejected, 140 conversation lines accepted, and only seven non-canonical lines used the fallback.
+
+Local verification: 206 renderer tests, TypeScript, Biome, production Vite build, CI contract, 38
+native tests plus one intentional local-only ignored probe, 31 broker tests, both Rust checks and
+both Clippy `-D warnings` runs all pass. Desktop and 390 px mobile Summary/Conversation layouts were
+visually exercised with six pages; the browser console reported no warning or error.
+
+---
+
+## W-012 — Plain Windows Ctrl+V reached Codex as its image-paste control byte
+
+**Severity:** high — ordinary text paste produced `Failed to paste image: no image on clipboard`.
+**Status:** fixed and locally unit-tested; installed-product E2E is part of the Windows product gate.
+
+The terminal key handler owned only `Ctrl+Shift+V`. xterm therefore encoded plain Windows
+`Ctrl+V` as C0 `^V` and sent it to the PTY; Codex interprets that byte as its image-paste shortcut,
+which is the exact source of the reported error. The app now owns Windows `Ctrl+V` and
+`Ctrl+Shift+V`, macOS `Cmd+V`, and the matching copy conventions while preserving macOS `Ctrl+C` as
+a terminal interrupt. Native paste is text-first and consults image data only when text is empty;
+the key and WebView paste events share one in-flight operation and are both cancelled before xterm
+can send a duplicate. The original TALKAK's 120 ms copy-on-selection behavior was also restored
+without importing its larger clipboard/toast subsystem.
+
+Twenty-three focused clipboard tests cover plain `Ctrl+V`, macOS conventions, text/image priority,
+one paste per gesture, selection-copy cleanup, and error surfacing. The Windows installed-product
+suite now places a computed PowerShell command on the native clipboard, presses a real
+`Control+V`, proves only the pasted command can emit its marker, and restores the original text in
+`finally`; it skips rather than destroying an image clipboard.
+
+---
+
 ## Notes on failures that were not product defects
 
 - **The first E2E wrapper was rejected before launch by the command policy.** It combined product
@@ -589,3 +642,50 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
 - **A final read-only artifact summary used a PowerShell `foreach` statement directly before a
   pipeline and failed to parse.** Wrapping the loop result in an array fixed the diagnostic; no
   product, package, process, or user data was touched by the failed command.
+- **Several read-only source searches guessed paths or passed POSIX-style globs to Windows `rg`.**
+  The missing guesses were `src/workspaceActions.ts`, `src/terminalReplay.ts`,
+  `src/terminalOutputWriter.ts`, `src/App.css`, `test`, `tests`,
+  `test/specs/desktop.e2e.mjs`, an in-progress `transcript_service_tests.rs`, and original-TALKAK
+  `src`, `src-tauri`, root `Cargo.toml`, and `claude.rs` paths. Wildcard path arguments such as
+  `src/**/*.tsx`, `src/**/*.test.ts*`, `src/*.css`, `test*`, `wdio*`, package-directory `*`,
+  `src-tauri/src/*.rs`, `transcript_service*`, and `node_modules/.pnpm/*` produced Windows error
+  123. Explicit paths and `--glob` searches found the intended files; none of these diagnostics
+  wrote state.
+- **Two PowerShell diagnostics were malformed and one used the wrong sharing mode.** `OpenText`
+  could not read active Codex rollout files that were open for writing and then left a null reader;
+  the corrected probe used `FileStream` with `FileShare.ReadWrite`. A FileShare JSON probe and the
+  first changed-file line-count command each produced `An empty pipe element is not allowed`, and
+  one `rg` expression produced `unclosed group`; corrected, simpler commands succeeded without a
+  write.
+- **A few narrow patches initially missed their exact concurrent-edit context.** The combined
+  Mobile/Inspector terminal-log patch, the Inspector delete-plus-add patch, and one combined
+  frontend patch applied nothing. They were reapplied against the current file in smaller hunks;
+  the final diff, typecheck, tests, and formatting checks are clean.
+- **Concurrent checks briefly observed half-finished source.** One typecheck saw Inspector's old
+  `TranscriptScope`, one full fmt check saw the line-filter helper before its formatter pass, and
+  first Biome runs reported formatting, an unused/dependency issue, or the new effect dependency
+  layout. After the corresponding edits completed, 206 tests, typecheck, Biome, both Rust fmt
+  checks, and `git diff --check` all passed.
+- **The first Rust formatter and Clippy passes found ordinary new-code issues.** `cargo fmt
+  --check` reported the new service/helper layout; Clippy rejected an unnecessary `filter_map` and
+  a test-hook `type_complexity`. Formatting, a direct iterator, and a `ColdReadHook` alias resolved
+  them, after which both crates passed Clippy with `-D warnings`.
+- **The compact transcript classifier's first regression run rejected an escaped discriminator.**
+  Escaped/non-canonical records now fall back to the borrowed serde classifier; all six filter
+  tests pass. An earlier test-name filter selected zero tests, and the corrected module-qualified
+  filter selected all six. The first ignored performance-probe invocation also outlived its
+  30-second compilation window; resuming it produced the release measurements recorded in W-013.
+- **The browser connection was initialized twice with the imported module instead of its runtime
+  result.** Both attempts failed before a tab was opened; initializing the documented runtime then
+  connected successfully. A later `요약` locator matched both the tab and the quick-reply button,
+  so the exact tab label was used. Desktop/mobile screenshots and the console check then passed.
+- **Polling the Vite process after it had already accepted Ctrl+C returned `Unknown process id`.**
+  This confirmed the development server was gone; no Talkak or user process was affected.
+- **Direct `pnpm` was again unavailable in agent-side checks.** Every final renderer command used
+  the absolute Corepack executable. One coordination wait requested 1 second even though the tool
+  clamps waits to 10 seconds, and several normal agent waits timed out while release compilation
+  continued; these changed no repository or product state.
+- **Policy rejected recursive removal of the task-local Corepack shim after packaging.** The exact
+  path had been resolved beneath `%TEMP%`, but no retry or alternate deletion mechanism was used.
+  The generated shim remains at `talkak-pnpm-shim-20260831-logfix`; it contains no project or user
+  data and was used only to make Tauri's bare `pnpm` build hook resolvable.

@@ -3,10 +3,18 @@ import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { platformFromUserAgent } from "../platform";
 import { errorMessage, sessionClient } from "../runtime/sessionClient";
-import { initialSessionLogCursor, readSessionLogFrame } from "../runtime/sessionLogModel";
-import { terminalReadShouldContinue } from "../runtime/terminalReplay";
+import { readSessionLogFrame } from "../runtime/sessionLogModel";
+import { createTerminalOutputWriter } from "../runtime/terminalOutputWriter";
+import { nextReadDelayMs, terminalReadShouldContinue } from "../runtime/terminalReplay";
 import { attachTerminalClipboard } from "../terminalClipboard";
 import { createTerminalFitter } from "../terminalFit";
+import {
+  commitRetainedTerminalLogFrame,
+  releaseTerminalLog,
+  retainTerminalLog,
+  retainedTerminalLog,
+  waitForRetainedTerminalLogCommit,
+} from "../terminalLogInstances";
 import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
 
 // Exact internal polling intervals, not product latency guarantees.
@@ -15,7 +23,13 @@ const LOG_IDLE_POLL_MS = 750;
 
 type TerminalLogPhase = "loading" | "running" | "exited" | "waiting" | "unavailable";
 
-export function TerminalLogView({ sessionId }: { sessionId: string }) {
+interface TerminalLogViewProps {
+  sessionId: string;
+  /** Restarts a drained log reader when the same session starts a new broker run. */
+  currentRunId?: number | null;
+}
+
+export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogViewProps) {
   const { t } = useI18n();
   const available = sessionClient.available();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -37,26 +51,53 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
     setPhase("loading");
 
     void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
-      .then(([{ Terminal }, { FitAddon }]) => {
+      .then(async ([{ Terminal }, { FitAddon }]) => {
+        // A previous mount may have detached while xterm was still parsing its final chunk. Its
+        // cursor is committed with that write; wait before reattaching or issuing another read.
+        await waitForRetainedTerminalLogCommit(sessionId);
         if (disposed || !hostRef.current) return;
-        const terminal: XTerm = new Terminal({
-          convertEol: false,
-          cursorBlink: false,
-          disableStdin: true,
-          screenReaderMode: true,
-          fontFamily: TERMINAL_FONT_FAMILY,
-          fontSize: 12,
-          scrollback: 5000,
-          theme: TERMINAL_THEME,
-        });
-        const fitAddon = new FitAddon();
-        terminal.loadAddon(fitAddon);
-        terminal.open(hostRef.current);
-        attachTerminalClipboard(
+        const kept = retainedTerminalLog(sessionId);
+        let terminal: XTerm;
+        let fitAddon: InstanceType<typeof FitAddon>;
+        if (kept?.terminal.element) {
+          terminal = kept.terminal;
+          fitAddon = kept.fitAddon;
+          hostRef.current.appendChild(kept.terminal.element);
+          setTruncated(kept.truncated);
+        } else {
+          if (kept) releaseTerminalLog(sessionId);
+          terminal = new Terminal({
+            convertEol: false,
+            cursorBlink: false,
+            disableStdin: true,
+            screenReaderMode: false,
+            fontFamily: TERMINAL_FONT_FAMILY,
+            fontSize: 12,
+            scrollback: 10000,
+            theme: TERMINAL_THEME,
+          });
+          fitAddon = new FitAddon();
+          terminal.loadAddon(fitAddon);
+          terminal.open(hostRef.current);
+          retainTerminalLog(sessionId, {
+            terminal,
+            fitAddon,
+            cursor: { runId: currentRunId, after: 0 },
+            truncated: false,
+          });
+        }
+        const detachClipboard = attachTerminalClipboard(
           terminal,
           platformFromUserAgent(navigator.userAgent),
           undefined,
-          setError,
+          (message) => {
+            if (!disposed) setError(message);
+          },
+        );
+
+        const output = createTerminalOutputWriter(
+          (bytes, done) => terminal.write(bytes, done),
+          () => undefined,
         );
 
         const fitter = createTerminalFitter(
@@ -69,43 +110,58 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
         const observer = new ResizeObserver(fitter.schedule);
         observer.observe(hostRef.current);
 
-        let cursor = initialSessionLogCursor;
         const poll = async () => {
-          let delay = LOG_IDLE_POLL_MS;
           try {
-            const next = await readSessionLogFrame(sessionClient, sessionId, cursor);
+            await waitForRetainedTerminalLogCommit(sessionId);
+            if (disposed) return;
+            const retained = retainedTerminalLog(sessionId);
+            if (!retained) return;
+            const next = await readSessionLogFrame(sessionClient, sessionId, retained.cursor);
             if (disposed) return;
             if (next.reset) {
               terminal.reset();
-              setTruncated(next.truncated);
-            } else if (next.truncated) {
-              setTruncated(true);
             }
-            cursor = next.cursor;
-            if (next.bytes.length > 0) terminal.write(Uint8Array.from(next.bytes));
+            const retainedTruncated = next.reset
+              ? next.truncated
+              : retained.truncated || next.truncated;
+            const committed = await commitRetainedTerminalLogFrame(
+              sessionId,
+              next.cursor,
+              retainedTruncated,
+              () =>
+                next.bytes.length > 0
+                  ? output.write(Uint8Array.from(next.bytes), false)
+                  : Promise.resolve(true),
+            );
+            if (!committed) return;
+            if (disposed) return;
+            setTruncated(retainedTruncated);
             setError(next.readError);
             setPhase(next.running ? "running" : "exited");
-            const draining = terminalReadShouldContinue(
-              next.running,
-              next.readClosed,
-              next.bytes.length,
+            if (!terminalReadShouldContinue(next.running, next.readClosed, next.bytes.length)) {
+              return;
+            }
+            timer = window.setTimeout(
+              () => void poll(),
+              nextReadDelayMs(next.running, next.bytes.length, LOG_LIVE_POLL_MS),
             );
-            delay = draining ? LOG_LIVE_POLL_MS : LOG_IDLE_POLL_MS;
           } catch (cause: unknown) {
             if (disposed) return;
             setError(errorMessage(cause));
             setPhase("waiting");
+            timer = window.setTimeout(() => void poll(), LOG_IDLE_POLL_MS);
           }
-          timer = window.setTimeout(() => void poll(), delay);
         };
         void poll();
 
         disposeTerminal = () => {
           if (timer !== undefined) window.clearTimeout(timer);
+          output.dispose();
           cancelAnimationFrame(frame);
           fitter.dispose();
           observer.disconnect();
-          terminal.dispose();
+          detachClipboard();
+          terminal.element?.remove();
         };
       })
       .catch((cause: unknown) => {
@@ -118,7 +174,7 @@ export function TerminalLogView({ sessionId }: { sessionId: string }) {
       disposed = true;
       disposeTerminal?.();
     };
-  }, [available, sessionId]);
+  }, [available, currentRunId, sessionId]);
 
   return (
     <div className="inspector__content terminal-log" data-testid="terminal-log-view">

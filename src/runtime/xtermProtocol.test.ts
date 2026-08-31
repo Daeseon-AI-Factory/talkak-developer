@@ -75,6 +75,19 @@ describe("read pacing", () => {
     expect(nextReadDelayMs(true, FULL_READ_CHUNK_BYTES + 1, 75)).toBe(0);
   });
 
+  it("adds no poll delay while draining a finished one-megabyte terminal log", () => {
+    let remaining = 1024 * 1024;
+    let accumulatedDelay = 0;
+    while (remaining > 0) {
+      const bytesLength = Math.min(remaining, FULL_READ_CHUNK_BYTES);
+      accumulatedDelay += nextReadDelayMs(false, bytesLength, 200);
+      remaining -= bytesLength;
+    }
+
+    expect(accumulatedDelay).toBe(0);
+    expect(terminalReadShouldContinue(false, true, 0)).toBe(false);
+  });
+
   it("returns to poll pace once caught up on a live session", () => {
     expect(nextReadDelayMs(true, 120, 75)).toBe(75);
     expect(nextReadDelayMs(true, 0, 75)).toBe(75);

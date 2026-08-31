@@ -22,8 +22,12 @@
 
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+
+use crate::transcript_line_filter;
+
+pub(crate) const MAX_TRANSCRIPT_ENTRIES: usize = 800;
+pub(crate) const MAX_TRANSCRIPT_TURN_CHARS: usize = 60_000;
 
 /// One turn, normalised across both agents.
 #[derive(Debug, Clone, Serialize)]
@@ -51,55 +55,28 @@ pub(crate) struct AgentTranscript {
     pub last_activity: Option<String>,
 }
 
-/// The newest transcript for a project directory, or None when neither agent has written one.
-///
-/// `limit` caps the returned turns. Errors are RETURNED: an empty panel that means "no record" and
-/// one that means "the record could not be read" are different facts, and this app has shipped the
-/// wrong one of those often enough.
-#[tauri::command]
-pub(crate) fn agent_transcript(
-    project_path: String,
-    limit: usize,
-) -> Result<Option<AgentTranscript>, String> {
-    let home = home_dir().ok_or_else(|| "could not resolve the home directory".to_string())?;
-    let limit = limit.clamp(1, 2000);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TranscriptSource {
+    Claude,
+    Codex,
+}
 
-    let claude = newest_claude_record(&home, &project_path);
-    let codex = newest_codex_record(&home, &project_path)?;
-
-    // Whichever agent spoke last is the one the pane is showing.
-    let chosen = match (claude, codex) {
-        (Some(a), Some(b)) => Some(if modified_at(&a) >= modified_at(&b) {
-            a
-        } else {
-            b
-        }),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
-    let Some(path) = chosen else {
-        return Ok(None);
-    };
-
-    let is_codex = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with("rollout-"));
-    if is_codex {
-        read_codex(&path, limit).map(Some)
-    } else {
-        read_claude(&path, limit).map(Some)
+impl TranscriptSource {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => "claude",
+            Self::Codex => "codex",
+        }
     }
 }
 
-fn home_dir() -> Option<PathBuf> {
+pub(crate) fn home_dir() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
         .map(PathBuf::from)
 }
 
-fn modified_at(path: &Path) -> std::time::SystemTime {
+pub(crate) fn modified_at(path: &Path) -> std::time::SystemTime {
     std::fs::metadata(path)
         .and_then(|data| data.modified())
         .unwrap_or(std::time::UNIX_EPOCH)
@@ -164,96 +141,9 @@ fn base36(value: i32) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn newest_claude_record(home: &Path, project_path: &str) -> Option<PathBuf> {
-    let root = home.join(".claude").join("projects");
-    let wanted = claude_project_dir_name(project_path);
-    // Enumerated, not built. Windows and a default APFS volume are case-insensitive, so two cwds
-    // differing only in drive-letter case produce two different names but land in ONE directory —
-    // building the path and reading it would intermittently find nothing. On a case-sensitive
-    // volume both spellings can exist, so an exact match wins over a case-insensitive one.
-    let entries = std::fs::read_dir(&root).ok()?;
-    let mut fallback: Option<PathBuf> = None;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == wanted {
-            return newest_jsonl(&entry.path(), |file| file.ends_with(".jsonl"));
-        }
-        if fallback.is_none() && name.eq_ignore_ascii_case(&wanted) {
-            fallback = Some(entry.path());
-        }
-    }
-    newest_jsonl(&fallback?, |file| file.ends_with(".jsonl"))
-}
-
-fn newest_jsonl(directory: &Path, accept: impl Fn(&str) -> bool) -> Option<PathBuf> {
-    let entries = std::fs::read_dir(directory).ok()?;
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(&accept)
-        })
-        .max_by_key(|path| modified_at(path))
-}
-
-/// Codex records the directory inside the file, so every candidate's first line is read to find the
-/// ones belonging to this project. Only the first line — these files reach tens of megabytes.
-fn newest_codex_record(home: &Path, project_path: &str) -> Result<Option<PathBuf>, String> {
-    let root = home.join(".codex").join("sessions");
-    if !root.is_dir() {
-        return Ok(None);
-    }
-    let mut candidates = Vec::new();
-    collect_rollouts(&root, &mut candidates, 0);
-    let wanted = normalised_path(project_path);
-    let mut best: Option<PathBuf> = None;
-    for path in candidates {
-        let Ok(file) = std::fs::File::open(&path) else {
-            continue;
-        };
-        let mut first = String::new();
-        if BufReader::new(file).read_line(&mut first).is_err() {
-            continue;
-        }
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&first) else {
-            continue;
-        };
-        let Some(payload) = value.get("payload") else {
-            continue;
-        };
-        let cwd = payload
-            .get("cwd")
-            .and_then(|cwd| cwd.as_str())
-            .unwrap_or_default();
-        if normalised_path(cwd) != wanted {
-            continue;
-        }
-        // A subagent thread records the SAME cwd as the parent that spawned it, and there are far
-        // more of them — 91 of 100 rollout files on this machine. Matching on the directory alone
-        // picked a subagent's private conversation and showed it as the session's own.
-        if payload
-            .get("thread_source")
-            .and_then(|source| source.as_str())
-            != Some("user")
-        {
-            continue;
-        }
-        if best
-            .as_ref()
-            .is_none_or(|current| modified_at(&path) > modified_at(current))
-        {
-            best = Some(path);
-        }
-    }
-    Ok(best)
-}
-
 /// Paths compared the way a user means them: separators and case do not distinguish two spellings
 /// of the same directory on Windows, and a trailing separator never does anywhere.
-fn normalised_path(path: &str) -> String {
+pub(crate) fn normalised_path(path: &str) -> String {
     let unified = path.replace('\\', "/");
     let trimmed = unified.trim_end_matches('/');
     if cfg!(windows) {
@@ -263,7 +153,7 @@ fn normalised_path(path: &str) -> String {
     }
 }
 
-fn collect_rollouts(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
+pub(crate) fn collect_rollouts(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
     // sessions/YYYY/MM/DD — deeper than that is not this layout, and a symlink loop is not a hazard
     // worth inheriting.
     if depth > 4 {
@@ -287,7 +177,8 @@ fn collect_rollouts(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
 }
 
 /// A bounded tail of turns plus every file touched, in one pass over the file.
-struct Collected {
+#[derive(Debug, Clone)]
+pub(crate) struct Collected {
     entries: VecDeque<TranscriptEntry>,
     total: usize,
     changed: Vec<String>,
@@ -297,7 +188,7 @@ struct Collected {
 }
 
 impl Collected {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             entries: VecDeque::new(),
             total: 0,
@@ -307,7 +198,8 @@ impl Collected {
         }
     }
 
-    fn push(&mut self, entry: TranscriptEntry, limit: usize) {
+    fn push(&mut self, mut entry: TranscriptEntry, limit: usize) {
+        entry.text = cap_turn_text(&entry.text);
         self.total += 1;
         if entry.at.is_some() {
             self.last_at = entry.at.clone();
@@ -324,8 +216,21 @@ impl Collected {
         if let Some(id) = group {
             if self.open_group.as_deref() == Some(id.as_str()) {
                 if let Some(last) = self.entries.back_mut() {
-                    last.text.push_str("\n\n");
-                    last.text.push_str(&entry.text);
+                    let remaining =
+                        MAX_TRANSCRIPT_TURN_CHARS.saturating_sub(last.text.chars().count());
+                    if remaining > 0 {
+                        let separator = if last.text.is_empty() { "" } else { "\n\n" };
+                        let separator_chars = separator.chars().count();
+                        if remaining > separator_chars {
+                            last.text.push_str(separator);
+                            last.text.extend(
+                                entry
+                                    .text
+                                    .chars()
+                                    .take(remaining.saturating_sub(separator_chars)),
+                            );
+                        }
+                    }
                     if entry.at.is_some() {
                         self.last_at = entry.at;
                     }
@@ -345,6 +250,25 @@ impl Collected {
         self.changed.push(file.to_string());
     }
 
+    pub(crate) fn snapshot(
+        &self,
+        source: TranscriptSource,
+        path: &Path,
+        limit: usize,
+    ) -> AgentTranscript {
+        let kept = limit.clamp(1, MAX_TRANSCRIPT_ENTRIES);
+        let skip = self.entries.len().saturating_sub(kept);
+        AgentTranscript {
+            source: source.as_str().to_string(),
+            path: path.to_string_lossy().into_owned(),
+            entries: self.entries.iter().skip(skip).cloned().collect(),
+            total_entries: self.total,
+            changed_files: self.changed.clone(),
+            last_activity: self.last_at.clone(),
+        }
+    }
+
+    #[cfg(test)]
     fn finish(self, source: &str, path: &Path) -> AgentTranscript {
         AgentTranscript {
             source: source.to_string(),
@@ -357,148 +281,175 @@ impl Collected {
     }
 }
 
-fn lines_of(path: &Path) -> Result<impl Iterator<Item = String>, String> {
-    let file = std::fs::File::open(path)
-        .map_err(|error| format!("could not open the agent record: {error}"))?;
-    Ok(BufReader::new(file).lines().map_while(Result::ok))
-}
-
-fn read_claude(path: &Path, limit: usize) -> Result<AgentTranscript, String> {
-    let mut collected = Collected::new();
-    for line in lines_of(path)? {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        // Sidechain entries are a subagent's own conversation, and meta entries are the harness
-        // talking to itself. Neither is what the person in front of the pane was doing.
-        if value.get("isSidechain").and_then(|f| f.as_bool()) == Some(true)
-            || value.get("isMeta").and_then(|f| f.as_bool()) == Some(true)
-        {
-            continue;
-        }
-        let role = match value.get("type").and_then(|t| t.as_str()) {
-            Some("user") => "user",
-            Some("assistant") => "assistant",
-            _ => continue,
-        };
-        let at = value
-            .get("timestamp")
-            .and_then(|t| t.as_str())
-            .map(str::to_string);
-        let content = value
-            .get("message")
-            .and_then(|message| message.get("content"));
-        let mut text = String::new();
-        match content {
-            Some(serde_json::Value::String(plain)) => text.push_str(plain),
-            Some(serde_json::Value::Array(blocks)) => {
-                for block in blocks {
-                    match block.get("type").and_then(|t| t.as_str()) {
-                        // Thinking is the model's private reasoning, not part of the conversation.
-                        Some("text") => {
-                            if let Some(value) = block.get("text").and_then(|t| t.as_str()) {
-                                if !text.is_empty() {
-                                    text.push_str("\n\n");
-                                }
-                                text.push_str(value);
-                            }
-                        }
-                        Some("tool_use") => {
-                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("");
-                            if matches!(name, "Edit" | "Write" | "NotebookEdit") {
-                                if let Some(file) = block
-                                    .get("input")
-                                    .and_then(|input| input.get("file_path"))
-                                    .and_then(|file| file.as_str())
-                                {
-                                    collected.touched(file);
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-        let text = strip_harness_wrapper(&text);
-        if text.is_empty() {
-            continue;
-        }
-        // One assistant answer is written as several lines — one per content block — all carrying
-        // the same message.id. Most of them are: 483 of 895 in one file here span more than one
-        // line, up to five. Rendered per line, a single reply appeared as five separate bubbles.
-        let message_id = value
-            .get("message")
-            .and_then(|message| message.get("id"))
-            .and_then(|id| id.as_str())
-            .map(str::to_string);
-        collected.push_merging(
-            TranscriptEntry {
-                role: role.to_string(),
-                text,
-                at,
-            },
-            message_id.filter(|_| role == "assistant"),
-            limit,
-        );
+fn cap_turn_text(text: &str) -> String {
+    if text.chars().count() <= MAX_TRANSCRIPT_TURN_CHARS {
+        return text.to_string();
     }
-    Ok(collected.finish("claude", path))
+    text.chars().take(MAX_TRANSCRIPT_TURN_CHARS).collect()
 }
 
-fn read_codex(path: &Path, limit: usize) -> Result<AgentTranscript, String> {
-    let mut collected = Collected::new();
-    for line in lines_of(path)? {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        if value.get("type").and_then(|t| t.as_str()) != Some("response_item") {
-            continue;
-        }
-        let Some(payload) = value.get("payload") else {
-            continue;
-        };
-        if payload.get("type").and_then(|t| t.as_str()) != Some("message") {
-            continue;
-        }
-        let role = match payload.get("role").and_then(|r| r.as_str()) {
-            Some(role @ ("user" | "assistant")) => role,
-            _ => continue,
-        };
-        let mut text = String::new();
-        if let Some(blocks) = payload.get("content").and_then(|c| c.as_array()) {
+/// Fold one complete JSONL record into the cached projection. The service deliberately calls this
+/// only after seeing a newline, so a writer's partially flushed final JSON object is retried later.
+pub(crate) fn collect_line(
+    source: TranscriptSource,
+    line: &str,
+    collected: &mut Collected,
+    limit: usize,
+) {
+    if !transcript_line_filter::is_relevant(source, line) {
+        return;
+    }
+    collect_line_unfiltered(source, line, collected, limit);
+}
+
+fn collect_line_unfiltered(
+    source: TranscriptSource,
+    line: &str,
+    collected: &mut Collected,
+    limit: usize,
+) {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    match source {
+        TranscriptSource::Claude => collect_claude_value(&value, collected, limit),
+        TranscriptSource::Codex => collect_codex_value(&value, collected, limit),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn collect_line_without_filter_for_test(
+    source: TranscriptSource,
+    line: &str,
+    collected: &mut Collected,
+    limit: usize,
+) {
+    collect_line_unfiltered(source, line, collected, limit);
+}
+
+fn collect_claude_value(value: &serde_json::Value, collected: &mut Collected, limit: usize) {
+    // Sidechain entries are a subagent's own conversation, and meta entries are the harness
+    // talking to itself. Neither is what the person in front of the pane was doing.
+    if value.get("isSidechain").and_then(|flag| flag.as_bool()) == Some(true)
+        || value.get("isMeta").and_then(|flag| flag.as_bool()) == Some(true)
+    {
+        return;
+    }
+    let role = match value.get("type").and_then(|kind| kind.as_str()) {
+        Some("user") => "user",
+        Some("assistant") => "assistant",
+        _ => return,
+    };
+    let at = value
+        .get("timestamp")
+        .and_then(|timestamp| timestamp.as_str())
+        .map(str::to_string);
+    let content = value
+        .get("message")
+        .and_then(|message| message.get("content"));
+    let mut text = String::new();
+    match content {
+        Some(serde_json::Value::String(plain)) => text.push_str(plain),
+        Some(serde_json::Value::Array(blocks)) => {
             for block in blocks {
-                // input_text is what the person typed; output_text is what the agent answered.
-                if matches!(
-                    block.get("type").and_then(|t| t.as_str()),
-                    Some("input_text") | Some("output_text") | Some("text")
-                ) {
-                    if let Some(value) = block.get("text").and_then(|t| t.as_str()) {
-                        if !text.is_empty() {
-                            text.push_str("\n\n");
+                match block.get("type").and_then(|kind| kind.as_str()) {
+                    Some("text") => {
+                        if let Some(value) = block.get("text").and_then(|text| text.as_str()) {
+                            if !text.is_empty() {
+                                text.push_str("\n\n");
+                            }
+                            text.push_str(value);
                         }
-                        text.push_str(value);
                     }
+                    Some("tool_use") => {
+                        let name = block
+                            .get("name")
+                            .and_then(|name| name.as_str())
+                            .unwrap_or("");
+                        if matches!(name, "Edit" | "Write" | "NotebookEdit") {
+                            if let Some(file) = block
+                                .get("input")
+                                .and_then(|input| input.get("file_path"))
+                                .and_then(|file| file.as_str())
+                            {
+                                collected.touched(file);
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
-        let text = strip_harness_wrapper(&text);
-        if text.is_empty() {
-            continue;
-        }
-        collected.push(
-            TranscriptEntry {
-                role: role.to_string(),
-                text,
-                at: value
-                    .get("timestamp")
-                    .and_then(|t| t.as_str())
-                    .map(str::to_string),
-            },
-            limit,
-        );
+        _ => {}
     }
-    Ok(collected.finish("codex", path))
+    let text = strip_harness_wrapper(&text);
+    if text.is_empty() {
+        return;
+    }
+    let message_id = value
+        .get("message")
+        .and_then(|message| message.get("id"))
+        .and_then(|id| id.as_str())
+        .map(str::to_string);
+    collected.push_merging(
+        TranscriptEntry {
+            role: role.to_string(),
+            text,
+            at,
+        },
+        message_id.filter(|_| role == "assistant"),
+        limit,
+    );
+}
+
+fn collect_codex_value(value: &serde_json::Value, collected: &mut Collected, limit: usize) {
+    if value.get("type").and_then(|kind| kind.as_str()) != Some("response_item") {
+        return;
+    }
+    let Some(payload) = value.get("payload") else {
+        return;
+    };
+    if payload.get("type").and_then(|kind| kind.as_str()) != Some("message") {
+        return;
+    }
+    let role = match payload.get("role").and_then(|role| role.as_str()) {
+        Some(role @ ("user" | "assistant")) => role,
+        _ => return,
+    };
+    let mut text = String::new();
+    if let Some(blocks) = payload
+        .get("content")
+        .and_then(|content| content.as_array())
+    {
+        for block in blocks {
+            if matches!(
+                block.get("type").and_then(|kind| kind.as_str()),
+                Some("input_text") | Some("output_text") | Some("text")
+            ) {
+                if let Some(value) = block.get("text").and_then(|text| text.as_str()) {
+                    if !text.is_empty() {
+                        text.push_str("\n\n");
+                    }
+                    text.push_str(value);
+                }
+            }
+        }
+    }
+    let text = strip_harness_wrapper(&text);
+    if text.is_empty() {
+        return;
+    }
+    collected.push(
+        TranscriptEntry {
+            role: role.to_string(),
+            text,
+            at: value
+                .get("timestamp")
+                .and_then(|timestamp| timestamp.as_str())
+                .map(str::to_string),
+        },
+        limit,
+    );
 }
 
 /// Both harnesses prepend machine-generated context to the first user turn — an
@@ -712,57 +663,5 @@ mod tests {
         collected.touched("a.rs");
         let transcript = collected.finish("claude", Path::new("x.jsonl"));
         assert_eq!(transcript.changed_files, vec!["b.rs", "a.rs"]);
-    }
-}
-
-#[cfg(test)]
-mod live_probe {
-    use super::*;
-
-    /// Not a unit test of logic — a check that the two real formats on this machine actually parse.
-    /// Skips silently where no record exists, so it never fails CI on a clean runner.
-    #[test]
-    fn the_real_records_on_this_machine_parse() {
-        let Some(home) = home_dir() else { return };
-        let project = r"C:\Sources\talkak-developer";
-
-        if let Some(path) = newest_claude_record(&home, project) {
-            let transcript = read_claude(&path, 5).expect("the claude record should parse");
-            println!(
-                "claude: {} turns total, {} kept, {} files touched, last {:?}",
-                transcript.total_entries,
-                transcript.entries.len(),
-                transcript.changed_files.len(),
-                transcript.last_activity
-            );
-            for entry in &transcript.entries {
-                let text: String = entry.text.chars().take(90).collect();
-                println!("  [{}] {}", entry.role, text.replace('\n', " "));
-            }
-            assert!(
-                transcript.total_entries > 0,
-                "a real record should hold turns"
-            );
-        } else {
-            println!("claude: no record for {project}");
-        }
-
-        match newest_codex_record(&home, project) {
-            Ok(Some(path)) => {
-                let transcript = read_codex(&path, 5).expect("the codex record should parse");
-                println!(
-                    "codex: {} turns total, {} kept, last {:?}",
-                    transcript.total_entries,
-                    transcript.entries.len(),
-                    transcript.last_activity
-                );
-                for entry in &transcript.entries {
-                    let text: String = entry.text.chars().take(90).collect();
-                    println!("  [{}] {}", entry.role, text.replace('\n', " "));
-                }
-            }
-            Ok(None) => println!("codex: no record for {project}"),
-            Err(error) => panic!("codex scan failed: {error}"),
-        }
     }
 }

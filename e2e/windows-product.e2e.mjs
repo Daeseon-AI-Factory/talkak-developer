@@ -35,6 +35,7 @@ describe("installed Windows product path", () => {
       timeout: 20_000,
       timeoutMsg: "PTY did not report the current Windows identity",
     });
+    await verifyPlainCtrlVPaste();
 
     await (await $('[data-testid="split-right"]')).click();
     await waitForRunningTerminalCount(2);
@@ -166,4 +167,40 @@ async function typeTerminalCommand(command) {
   await input.click();
   await input.addValue(command);
   await browser.keys(Key.Enter);
+}
+
+async function verifyPlainCtrlVPaste() {
+  const imagePath = await invokeApp("clipboard_read_image_path");
+  // Replacing an image with test text would destroy user clipboard data on a local verification
+  // run. CI has no image, while a developer with a screenshot gets a safe skip.
+  if (imagePath !== null) return;
+
+  const originalText = await invokeApp("clipboard_read_text");
+  const marker = "talkakplainctrlvpaste";
+  const charCodes = [...marker].map((character) => character.codePointAt(0)).join(",");
+  // The expected marker is not present in the typed command, so seeing it proves Enter executed
+  // the pasted PowerShell rather than merely echoing the command line into xterm.
+  const command = `write-output (-join (${charCodes} | % {[char]$_}))`;
+  try {
+    await invokeApp("clipboard_write_text", { text: command });
+    const input = await $('[data-testid="live-terminal"] .xterm-helper-textarea');
+    await input.waitForExist();
+    await input.click();
+    await browser.keys([Key.Control, "v"]);
+    await browser.keys(Key.Enter);
+    await browser.waitUntil(async () => (await terminalText()).includes(marker), {
+      timeout: 20_000,
+      timeoutMsg: "Plain Ctrl+V did not paste through the app clipboard path",
+    });
+  } finally {
+    await invokeApp("clipboard_write_text", { text: originalText });
+  }
+}
+
+async function invokeApp(command, args = {}) {
+  return browser.execute(
+    async (tauriCommand, tauriArgs) => window.__TAURI_INTERNALS__.invoke(tauriCommand, tauriArgs),
+    command,
+    args,
+  );
 }

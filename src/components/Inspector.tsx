@@ -1,6 +1,13 @@
-import { useEffect } from "react";
-import type { DevSession, InspectorMode } from "../domain";
+import { useEffect, useState } from "react";
+import type { DevSession, InspectorMode, ProjectSource } from "../domain";
 import { useI18n } from "../i18n";
+import {
+  INITIAL_TRANSCRIPT_TURNS,
+  OLDER_TRANSCRIPT_PAGE,
+  formatTranscriptActivity,
+  formatTranscriptTime,
+  latestAssistantExcerpt,
+} from "../runtime/transcriptPresentation";
 import { type TranscriptState, useAgentTranscript } from "../runtime/useAgentTranscript";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
@@ -8,8 +15,8 @@ import { TerminalLogView } from "./TerminalLogView";
 
 interface InspectorProps {
   session: DevSession;
-  /** The project directory, which is how an agent transcript on disk is found. */
   projectPath: string;
+  projectSource: ProjectSource;
   mode: InspectorMode;
   pinned: boolean;
   onChangeMode: (mode: InspectorMode) => void;
@@ -20,6 +27,7 @@ interface InspectorProps {
 export function Inspector({
   session,
   projectPath,
+  projectSource,
   mode,
   pinned,
   onChangeMode,
@@ -27,9 +35,21 @@ export function Inspector({
   onClose,
 }: InspectorProps) {
   const { t, text } = useI18n();
+  const preview = projectSource === "preview";
+  const { state: transcriptState } = useAgentTranscript(
+    preview
+      ? null
+      : {
+          sessionId: session.id,
+          runId: session.runtimeStatus?.runId ?? null,
+          projectPath,
+          startedAt: session.startedAt,
+          agentCommand: session.launchProfile.command,
+        },
+    !preview && mode !== "terminal",
+    session.runtimeStatus?.phase ?? null,
+  );
 
-  // The floating form is a modal, so it closes the way every modal here closes. A window listener
-  // rather than onKeyDown on the panel: focus usually sits inside xterm, not on the dialog.
   useEffect(() => {
     if (pinned) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -96,9 +116,23 @@ export function Inspector({
         </button>
       </div>
 
-      {mode === "summary" ? <SummaryView session={session} projectPath={projectPath} /> : null}
-      {mode === "terminal" ? <TerminalLogView sessionId={session.id} /> : null}
-      {mode === "conversation" ? <ConversationView projectPath={projectPath} /> : null}
+      {mode === "summary" ? (
+        <SummaryView session={session} state={transcriptState} preview={preview} />
+      ) : null}
+      {mode === "terminal" ? (
+        <TerminalLogView
+          sessionId={session.id}
+          currentRunId={session.runtimeStatus?.runId ?? null}
+        />
+      ) : null}
+      {mode === "conversation" ? (
+        <ConversationView
+          key={`${projectPath}:${session.id}:${session.runtimeStatus?.runId ?? "no-run"}`}
+          session={session}
+          state={transcriptState}
+          preview={preview}
+        />
+      ) : null}
     </aside>
   );
 
@@ -116,24 +150,30 @@ export function Inspector({
   );
 }
 
-function SummaryView({ session, projectPath }: { session: DevSession; projectPath: string }) {
+function SummaryView({
+  session,
+  state,
+  preview,
+}: {
+  session: DevSession;
+  state: TranscriptState;
+  preview: boolean;
+}) {
+  if (preview) return <PreviewSummary session={session} />;
+  return <LocalTranscriptSummary session={session} state={state} />;
+}
+
+function PreviewSummary({ session }: { session: DevSession }) {
   const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
-  const { state } = useAgentTranscript(projectPath, true);
   const runtime =
     session.runtime.kind === "unconfigured"
       ? t("runtime.unconfigured")
       : text(runtimeLabel(session));
-  // The agent's own record names the files it edited. `session.summary.changedFiles` is seeded
-  // demo content that nothing has ever written to for a real session.
-  const changedFiles = state.kind === "loaded" ? state.transcript.changedFiles : [];
+
   return (
     <div className="inspector__content">
       <section className="summary-hero">
-        <div className="summary-hero__source">
-          {state.kind === "loaded"
-            ? t("transcript.source", { source: state.transcript.source })
-            : t("inspector.localPreview")}
-        </div>
+        <div className="summary-hero__source">{t("inspector.previewData")}</div>
         <div className="summary-hero__status-row">
           <span
             className="state-badge"
@@ -156,14 +196,7 @@ function SummaryView({ session, projectPath }: { session: DevSession; projectPat
         <small>{t("inspector.progressShort", { progress: session.summary.progress })}</small>
       </section>
 
-      <SummarySection title={t("inspector.changedFiles")} empty={t("inspector.noFiles")}>
-        {changedFiles.map((file) => (
-          <div className="file-row" key={file}>
-            <Icon name="folder" size={14} />
-            <code>{file}</code>
-          </div>
-        ))}
-      </SummarySection>
+      <ChangedFiles files={session.summary.changedFiles} />
 
       <SummarySection title={t("inspector.decisions")} empty={t("inspector.noDecisions")}>
         {session.summary.decisions.map((decision) => (
@@ -179,6 +212,79 @@ function SummaryView({ session, projectPath }: { session: DevSession; projectPat
         <p>{text(session.summary.nextStep)}</p>
       </section>
     </div>
+  );
+}
+
+function LocalTranscriptSummary({
+  session,
+  state,
+}: { session: DevSession; state: TranscriptState }) {
+  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
+  const runtime =
+    session.runtime.kind === "unconfigured"
+      ? t("runtime.unconfigured")
+      : text(runtimeLabel(session));
+  const transcript = state.kind === "loaded" ? state.transcript : null;
+  const latestReply = transcript ? latestAssistantExcerpt(transcript.entries) : null;
+  const lastActivity = formatTranscriptActivity(transcript?.lastActivity ?? null);
+
+  return (
+    <div className="inspector__content">
+      <section className="summary-hero">
+        <div className="summary-hero__source">
+          {transcript
+            ? t("transcript.source", { source: transcript.source })
+            : t("inspector.localRecord")}
+        </div>
+        <div className="summary-hero__status-row">
+          <span
+            className="state-badge"
+            data-state={session.state}
+            data-runtime-phase={session.runtimeStatus?.phase}
+          >
+            {session.runtimeStatus
+              ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
+              : statusLabel(session.state)}
+          </span>
+          <span>{runtime}</span>
+        </div>
+        {transcript ? (
+          <>
+            <span className="summary-hero__label">{t("inspector.latestReply")}</span>
+            {latestReply ? (
+              <h2>{latestReply}</h2>
+            ) : (
+              <p className="summary-section__empty">{t("inspector.noAssistantReply")}</p>
+            )}
+          </>
+        ) : (
+          <TranscriptNotice state={state} />
+        )}
+      </section>
+
+      {transcript ? (
+        <>
+          <SummarySection title={t("inspector.lastActivity")} empty={t("inspector.noActivity")}>
+            {lastActivity ? <p className="summary-activity">{lastActivity}</p> : null}
+          </SummarySection>
+          <ChangedFiles files={transcript.changedFiles} />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ChangedFiles({ files }: { files: readonly string[] }) {
+  const { t } = useI18n();
+  return (
+    <SummarySection title={t("inspector.changedFiles")} empty={t("inspector.noFiles")}>
+      {files.map((file) => (
+        <div className="file-row" key={file}>
+          <Icon name="folder" size={14} />
+          <code>{file}</code>
+        </div>
+      ))}
+    </SummarySection>
   );
 }
 
@@ -216,11 +322,26 @@ function TranscriptNotice({ state }: { state: TranscriptState }) {
   return null;
 }
 
-function ConversationView({ projectPath }: { projectPath: string }) {
-  const { t } = useI18n();
-  const { state } = useAgentTranscript(projectPath, true);
+interface DisplayConversationEntry {
+  key: string;
+  author: "you" | "agent" | "system";
+  time: string;
+  text: string;
+}
 
-  if (state.kind !== "loaded") {
+function ConversationView({
+  session,
+  state,
+  preview,
+}: {
+  session: DevSession;
+  state: TranscriptState;
+  preview: boolean;
+}) {
+  const { t } = useI18n();
+  const [visibleCount, setVisibleCount] = useState(INITIAL_TRANSCRIPT_TURNS);
+
+  if (!preview && state.kind !== "loaded") {
     return (
       <div className="inspector__content conversation-list">
         <TranscriptNotice state={state} />
@@ -228,40 +349,71 @@ function ConversationView({ projectPath }: { projectPath: string }) {
     );
   }
 
-  const { transcript } = state;
-  const dropped = transcript.totalEntries - transcript.entries.length;
+  const transcript = state.kind === "loaded" ? state.transcript : null;
+  const nativeStartIndex = transcript
+    ? Math.max(0, transcript.totalEntries - transcript.entries.length)
+    : 0;
+  const entries: DisplayConversationEntry[] = preview
+    ? session.conversation.map((entry) => ({
+        key: entry.id,
+        author: entry.author,
+        time: entry.time,
+        text: entry.text,
+      }))
+    : (transcript?.entries ?? []).map((entry, index) => ({
+        key: `${entry.at ?? "no-time"}-${nativeStartIndex + index}`,
+        author: entry.role === "user" ? "you" : "agent",
+        time: formatTranscriptTime(entry.at),
+        text: entry.text,
+      }));
+  const totalEntries = preview ? entries.length : (transcript?.totalEntries ?? entries.length);
+  const visibleEntries = entries.slice(-visibleCount);
+  const availableOlder = entries.length - visibleEntries.length;
+  const nextPageSize = Math.min(OLDER_TRANSCRIPT_PAGE, availableOlder);
+  const unavailableOlder = Math.max(0, totalEntries - entries.length);
+
   return (
     <div className="inspector__content conversation-list">
       <div className="conversation-list__meta">
-        <span>{t("inspector.messageCount", { count: transcript.totalEntries })}</span>
-        <span>{t("transcript.source", { source: transcript.source })}</span>
+        <span>{t("inspector.messageCount", { count: totalEntries })}</span>
+        <span>
+          {preview
+            ? t("inspector.previewData")
+            : t("transcript.source", { source: transcript?.source ?? "" })}
+        </span>
       </div>
-      {dropped > 0 ? (
-        <p className="conversation-disclaimer">{t("transcript.trimmed", { count: dropped })}</p>
+      {unavailableOlder > 0 ? (
+        <p className="conversation-disclaimer">
+          {t("transcript.trimmed", { count: unavailableOlder })}
+        </p>
       ) : null}
-      {transcript.entries.map((entry, index) => (
-        <article
-          className="conversation-entry"
-          data-author={entry.role === "user" ? "you" : "agent"}
-          // The record has no per-turn id; position plus timestamp is stable for a given read.
-          key={`${entry.at ?? "no-time"}-${index}`}
+      {availableOlder > 0 ? (
+        <button
+          className="conversation-list__older"
+          type="button"
+          onClick={() => setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE)}
         >
+          {t("transcript.showOlder", { count: nextPageSize })}
+        </button>
+      ) : null}
+      {visibleEntries.length === 0 ? (
+        <p className="conversation-disclaimer">{t("transcript.noMessages")}</p>
+      ) : null}
+      {visibleEntries.map((entry) => (
+        <article className="conversation-entry" data-author={entry.author} key={entry.key}>
           <header>
-            <strong>{entry.role === "user" ? t("inspector.you") : t("inspector.agent")}</strong>
-            <time>{formatTurnTime(entry.at)}</time>
+            <strong>
+              {entry.author === "you"
+                ? t("inspector.you")
+                : entry.author === "agent"
+                  ? t("inspector.agent")
+                  : t("inspector.system")}
+            </strong>
+            <time>{entry.time}</time>
           </header>
           <p>{entry.text}</p>
         </article>
       ))}
     </div>
   );
-}
-
-/** The record stores ISO instants; a reader wants a clock time. */
-function formatTurnTime(at: string | null): string {
-  if (!at) return "";
-  const parsed = new Date(at);
-  return Number.isNaN(parsed.getTime())
-    ? ""
-    : parsed.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }

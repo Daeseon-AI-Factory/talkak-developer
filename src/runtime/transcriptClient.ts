@@ -29,20 +29,65 @@ export interface AgentTranscript {
   lastActivity: string | null;
 }
 
+export interface TranscriptScope {
+  sessionId: string;
+  runId: number | null;
+  projectPath: string;
+  startedAt: string;
+  agentCommand: string | null;
+}
+
 export interface TranscriptClient {
   available: () => boolean;
-  /** The newest transcript for a project directory, or null when neither agent has written one. */
-  read: (projectPath: string, limit?: number) => Promise<AgentTranscript | null>;
+  /** The transcript bound to this Talkak session, or null when its agent has not written one. */
+  read: (scope: TranscriptScope, limit?: number) => Promise<AgentTranscript | null>;
+  /** Warm the native session binding/cache before a panel opens. */
+  prewarm: (scope: TranscriptScope, limit?: number) => Promise<void>;
 }
 
 export function createTranscriptClient(
   invokeCommand: <T>(command: string, args?: Record<string, unknown>) => Promise<T>,
   available: () => boolean,
 ): TranscriptClient {
+  interface PendingRead {
+    promise: Promise<AgentTranscript | null>;
+  }
+
+  const pending = new Map<string, PendingRead>();
+
+  function key(scope: TranscriptScope, limit: number): string {
+    return JSON.stringify([
+      scope.sessionId,
+      scope.runId,
+      scope.projectPath,
+      scope.startedAt,
+      scope.agentCommand,
+      limit,
+    ]);
+  }
+
+  function invokeRead(scope: TranscriptScope, limit: number): Promise<AgentTranscript | null> {
+    const requestKey = key(scope, limit);
+    const existing = pending.get(requestKey);
+    if (existing) return existing.promise;
+
+    const entry: PendingRead = {
+      promise: invokeCommand<AgentTranscript | null>("agent_transcript", { ...scope, limit }),
+    };
+    pending.set(requestKey, entry);
+    void entry.promise.then(
+      () => pending.delete(requestKey),
+      () => pending.delete(requestKey),
+    );
+    return entry.promise;
+  }
+
   return {
     available,
-    read: (projectPath, limit = 200) =>
-      invokeCommand<AgentTranscript | null>("agent_transcript", { projectPath, limit }),
+    read: (scope, limit = 800) => invokeRead(scope, limit),
+    prewarm: async (scope, limit = 800) => {
+      await invokeRead(scope, limit);
+    },
   };
 }
 
