@@ -521,7 +521,7 @@ lands in `%LOCALAPPDATA%\Talkak Dev` and installation raises no UAC prompt.
 
 ---
 
-## W-013 — Terminal and agent-record review paid the full replay cost on every open
+## W-022 — Terminal and agent-record review paid the full replay cost on every open
 
 **Severity:** high — switching to a log panel felt stalled even when the session had already ended.
 **Status:** fixed and locally verified in this branch; the declared product gates cover both OSes.
@@ -545,14 +545,49 @@ one final read. On the current 30.3 MB / 138-turn Codex record, the release prob
 cold (off the UI thread and prewarmed) and 134 microseconds warm; 6,097 irrelevant lines were
 rejected, 140 conversation lines accepted, and only seven non-canonical lines used the fallback.
 
-Local verification: 206 renderer tests, TypeScript, Biome, production Vite build, CI contract, 38
-native tests plus one intentional local-only ignored probe, 31 broker tests, both Rust checks and
-both Clippy `-D warnings` runs all pass. Desktop and 390 px mobile Summary/Conversation layouts were
-visually exercised with six pages; the browser console reported no warning or error.
+Claude was checked separately against TALKAK's reader instead of being inferred from the Codex
+path. TALKAK groups every assistant message after one human prompt into one readable turn even when
+tool calls change `message.id`; the lightweight reader now keeps that rule, including an image-only
+prompt as a turn boundary. Hidden real-user meta prompts also close that boundary, sidechains remain
+excluded, and the visible assistant turn carries its latest record timestamp even when the final
+record is tool-only. A content-free release probe of the real 16,227,873-byte / 5,662-line Claude
+record measured 2 ms discovery, 115 ms service cold read, and 438 microseconds warm, producing 186
+folded entries. That result did not justify adding another provider-specific fast parser.
+Cold-start Claude resume now uses only the broker's persisted launch arguments. A UUID supplied to
+`--resume`/`-r` is accepted only when its exact JSONL basename is unique across Claude worktrees;
+`--session-id` selects that exact destination in the current cwd and outranks a fork source. A fork
+never reuses its source and remains unbound when two records have the same launch-time ownership
+evidence. Bare/search-term `--resume` and `--continue`/`-c` deliberately remain unbound, including
+after an earlier app-lifetime binding: original TALKAK receives an exact transcript path from a
+Claude hook, while this clean-install lightweight app forbids global hooks and mtime does not prove
+which same-cwd pane owns a record. An already bound exact UUID or `--session-id` record still
+refreshes incrementally. Codex cwd matching first takes the normalized-string fast path, then compares
+canonical identities only when those spellings differ, covering macOS symlinks without repeated
+filesystem calls for ordinary Windows/WSL paths.
+The broker also captures the run boundary immediately before spawning the child, so a slow agent
+startup cannot make its new record look older than the Talkak run on either platform.
+
+Local verification: 209 renderer tests, TypeScript, Biome, production Vite build, CI contract, 54
+native tests plus two intentional local-only ignored probes, 31 broker tests, both Rust checks and
+both Clippy `-D warnings` runs all pass. In a real overflow, the 1,200 x 400 desktop conversation
+ended at `scrollTop=98` and the 390 x 844 mobile conversation at `scrollTop=80`; both had zero
+bottom distance with the last message visible, and the browser console had no warning or error.
+
+The verified Windows NSIS was then installed in place: 5,716,205 bytes, SHA-256
+`4F3D3247A64247A7226FE280C8930C6923B7FFCC0D98976F549FE8285096E282`, exit code 0. The installed
+exe changed from the previous build to 13,248,000 bytes and SHA-256
+`56C81D6E5F45DB522CBD4B6BCD306B1F4EEA13BFE8A5128916435D6C42B97160`. Before installation, 37
+session definitions and the WebView local-storage files were backed up under the task-specific temp
+directory; afterward every session-definition hash and all five pre-existing immutable
+local-storage data hashes matched. The existing session broker stayed alive as PID 19592. The new
+GUI was launched from the installed path with only its child environment scrubbed, and was the one
+responsive Talkak window at PID 37980. The broker's pre-spawn timestamp change is packaged but will
+become live only after that deliberately preserved old broker retires; replacing it now would end
+the owner's attached sessions.
 
 ---
 
-## W-012 — Plain Windows Ctrl+V reached Codex as its image-paste control byte
+## W-023 — Plain Windows Ctrl+V reached Codex as its image-paste control byte
 
 **Severity:** high — ordinary text paste produced `Failed to paste image: no image on clipboard`.
 **Status:** fixed and locally unit-tested; installed-product E2E is part of the Windows product gate.
@@ -667,13 +702,13 @@ suite now places a computed PowerShell command on the native clipboard, presses 
   product, package, process, or user data was touched by the failed command.
 - **Several read-only source searches guessed paths or passed POSIX-style globs to Windows `rg`.**
   The missing guesses were `src/workspaceActions.ts`, `src/terminalReplay.ts`,
-  `src/terminalOutputWriter.ts`, `src/App.css`, `test`, `tests`,
+  `src/terminalOutputWriter.ts`, `src/App.css`, `src/styles.css`, `crates`, `test`, `tests`,
   `test/specs/desktop.e2e.mjs`, an in-progress `transcript_service_tests.rs`, and original-TALKAK
   `src`, `src-tauri`, root `Cargo.toml`, and `claude.rs` paths. Wildcard path arguments such as
   `src/**/*.tsx`, `src/**/*.test.ts*`, `src/*.css`, `test*`, `wdio*`, package-directory `*`,
-  `src-tauri/src/*.rs`, `transcript_service*`, and `node_modules/.pnpm/*` produced Windows error
-  123. Explicit paths and `--glob` searches found the intended files; none of these diagnostics
-  wrote state.
+  `src-tauri/src/*.rs`, `src-tauri/src/transcript_service_*tests.rs`, `src/styles/*.css`,
+  `transcript_service*`, and `node_modules/.pnpm/*` produced Windows error 123. Explicit paths and
+  `--glob` searches found the intended files; none of these diagnostics wrote state.
 - **Two PowerShell diagnostics were malformed and one used the wrong sharing mode.** `OpenText`
   could not read active Codex rollout files that were open for writing and then left a null reader;
   the corrected probe used `FileStream` with `FileShare.ReadWrite`. A FileShare JSON probe and the
@@ -697,7 +732,7 @@ suite now places a computed PowerShell command on the native clipboard, presses 
   Escaped/non-canonical records now fall back to the borrowed serde classifier; all six filter
   tests pass. An earlier test-name filter selected zero tests, and the corrected module-qualified
   filter selected all six. The first ignored performance-probe invocation also outlived its
-  30-second compilation window; resuming it produced the release measurements recorded in W-013.
+  30-second compilation window; resuming it produced the release measurements recorded in W-022.
 - **The browser connection was initialized twice with the imported module instead of its runtime
   result.** Both attempts failed before a tab was opened; initializing the documented runtime then
   connected successfully. A later `요약` locator matched both the tab and the quick-reply button,
@@ -705,7 +740,7 @@ suite now places a computed PowerShell command on the native clipboard, presses 
 - **Polling the Vite process after it had already accepted Ctrl+C returned `Unknown process id`.**
   This confirmed the development server was gone; no Talkak or user process was affected.
 - **Direct `pnpm` was again unavailable in agent-side checks.** Every final renderer command used
-  the absolute Corepack executable. One coordination wait requested 1 second even though the tool
+  the absolute Corepack executable. Two coordination waits requested 1 second even though the tool
   clamps waits to 10 seconds, and several normal agent waits timed out while release compilation
   continued; these changed no repository or product state.
 - **Policy rejected recursive removal of the task-local Corepack shim after packaging.** The exact
@@ -731,3 +766,44 @@ suite now places a computed PowerShell command on the native clipboard, presses 
   template literal, and two formatting passes failed.** Escaping the fixture fixed its SyntaxError.
   Biome then requested ordinary wrapping in the contract files and, after the paste-race cleanup,
   one `waitUntil` call; those lines were formatted and the full checks rerun.
+- **Three Claude transcript audit diagnostics were malformed before the focused tests ran.** One
+  `rg` expression for a Cargo package had an unclosed group, a follow-up looked for `Cargo.lock` at
+  the repository root instead of under the Rust crate, and one combined `apply_patch` repeated the
+  same target file in separate update sections. Simpler searches and one update section per file
+  succeeded; the failed commands changed no source or product state.
+- **The Claude resume cross-review started with one Windows-invalid `rg` wildcard and one Rust
+  warning.** The wildcard was replaced by explicit test-file paths, and an unused `Path` import in
+  the new selection helper was removed. The first test run still completed with all 37 selected
+  tests passing. A later wildcard repeat produced the same Windows error 123 and was immediately
+  replaced by explicit paths. Splitting discovery then exposed two missing test imports and one
+  `Option<&String>`/`Option<&str>` mismatch in the first compile; explicit imports and `as_str`
+  fixed them. Two combined patches applied nothing (one stale formatted context and one malformed
+  multi-file hunk), so the same small edits were applied separately. Finally, Clippy rejected an
+  obsolete `Path` import left in the service after the split; each test module now owns that import.
+  The warning-free formatter, 54 native tests plus two ignored probes, and Clippy gates then passed.
+- **The local conversation QA hit browser-control and loopback setup errors before the measured
+  pass.** The first call used a nonexistent `browser.tabs.open` method, and the Vite invocation's
+  extra `--` left it listening on IPv6 localhost so `127.0.0.1` was refused; the documented
+  `tabs.new()` method and `http://localhost:1420` connected. One pointer click timed out after the
+  UI action had already landed, so state was inspected before using the semantic Enter action.
+  Repeated CDP metric requests later timed out and reset the browser connection; a fresh Talkak tab
+  completed the desktop/mobile bottom measurements above. These failures changed no product or
+  user data, and the temporary viewport override was reset.
+- **The pre-install process inventory could not convert CIM's already-formatted creation time.**
+  `ManagementDateTimeConverter.ToDateTime` rejected both Talkak process values. The diagnostic
+  changed no state; the inventory was repeated using the raw `CreationDate` and exact executable
+  paths instead.
+- **The first read-only data-size inventory had an invalid PowerShell pipeline after `foreach`.**
+  PowerShell rejected the command at parse time, before it read or changed any file. Wrapping the
+  loop's collected output before `ConvertTo-Json` corrected the diagnostic.
+- **The verified GUI exited before the reinstall script reached `Wait-Process`.** The exact-path
+  PID was stopped as intended, then `Wait-Process` reported that the PID no longer existed and the
+  script exited before its broker assertion. A separate check confirmed the GUI was gone and the
+  broker remained alive; no broker or session was stopped.
+- **The NSIS update relaunched Talkak before the first post-install data hash comparison.** The
+  live WebView held four LevelDB files open and had naturally advanced its log/manifest, so those
+  reads failed or differed while all 37 session-definition hashes still matched. The exact-path
+  relaunched GUI was stopped, but Explorer then completed delayed launches twice: one still held
+  three files during the next check, and the other overlapped the deliberate clean-environment
+  launch. Both exact-path duplicates and their WebView children exited normally. The durable
+  local-storage contents were compared offline, and only the deliberate launch was retained.

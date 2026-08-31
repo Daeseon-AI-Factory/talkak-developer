@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useConversationScroll } from "../conversationScroll";
 import type { DevSession, InspectorMode, ProjectSource } from "../domain";
 import { useI18n } from "../i18n";
 import {
@@ -340,10 +341,12 @@ function ConversationView({
 }) {
   const { t } = useI18n();
   const [visibleCount, setVisibleCount] = useState(INITIAL_TRANSCRIPT_TURNS);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const prepareForOlder = useConversationScroll(scrollRef);
 
   if (!preview && state.kind !== "loaded") {
     return (
-      <div className="inspector__content conversation-list">
+      <div className="inspector__content conversation-list" ref={scrollRef}>
         <TranscriptNotice state={state} />
       </div>
     );
@@ -373,7 +376,7 @@ function ConversationView({
   const unavailableOlder = Math.max(0, totalEntries - entries.length);
 
   return (
-    <div className="inspector__content conversation-list">
+    <div className="inspector__content conversation-list" ref={scrollRef}>
       <div className="conversation-list__meta">
         <span>{t("inspector.messageCount", { count: totalEntries })}</span>
         <span>
@@ -391,7 +394,10 @@ function ConversationView({
         <button
           className="conversation-list__older"
           type="button"
-          onClick={() => setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE)}
+          onClick={() => {
+            prepareForOlder();
+            setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE);
+          }}
         >
           {t("transcript.showOlder", { count: nextPageSize })}
         </button>

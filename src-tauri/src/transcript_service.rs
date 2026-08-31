@@ -4,25 +4,25 @@
 //! bound to the session id and only bytes appended after the last complete line are parsed.
 
 use crate::agent_transcript::{
-    claude_project_dir_name, collect_line, collect_rollouts, home_dir, modified_at,
-    normalised_path, AgentTranscript, Collected, TranscriptSource, MAX_TRANSCRIPT_ENTRIES,
+    collect_line, home_dir, normalised_path, AgentTranscript, Collected, TranscriptSource,
+    MAX_TRANSCRIPT_ENTRIES,
 };
-use crate::transcript_line_filter::{codex_session_header, codex_session_header_prefix};
-use chrono::DateTime;
+use crate::transcript_discovery::{
+    discover_record, parse_rfc3339_ms, provider_hint, system_time_ms, Candidate,
+};
+use crate::transcript_selection::claude_record_intent;
 use session_broker::store::SessionStore;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 #[derive(Clone)]
 pub(crate) struct TranscriptService {
     home: Option<PathBuf>,
     store: Option<Arc<SessionStore>>,
-    /// The registry lock is held only long enough to find one session's cache. Discovery and JSONL
-    /// parsing run under that session's lock, so duplicate reads coalesce without blocking another
-    /// pane's cold read.
+    /// The registry only finds a session cache; its own lock coalesces reads without blocking peers.
     cache: Arc<Mutex<HashMap<String, SessionCache>>>,
     #[cfg(test)]
     cold_read_hook: Option<ColdReadHook>,
@@ -107,9 +107,8 @@ impl TranscriptService {
             .lock()
             .map_err(|_| "the transcript cache is unavailable".to_string())?;
 
-        // The definition is atomically replaced on every broker spawn. Read it after this
-        // session's lock is acquired so queued, stale renderer requests all converge on the latest
-        // broker-owned run rather than replaying their arrival order into the cache.
+        // Read the atomically replaced definition under this session lock so stale requests
+        // converge on the latest broker run.
         let current_run = self
             .store
             .as_deref()
@@ -129,6 +128,10 @@ impl TranscriptService {
             current_run_started_ms.or_else(|| started_at.as_deref().and_then(parse_rfc3339_ms));
         let effective_provider =
             stored_provider.or_else(|| provider_hint(agent_command.as_deref()));
+        let claude_intent = current_run
+            .as_ref()
+            .filter(|_| stored_provider == Some(TranscriptSource::Claude))
+            .and_then(|run| claude_record_intent(&run.args));
         let authoritative_run_id = current_run.as_ref().and_then(|run| run.run_id);
         let effective_run_id = authoritative_run_id.or(run_id);
         let project_key = normalised_path(effective_project);
@@ -187,11 +190,19 @@ impl TranscriptService {
                 effective_project,
                 Some(pending.since_ms),
                 Some(pending.source),
+                claude_intent.as_ref(),
                 Some(&pending.previous.path),
             )?;
             if let Some(candidate) = candidate {
-                Some(RebindResolution::New(candidate))
-            } else if pending.previous.source == pending.source
+                if candidate.path == pending.previous.path
+                    && candidate.source == pending.previous.source
+                {
+                    Some(RebindResolution::Resume)
+                } else {
+                    Some(RebindResolution::New(candidate))
+                }
+            } else if claude_intent.is_none()
+                && pending.previous.source == pending.source
                 && pending.previous.changed_since(pending.since_ms)
             {
                 Some(RebindResolution::Resume)
@@ -228,6 +239,7 @@ impl TranscriptService {
                 effective_project,
                 effective_started_ms,
                 effective_provider,
+                claude_intent.as_ref(),
                 None,
             )?
             else {
@@ -259,9 +271,7 @@ fn replaces_cached_run(previous: u64, current: u64, authoritative: bool) -> bool
     }
 }
 
-/// Cold discovery and a first parse can involve a large local file. Run it on Tauri's blocking
-/// pool so the window stays responsive; each session lock still coalesces its concurrent reads into
-/// one parse without serialising unrelated sessions.
+/// Keep cold discovery and parsing off the window thread; per-session locks still coalesce reads.
 #[tauri::command]
 pub(crate) async fn agent_transcript(
     service: tauri::State<'_, TranscriptService>,
@@ -312,211 +322,6 @@ struct PendingRebind {
 enum RebindResolution {
     New(Candidate),
     Resume,
-}
-
-#[derive(Debug, Clone)]
-struct Candidate {
-    path: PathBuf,
-    source: TranscriptSource,
-    started_ms: Option<i64>,
-    modified_ms: i64,
-}
-
-fn discover_record(
-    home: &Path,
-    project_path: &str,
-    session_started_ms: Option<i64>,
-    hint: Option<TranscriptSource>,
-    excluded_path: Option<&Path>,
-) -> Result<Option<Candidate>, String> {
-    // A configured executable is authoritative and lets cold discovery avoid touching the other
-    // provider's whole record tree. With no hint, inspect both and remain agent-neutral.
-    let mut candidates = match hint {
-        Some(TranscriptSource::Claude) => claude_candidates(home, project_path),
-        Some(TranscriptSource::Codex) => codex_candidates(home, project_path, session_started_ms)?,
-        None => {
-            let mut records = claude_candidates(home, project_path);
-            records.extend(codex_candidates(home, project_path, session_started_ms)?);
-            records
-        }
-    };
-    if let Some(excluded) = excluded_path {
-        candidates.retain(|candidate| candidate.path != excluded);
-    }
-    if let Some(started) = session_started_ms {
-        // The session is created immediately before its agent is launched. A record older than
-        // that session belongs to an earlier pane even when it shares the same cwd. The one-second
-        // grace covers filesystem/clock rounding at launch without reopening that ambiguity.
-        let earliest = started.saturating_sub(1_000);
-        candidates.retain(|candidate| candidate.started_ms.is_some_and(|value| value >= earliest));
-    }
-    Ok(candidates.into_iter().min_by(|left, right| {
-        candidate_key(left, session_started_ms).cmp(&candidate_key(right, session_started_ms))
-    }))
-}
-
-fn candidate_key(candidate: &Candidate, target: Option<i64>) -> (u8, u64, std::cmp::Reverse<i64>) {
-    match (target, candidate.started_ms) {
-        (Some(wanted), Some(started)) => (
-            0,
-            wanted.abs_diff(started),
-            std::cmp::Reverse(candidate.modified_ms),
-        ),
-        (Some(_), None) => (1, u64::MAX, std::cmp::Reverse(candidate.modified_ms)),
-        (None, _) => (0, 0, std::cmp::Reverse(candidate.modified_ms)),
-    }
-}
-
-fn claude_candidates(home: &Path, project_path: &str) -> Vec<Candidate> {
-    let root = home.join(".claude").join("projects");
-    let wanted = claude_project_dir_name(project_path);
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut exact = None;
-    let mut fallback = None;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == wanted {
-            exact = Some(entry.path());
-            break;
-        }
-        if fallback.is_none() && name.eq_ignore_ascii_case(&wanted) {
-            fallback = Some(entry.path());
-        }
-    }
-    let Some(directory) = exact.or(fallback) else {
-        return Vec::new();
-    };
-    let Ok(records) = std::fs::read_dir(directory) else {
-        return Vec::new();
-    };
-    records
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl"))
-        .map(|path| {
-            let modified_ms = system_time_ms(modified_at(&path));
-            let started_ms = claude_start_ms(&path);
-            Candidate {
-                path,
-                source: TranscriptSource::Claude,
-                started_ms,
-                modified_ms,
-            }
-        })
-        .collect()
-}
-
-fn claude_start_ms(path: &Path) -> Option<i64> {
-    let file = std::fs::File::open(path).ok()?;
-    // Session metadata comes first; this bound avoids accidentally scanning a malformed large file
-    // during discovery. A missing timestamp still remains a newest-file fallback candidate.
-    for line in BufReader::new(file).lines().map_while(Result::ok).take(256) {
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
-            continue;
-        };
-        if value.get("isSidechain").and_then(|flag| flag.as_bool()) == Some(true) {
-            continue;
-        }
-        if let Some(timestamp) = value.get("timestamp").and_then(|value| value.as_str()) {
-            if let Some(parsed) = parse_rfc3339_ms(timestamp) {
-                return Some(parsed);
-            }
-        }
-    }
-    None
-}
-
-fn codex_candidates(
-    home: &Path,
-    project_path: &str,
-    session_started_ms: Option<i64>,
-) -> Result<Vec<Candidate>, String> {
-    let root = home.join(".codex").join("sessions");
-    if !root.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut records = Vec::new();
-    collect_rollouts(&root, &mut records, 0);
-    let mut records: Vec<_> = records
-        .into_iter()
-        .map(|path| (system_time_ms(modified_at(&path)), path))
-        .collect();
-    records.sort_unstable_by_key(|(modified_ms, _)| std::cmp::Reverse(*modified_ms));
-    let wanted = normalised_path(project_path);
-    let mut candidates = Vec::new();
-    for (modified_ms, path) in records {
-        let Ok(file) = std::fs::File::open(&path) else {
-            continue;
-        };
-        const HEADER_PREFIX_BYTES: u64 = 8 * 1024;
-        let mut prefix = Vec::with_capacity(HEADER_PREFIX_BYTES as usize);
-        if file
-            .take(HEADER_PREFIX_BYTES)
-            .read_to_end(&mut prefix)
-            .is_err()
-        {
-            continue;
-        }
-        let prefix = String::from_utf8_lossy(&prefix);
-        let header = codex_session_header_prefix(&prefix)
-            .map(|header| {
-                (
-                    header.cwd.into_owned(),
-                    header.is_user_thread,
-                    header.timestamp.map(|value| value.into_owned()),
-                )
-            })
-            .or_else(|| {
-                let file = std::fs::File::open(&path).ok()?;
-                let mut first = String::new();
-                BufReader::new(file).read_line(&mut first).ok()?;
-                codex_session_header(&first).map(|header| {
-                    (
-                        header.cwd.into_owned(),
-                        header.is_user_thread,
-                        header.timestamp.map(|value| value.into_owned()),
-                    )
-                })
-            });
-        let Some(header) = header else {
-            continue;
-        };
-        if !header.1 || normalised_path(&header.0) != wanted {
-            continue;
-        }
-        candidates.push(Candidate {
-            started_ms: header.2.as_deref().and_then(parse_rfc3339_ms),
-            modified_ms,
-            path,
-            source: TranscriptSource::Codex,
-        });
-        // With no launch timestamp, discover_record chooses the newest modified candidate. The
-        // records are already newest-first, so opening older project matches cannot change it.
-        if session_started_ms.is_none() {
-            break;
-        }
-    }
-    Ok(candidates)
-}
-
-fn provider_hint(command: Option<&str>) -> Option<TranscriptSource> {
-    let executable = command?
-        .replace('\\', "/")
-        .rsplit('/')
-        .next()?
-        .to_ascii_lowercase();
-    let executable = [".exe", ".cmd", ".bat"]
-        .into_iter()
-        .find_map(|suffix| executable.strip_suffix(suffix))
-        .unwrap_or(&executable);
-    match executable {
-        "claude" | "claude-code" => Some(TranscriptSource::Claude),
-        "codex" => Some(TranscriptSource::Codex),
-        _ => None,
-    }
 }
 
 struct BoundTranscript {
@@ -644,23 +449,12 @@ impl BoundTranscript {
     }
 }
 
-fn system_time_ms(value: SystemTime) -> i64 {
-    value
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
-        .unwrap_or_default()
-}
-
-fn parse_rfc3339_ms(value: &str) -> Option<i64> {
-    DateTime::parse_from_rfc3339(value)
-        .ok()
-        .map(|timestamp| timestamp.timestamp_millis())
-}
-
+#[cfg(test)]
+#[path = "transcript_service_claude_tests.rs"]
+mod claude_tests;
 #[cfg(test)]
 #[path = "transcript_service_core_tests.rs"]
 mod core_tests;
-
 #[cfg(test)]
 #[path = "transcript_service_extended_tests.rs"]
 mod extended_tests;

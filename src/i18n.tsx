@@ -266,8 +266,7 @@ const ko = {
   "workspace.detachConfirmAcceptDetail": "세션은 계속 실행됩니다",
   "workspace.detachConfirmCancel": "그대로 두기",
   "transcript.loading": "에이전트 기록을 읽는 중…",
-  "transcript.absent":
-    "이 세션에 연결된 에이전트 기록을 찾지 못했습니다. 이 세션에서 에이전트를 실행하면 기록이 생깁니다.",
+  "transcript.absent": "이 세션에 연결된 에이전트 기록이 없습니다.",
   "transcript.unsupported": "브라우저 미리보기에서는 로컬 기록을 읽을 수 없습니다.",
   "transcript.failed": "기록을 읽지 못했습니다 — {message}",
   "transcript.source": "{source} 세션 기록",
@@ -635,8 +634,7 @@ const en: Record<MessageKey, string> = {
   "workspace.detachConfirmAcceptDetail": "The session keeps running",
   "workspace.detachConfirmCancel": "Keep it open",
   "transcript.loading": "Reading the agent record…",
-  "transcript.absent":
-    "No agent record is bound to this session yet. Running an agent in this session creates one.",
+  "transcript.absent": "No agent record is bound to this session.",
   "transcript.unsupported": "The browser preview cannot read local records.",
   "transcript.failed": "The record could not be read — {message}",
   "transcript.source": "{source} session record",

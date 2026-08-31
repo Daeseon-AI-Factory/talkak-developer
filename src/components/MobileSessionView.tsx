@@ -1,4 +1,5 @@
-import { type CSSProperties, useState } from "react";
+import { type CSSProperties, type RefObject, useRef, useState } from "react";
+import { useConversationScroll } from "../conversationScroll";
 import type { DevSession, Project } from "../domain";
 import { useI18n } from "../i18n";
 import {
@@ -54,6 +55,7 @@ export function MobileSessionView({
   onOpenSettings,
 }: MobileSessionViewProps) {
   const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const visibleReview = reviewedDraft === draft ? reviewedDraft : null;
   const preview = project.source === "preview";
   const { state: transcriptState } = useAgentTranscript(
@@ -150,6 +152,7 @@ export function MobileSessionView({
 
           <div
             className="mobile-session-view__content"
+            ref={contentRef}
             aria-label={
               activeTab === "conversation"
                 ? t("mobile.conversation")
@@ -164,6 +167,7 @@ export function MobileSessionView({
                 session={session}
                 state={transcriptState}
                 preview={preview}
+                scrollRef={contentRef}
               />
             ) : null}
             {activeTab === "terminal" ? (
@@ -276,13 +280,16 @@ function ConversationTab({
   session,
   state,
   preview,
+  scrollRef,
 }: {
   session: DevSession;
   state: TranscriptState;
   preview: boolean;
+  scrollRef: RefObject<HTMLElement | null>;
 }) {
   const { t } = useI18n();
   const [visibleCount, setVisibleCount] = useState(INITIAL_TRANSCRIPT_TURNS);
+  const prepareForOlder = useConversationScroll(scrollRef);
 
   if (!preview && state.kind !== "loaded") return <MobileTranscriptNotice state={state} />;
 
@@ -322,7 +329,10 @@ function ConversationTab({
         <button
           className="conversation-list__older"
           type="button"
-          onClick={() => setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE)}
+          onClick={() => {
+            prepareForOlder();
+            setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE);
+          }}
         >
           {t("transcript.showOlder", { count: nextPageSize })}
         </button>

@@ -5,7 +5,9 @@ mod clipboard_commands;
 mod project_commands;
 mod session_commands;
 mod session_runtime;
+mod transcript_discovery;
 mod transcript_line_filter;
+mod transcript_selection;
 mod transcript_service;
 
 #[cfg(test)]

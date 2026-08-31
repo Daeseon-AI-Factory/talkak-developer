@@ -313,6 +313,9 @@ impl SessionRuntime {
             .map_err(|error| RuntimeError::Process(error.to_string()))?;
         let writer = Arc::new(Mutex::new(Some(writer)));
 
+        // The child can create its transcript before spawn_command returns. Capture the launch
+        // boundary first so transcript discovery never treats that new record as an older pane.
+        let started_at_ms = now_ms();
         let command = command_for_request(&request);
         let mut child = pair
             .slave
@@ -336,7 +339,7 @@ impl SessionRuntime {
             args: request.args.clone(),
             cols: request.cols,
             rows: request.rows,
-            started_at_ms: now_ms(),
+            started_at_ms,
         });
 
         if let Err(error) = spawn_reader_thread(

@@ -8,8 +8,7 @@
 //!
 //! This is that adapter. Both agents this product runs already write a structured JSONL record of
 //! their own session, which is a far better source than scraping the terminal: the turns are
-//! already separated, the text is not wrapped to the pane width, and the file edits are named
-//! rather than inferred from prose.
+//! already separated, unwrapped, and include the edited file names.
 //!
 //!   Claude Code  ~/.claude/projects/<cwd with every non-alphanumeric turned into '-'>/<id>.jsonl
 //!   Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<uuid>.jsonl
@@ -17,8 +16,7 @@
 //! Codex does not encode the directory in the path, so its first line — `session_meta` — carries
 //! `payload.cwd` and that is what a project is matched against.
 //!
-//! Only what the panel needs crosses the IPC boundary. One of these files reached 16 MB in a single
-//! session; handing that to the renderer to filter would be worse than showing nothing.
+//! Only the bounded panel projection crosses IPC; one real record already exceeded 16 MB.
 
 use serde::Serialize;
 use std::collections::VecDeque;
@@ -183,7 +181,7 @@ pub(crate) struct Collected {
     total: usize,
     changed: Vec<String>,
     last_at: Option<String>,
-    /// The message id of the turn still being folded into, if any.
+    /// The provider-defined group still being folded into, if any.
     open_group: Option<String>,
 }
 
@@ -231,8 +229,9 @@ impl Collected {
                             );
                         }
                     }
-                    if entry.at.is_some() {
-                        self.last_at = entry.at;
+                    if let Some(at) = entry.at {
+                        last.at = Some(at.clone());
+                        self.last_at = Some(at);
                     }
                     return;
                 }
@@ -242,6 +241,16 @@ impl Collected {
             self.open_group = None;
         }
         self.push(entry, limit);
+    }
+
+    fn touch_open_group_at(&mut self, group: &str, at: Option<String>) {
+        if self.open_group.as_deref() != Some(group) {
+            return;
+        }
+        if let (Some(last), Some(at)) = (self.entries.back_mut(), at) {
+            last.at = Some(at.clone());
+            self.last_at = Some(at);
+        }
     }
 
     fn touched(&mut self, file: &str) {
@@ -328,11 +337,8 @@ pub(crate) fn collect_line_without_filter_for_test(
 }
 
 fn collect_claude_value(value: &serde_json::Value, collected: &mut Collected, limit: usize) {
-    // Sidechain entries are a subagent's own conversation, and meta entries are the harness
-    // talking to itself. Neither is what the person in front of the pane was doing.
-    if value.get("isSidechain").and_then(|flag| flag.as_bool()) == Some(true)
-        || value.get("isMeta").and_then(|flag| flag.as_bool()) == Some(true)
-    {
+    // A sidechain is a subagent's separate conversation and never affects the visible turn.
+    if value.get("isSidechain").and_then(|flag| flag.as_bool()) == Some(true) {
         return;
     }
     let role = match value.get("type").and_then(|kind| kind.as_str()) {
@@ -340,6 +346,26 @@ fn collect_claude_value(value: &serde_json::Value, collected: &mut Collected, li
         Some("assistant") => "assistant",
         _ => return,
     };
+    // TALKAK uses every real user-prompt record as the assistant-turn boundary, even when the
+    // prompt is image-only and therefore has no text to render. Tool-result records are also typed
+    // as `user`, but remain inside the current turn.
+    let is_user_prompt = role == "user"
+        && match value
+            .get("message")
+            .and_then(|message| message.get("content"))
+        {
+            Some(serde_json::Value::String(_)) => true,
+            Some(serde_json::Value::Array(blocks)) => !blocks.iter().any(|block| {
+                block.get("type").and_then(|kind| kind.as_str()) == Some("tool_result")
+            }),
+            _ => false,
+        };
+    if value.get("isMeta").and_then(|flag| flag.as_bool()) == Some(true) {
+        if is_user_prompt {
+            collected.open_group = None;
+        }
+        return;
+    }
     let at = value
         .get("timestamp")
         .and_then(|timestamp| timestamp.as_str())
@@ -384,20 +410,27 @@ fn collect_claude_value(value: &serde_json::Value, collected: &mut Collected, li
     }
     let text = strip_harness_wrapper(&text);
     if text.is_empty() {
+        if is_user_prompt {
+            collected.open_group = None;
+        } else if role == "assistant" {
+            // A tool-only record still advances its visible assistant turn's timestamp.
+            collected.touch_open_group_at("claude-assistant-turn", at);
+        }
         return;
     }
-    let message_id = value
-        .get("message")
-        .and_then(|message| message.get("id"))
-        .and_then(|id| id.as_str())
-        .map(str::to_string);
+    // Claude can emit several API messages while answering one human prompt (for example around
+    // tool calls), and those messages have different ids. TALKAK's conversation reader groups the
+    // whole assistant side of that human turn; using message.id here split it into needless bubbles.
+    // A non-empty human user record clears this group, while tool-result records contain no visible
+    // text and deliberately leave it open.
+    let turn_group = (role == "assistant").then(|| "claude-assistant-turn".to_string());
     collected.push_merging(
         TranscriptEntry {
             role: role.to_string(),
             text,
             at,
         },
-        message_id.filter(|_| role == "assistant"),
+        turn_group,
         limit,
     );
 }
@@ -561,9 +594,8 @@ mod tests {
 
     #[test]
     fn one_answer_written_as_several_blocks_is_one_turn() {
-        // An assistant reply is written a line per content block, all sharing message.id — 483 of
-        // 895 in one real file here span more than one line. Per line, a single reply rendered as
-        // up to five separate bubbles.
+        // Claude may write one assistant turn across several records. The service-level tests also
+        // cover the different-message-id case that occurs around tool calls.
         let mut collected = Collected::new();
         let block = |text: &str| TranscriptEntry {
             role: "assistant".into(),

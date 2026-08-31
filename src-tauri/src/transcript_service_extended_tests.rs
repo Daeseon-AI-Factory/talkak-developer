@@ -4,6 +4,7 @@ use crate::transcript_line_filter::compact_record_relevance;
 use session_broker::store::StoredSession;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
+use std::path::Path;
 use std::sync::{Condvar, Mutex as TestMutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -455,8 +456,15 @@ fn local_cold_and_warm_cache_probe() {
         return;
     };
     let discovery_started = Instant::now();
-    let selected =
-        discover_record(&home, &project, None, Some(TranscriptSource::Codex), None).unwrap();
+    let selected = discover_record(
+        &home,
+        &project,
+        None,
+        Some(TranscriptSource::Codex),
+        None,
+        None,
+    )
+    .unwrap();
     let discovery_elapsed = discovery_started.elapsed();
     let Some(selected) = selected else {
         println!("no local Codex record; skipped");
@@ -522,6 +530,84 @@ fn local_cold_and_warm_cache_probe() {
         fast_rejected,
         fallback,
         warm.path
+    );
+}
+
+#[test]
+#[ignore = "local Claude transcript cold/warm performance probe"]
+fn local_claude_cold_and_warm_cache_probe() {
+    let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let Some(home) = home_dir() else {
+        println!("no local home directory; skipped");
+        return;
+    };
+    let discovery_started = Instant::now();
+    let selected = discover_record(
+        &home,
+        &project,
+        None,
+        Some(TranscriptSource::Claude),
+        None,
+        None,
+    )
+    .unwrap();
+    let discovery_elapsed = discovery_started.elapsed();
+    let Some(selected) = selected else {
+        println!("no local Claude record; skipped");
+        return;
+    };
+    let bytes = std::fs::metadata(&selected.path).unwrap().len();
+    let parse_started = Instant::now();
+    let parsed = BoundTranscript::open("local-claude-parse-probe".into(), None, selected).unwrap();
+    let parse_elapsed = parse_started.elapsed();
+    let parsed_lines = parsed.parsed_lines;
+
+    let service = TranscriptService::new(None);
+    let cold_started = Instant::now();
+    let cold = service
+        .read(
+            "local-claude-cache-probe".into(),
+            None,
+            project.clone(),
+            None,
+            Some("claude".into()),
+            MAX_TRANSCRIPT_ENTRIES,
+        )
+        .unwrap()
+        .unwrap();
+    let cold_elapsed = cold_started.elapsed();
+    let warm_started = Instant::now();
+    let warm = service
+        .read(
+            "local-claude-cache-probe".into(),
+            None,
+            project,
+            None,
+            Some("claude".into()),
+            MAX_TRANSCRIPT_ENTRIES,
+        )
+        .unwrap()
+        .unwrap();
+    let warm_elapsed = warm_started.elapsed();
+
+    assert_eq!(warm.total_entries, cold.total_entries);
+    assert_eq!(
+        parsed.snapshot(MAX_TRANSCRIPT_ENTRIES).total_entries,
+        cold.total_entries
+    );
+    println!(
+        "claude discovery={}ms parse={}ms cold={}ms warm={}us bytes={} lines={} turns={}",
+        discovery_elapsed.as_millis(),
+        parse_elapsed.as_millis(),
+        cold_elapsed.as_millis(),
+        warm_elapsed.as_micros(),
+        bytes,
+        parsed_lines,
+        warm.total_entries,
     );
 }
 
