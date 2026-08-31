@@ -585,6 +585,11 @@ responsive Talkak window at PID 37980. The broker's pre-spawn timestamp change i
 become live only after that deliberately preserved old broker retires; replacing it now would end
 the owner's attached sessions.
 
+GitHub Actions run `33430517384` then passed both product jobs for commit `5cd8b84`: Windows
+clean-installed the release and E2E NSIS packages and exercised real `Control+V` through the PTY;
+macOS built the `.app` packages and exercised real `Command+V` through its native PTY. Neither job
+had a failed step.
+
 ---
 
 ## W-023 — Plain Windows Ctrl+V reached Codex as its image-paste control byte
@@ -807,3 +812,9 @@ suite now places a computed PowerShell command on the native clipboard, presses 
   three files during the next check, and the other overlapped the deliberate clean-environment
   launch. Both exact-path duplicates and their WebView children exited normally. The durable
   local-storage contents were compared offline, and only the deliberate launch was retained.
+- **The first per-step GitHub Actions status formatter repeated the earlier PowerShell pipeline
+  mistake.** Piping directly after a `foreach` block produced an empty-pipe parser error before
+  any API request ran. Collecting the loop result into an array returned the read-only job state.
+- **One final read-only TALKAK parity search used an unclosed `rg` group.** The malformed search
+  changed nothing; direct, narrower searches located the scroll, Claude-folding, and clipboard
+  anchors in both repositories and found no important parity gap.
