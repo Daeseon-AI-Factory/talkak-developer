@@ -122,17 +122,15 @@ export function attachTerminalClipboard(
     selectionCopyTimer = undefined;
   };
   const selectionChange = terminal.onSelectionChange(() => {
-    cancelSelectionCopy();
     const selection = terminal.getSelection();
+    // Input, a buffer switch, or a vertical resize can clear xterm's selection before this debounce
+    // ends. TALKAK keeps the last non-empty snapshot pending instead of cancelling that copy.
     if (!selection) return;
-    // Dragging changes the selection many times. Copy the settled selection once, with the same
-    // short debounce used by the original TALKAK terminal.
+    cancelSelectionCopy();
+    // Delay the captured snapshot briefly, matching the original TALKAK terminal.
     selectionCopyTimer = setTimeout(() => {
       selectionCopyTimer = undefined;
-      const settledSelection = terminal.getSelection();
-      if (settledSelection) {
-        void clipboard.writeText(settledSelection).catch(report("copy failed"));
-      }
+      void clipboard.writeText(selection).catch(report("copy failed"));
     }, 120);
   });
 

@@ -39,6 +39,8 @@ export interface TranscriptScope {
 
 export interface TranscriptClient {
   available: () => boolean;
+  /** The last completed prewarm for this exact running session, if one is still retained. */
+  peek: (scope: TranscriptScope, limit?: number) => AgentTranscript | undefined;
   /** The transcript bound to this Talkak session, or null when its agent has not written one. */
   read: (scope: TranscriptScope, limit?: number) => Promise<AgentTranscript | null>;
   /** Warm the native session binding/cache before a panel opens. */
@@ -54,6 +56,10 @@ export function createTranscriptClient(
   }
 
   const pending = new Map<string, PendingRead>();
+  // Workspace warms only its active session. One exact-key slot gives that panel an immediate first
+  // paint without retaining every large transcript the user has ever opened.
+  let completed: { key: string; transcript: AgentTranscript } | null = null;
+  let latestRequestedKey: string | null = null;
 
   function key(scope: TranscriptScope, limit: number): string {
     return JSON.stringify([
@@ -68,6 +74,7 @@ export function createTranscriptClient(
 
   function invokeRead(scope: TranscriptScope, limit: number): Promise<AgentTranscript | null> {
     const requestKey = key(scope, limit);
+    latestRequestedKey = requestKey;
     const existing = pending.get(requestKey);
     if (existing) return existing.promise;
 
@@ -76,14 +83,27 @@ export function createTranscriptClient(
     };
     pending.set(requestKey, entry);
     void entry.promise.then(
-      () => pending.delete(requestKey),
-      () => pending.delete(requestKey),
+      (transcript) => {
+        pending.delete(requestKey);
+        if (latestRequestedKey !== requestKey) return;
+        if (transcript && scope.runId !== null) completed = { key: requestKey, transcript };
+        else if (completed?.key === requestKey) completed = null;
+      },
+      () => {
+        pending.delete(requestKey);
+        if (latestRequestedKey === requestKey && completed?.key === requestKey) completed = null;
+      },
     );
     return entry.promise;
   }
 
   return {
     available,
+    peek: (scope, limit = 800) => {
+      if (scope.runId === null) return undefined;
+      const requestKey = key(scope, limit);
+      return completed?.key === requestKey ? completed.transcript : undefined;
+    },
     read: (scope, limit = 800) => invokeRead(scope, limit),
     prewarm: async (scope, limit = 800) => {
       await invokeRead(scope, limit);

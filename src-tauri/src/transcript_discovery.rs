@@ -7,7 +7,7 @@ use crate::transcript_line_filter::{codex_session_header, codex_session_header_p
 use crate::transcript_selection::{
     project_paths_match, unique_claude_resume_path, ClaudeRecordIntent,
 };
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -207,12 +207,48 @@ fn codex_candidates(
     if !root.is_dir() {
         return Ok(Vec::new());
     }
+    if let Some(started_ms) = session_started_ms {
+        let nearby = inspect_codex_candidates(
+            codex_rollouts_near_start(&root, started_ms),
+            project_path,
+            Some(started_ms),
+        );
+        let earliest = started_ms.saturating_sub(1_000);
+        if nearby
+            .iter()
+            .any(|candidate| candidate.started_ms.is_some_and(|value| value >= earliest))
+        {
+            return Ok(nearby);
+        }
+    }
+
+    // A shell can stay open for days before the user starts an agent. The near-start fast path
+    // deliberately falls back to the complete tree so that case keeps the previous behaviour.
     let mut records = Vec::new();
     collect_rollouts(&root, &mut records, 0);
+    Ok(inspect_codex_candidates(
+        records,
+        project_path,
+        session_started_ms,
+    ))
+}
+
+fn inspect_codex_candidates(
+    records: Vec<PathBuf>,
+    project_path: &str,
+    session_started_ms: Option<i64>,
+) -> Vec<Candidate> {
     let mut records: Vec<_> = records
         .into_iter()
         .map(|path| (system_time_ms(modified_at(&path)), path))
         .collect();
+    if let Some(started_ms) = session_started_ms {
+        // A record whose mtime predates the run cannot pass the stricter session_meta timestamp
+        // check below. Drop it before opening an 8 KiB header; a long-lived Codex installation can
+        // otherwise read thousands of historical rollout headers whenever one session is cold.
+        let earliest = started_ms.saturating_sub(1_000);
+        records.retain(|(modified_ms, _)| *modified_ms >= earliest);
+    }
     records.sort_unstable_by_key(|(modified_ms, _)| std::cmp::Reverse(*modified_ms));
     let mut candidates = Vec::new();
     for (modified_ms, path) in records {
@@ -265,7 +301,34 @@ fn codex_candidates(
             break;
         }
     }
-    Ok(candidates)
+    candidates
+}
+
+fn codex_rollouts_near_start(root: &Path, started_ms: i64) -> Vec<PathBuf> {
+    let mut records = Vec::new();
+    // Codex shards rollouts by launch date. The folder can be one day either side of the UTC
+    // timestamp around a timezone boundary, so inspect those three tiny shards instead of every
+    // historical record. Header, cwd, and start-time checks below remain authoritative.
+    const DAY_MS: i64 = 86_400_000;
+    let mut directories = Vec::with_capacity(3);
+    for offset in [-DAY_MS, 0, DAY_MS] {
+        let Some(timestamp) =
+            DateTime::<Utc>::from_timestamp_millis(started_ms.saturating_add(offset))
+        else {
+            continue;
+        };
+        let directory = root
+            .join(timestamp.format("%Y").to_string())
+            .join(timestamp.format("%m").to_string())
+            .join(timestamp.format("%d").to_string());
+        if !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    for directory in directories {
+        collect_rollouts(&directory, &mut records, 0);
+    }
+    records
 }
 
 pub(crate) fn provider_hint(command: Option<&str>) -> Option<TranscriptSource> {

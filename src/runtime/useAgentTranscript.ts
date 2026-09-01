@@ -28,8 +28,11 @@ export function useAgentTranscript(
   const projectPath = scope?.projectPath ?? null;
   const startedAt = scope?.startedAt ?? null;
   const agentCommand = scope?.agentCommand ?? null;
-  const hasScope = sessionId !== null && projectPath !== null && startedAt !== null;
-  const scopeKey = hasScope
+  const request: TranscriptScope | null =
+    sessionId !== null && projectPath !== null && startedAt !== null
+      ? { sessionId, runId, projectPath, startedAt, agentCommand }
+      : null;
+  const scopeKey = request
     ? JSON.stringify([sessionId, runId, projectPath, startedAt, agentCommand])
     : null;
   const [snapshot, setSnapshot] = useState<{
@@ -37,22 +40,12 @@ export function useAgentTranscript(
     state: TranscriptState;
   }>(() => ({
     scopeKey,
-    state: transcriptClient.available()
-      ? scopeKey
-        ? { kind: "loading" }
-        : { kind: "absent" }
-      : { kind: "unsupported" },
+    state: transcriptInitialState(request),
   }));
   // Derive loading immediately when the selected session changes. Waiting for an effect would
   // paint the previous session's transcript for one frame.
   const state: TranscriptState =
-    snapshot.scopeKey === scopeKey
-      ? snapshot.state
-      : transcriptClient.available()
-        ? scopeKey
-          ? { kind: "loading" }
-          : { kind: "absent" }
-        : { kind: "unsupported" };
+    snapshot.scopeKey === scopeKey ? snapshot.state : transcriptInitialState(request);
 
   useEffect(() => {
     if (
@@ -99,6 +92,13 @@ export function useAgentTranscript(
   }, [active, sessionId, runId, projectPath, startedAt, agentCommand, runtimePhase, refreshMs]);
 
   return { state };
+}
+
+function transcriptInitialState(scope: TranscriptScope | null): TranscriptState {
+  if (!transcriptClient.available()) return { kind: "unsupported" };
+  if (!scope) return { kind: "absent" };
+  const cached = transcriptClient.peek(scope, 800);
+  return cached ? { kind: "loaded", transcript: cached } : { kind: "loading" };
 }
 
 export function transcriptPhaseIsLive(phase: TerminalRuntimePhase | null): boolean {

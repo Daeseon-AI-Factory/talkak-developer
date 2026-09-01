@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { execFileSync } from "node:child_process";
 import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
+import { verifyMultilineDragAutoCopy } from "./terminal-drag-copy.e2e-helper.mjs";
 
 const windowsIdentity = execFileSync("whoami.exe", { encoding: "utf8" }).trim();
 const projectPath = process.env.TALKAK_WINDOWS_PROJECT;
@@ -10,7 +11,7 @@ if (!projectPath || !isAbsolute(projectPath)) {
 }
 
 describe("installed Windows product path", () => {
-  it("exercises PTYs, pages, runtime status, and the real terminal-log attention path", async () => {
+  it("exercises PTYs, terminal clipboard, pages, runtime status, and Attention", async () => {
     await (await $('[data-testid="add-project-global"]')).waitForExist();
     await browser.execute(() => {
       localStorage.clear();
@@ -37,6 +38,13 @@ describe("installed Windows product path", () => {
       timeoutMsg: "PTY did not report the current Windows identity",
     });
     await verifyPlainCtrlVPaste();
+    await verifyMultilineDragAutoCopy({
+      command: "write-output 'talkakcopylineone','talkakcopylinetwo','talkakcopylinethree'",
+      pasteChord: [Key.Control, "v"],
+      lineEnding: "\r\n",
+      // A local verification cannot restore image pixels. Hosted CI has a text clipboard.
+      skipImageClipboard: true,
+    });
 
     await (await $('[data-testid="split-right"]')).click();
     await waitForRunningTerminalCount(2);

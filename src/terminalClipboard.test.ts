@@ -270,6 +270,40 @@ describe("copy on selection", () => {
     detach();
     expect(listenerDisposed).toBe(true);
   });
+
+  it("keeps the last non-empty multiline drag when xterm clears it before the debounce", async () => {
+    let selection = "";
+    let selectionChanged: () => void = () => {};
+    const copied: string[] = [];
+    const terminal = {
+      hasSelection: () => selection.length > 0,
+      getSelection: () => selection,
+      clearSelection: () => {
+        selection = "";
+      },
+      paste: () => {},
+      onSelectionChange: (handler: () => void) => {
+        selectionChanged = handler;
+        return { dispose: () => {} };
+      },
+      attachCustomKeyEventHandler: () => {},
+    } as unknown as Parameters<typeof attachTerminalClipboard>[0];
+
+    attachTerminalClipboard(terminal, "windows", {
+      writeText: async (text) => {
+        copied.push(text);
+      },
+      readText: async () => "",
+      readImagePath: async () => null,
+    });
+    selection = "first line\r\nsecond line\r\nthird line";
+    selectionChanged();
+    selection = "";
+    selectionChanged();
+
+    await new Promise((resolve) => setTimeout(resolve, 140));
+    expect(copied).toEqual(["first line\r\nsecond line\r\nthird line"]);
+  });
 });
 
 describe("pasting a screenshot into a terminal", () => {

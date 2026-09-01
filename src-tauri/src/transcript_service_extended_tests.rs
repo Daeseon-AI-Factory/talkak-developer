@@ -1,9 +1,9 @@
 use super::*;
 use crate::agent_transcript::{collect_line_without_filter_for_test, MAX_TRANSCRIPT_TURN_CHARS};
-use crate::transcript_line_filter::compact_record_relevance;
+use crate::transcript_line_filter::{codex_session_header, compact_record_relevance};
 use session_broker::store::StoredSession;
 use std::fs::{create_dir_all, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::sync::{Condvar, Mutex as TestMutex};
 use std::thread;
@@ -444,6 +444,66 @@ fn a_resumed_run_can_keep_appending_to_the_same_record() {
 }
 
 #[test]
+fn codex_discovery_accepts_the_timezone_neighbor_date_shard() {
+    let temp = TempDir::new().unwrap();
+    let project = "C:/work/app";
+    let original = codex_record(
+        temp.path(),
+        "timezone-neighbor",
+        project,
+        "2026-08-31T00:00:00Z",
+        "neighbor",
+    );
+    let directory = temp.path().join(".codex/sessions/2026/08/30");
+    create_dir_all(&directory).unwrap();
+    let expected = directory.join(original.file_name().unwrap());
+    std::fs::rename(original, &expected).unwrap();
+
+    let selected = discover_record(
+        temp.path(),
+        project,
+        Some(parse_rfc3339_ms("2026-08-31T00:00:00Z").unwrap()),
+        Some(TranscriptSource::Codex),
+        None,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(selected.path, expected);
+}
+
+#[test]
+fn codex_discovery_falls_back_when_an_agent_starts_days_after_its_shell() {
+    let temp = TempDir::new().unwrap();
+    let project = "C:/work/app";
+    let original = codex_record(
+        temp.path(),
+        "late-agent",
+        project,
+        "2026-09-03T10:00:00Z",
+        "late",
+    );
+    let directory = temp.path().join(".codex/sessions/2026/09/03");
+    create_dir_all(&directory).unwrap();
+    let expected = directory.join(original.file_name().unwrap());
+    std::fs::rename(original, &expected).unwrap();
+
+    let selected = discover_record(
+        temp.path(),
+        project,
+        Some(parse_rfc3339_ms("2026-08-31T10:00:00Z").unwrap()),
+        Some(TranscriptSource::Codex),
+        None,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(selected.path, expected);
+}
+
+#[test]
 #[ignore = "local transcript cold/warm performance probe"]
 fn local_cold_and_warm_cache_probe() {
     let project = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -471,6 +531,29 @@ fn local_cold_and_warm_cache_probe() {
         return;
     };
     let selected_path = selected.path.clone();
+    let mut first_line = String::new();
+    BufReader::new(std::fs::File::open(&selected_path).unwrap())
+        .read_line(&mut first_line)
+        .unwrap();
+    let selected_header = codex_session_header(&first_line).unwrap();
+    let selected_started_ms = selected_header
+        .timestamp
+        .as_deref()
+        .and_then(parse_rfc3339_ms)
+        .unwrap();
+    let targeted_discovery_started = Instant::now();
+    let targeted = discover_record(
+        &home,
+        &project,
+        Some(selected_started_ms),
+        Some(TranscriptSource::Codex),
+        None,
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let targeted_discovery_elapsed = targeted_discovery_started.elapsed();
+    assert_eq!(targeted.path, selected_path);
     let parse_started = Instant::now();
     let parsed = BoundTranscript::open("local-performance-probe".into(), None, selected).unwrap();
     let parse_elapsed = parse_started.elapsed();
@@ -519,8 +602,9 @@ fn local_cold_and_warm_cache_probe() {
     );
     assert_eq!(legacy.total_entries, cold.total_entries);
     println!(
-        "discovery={}ms parse={}ms legacy_parse={}ms cold={}ms warm={}us turns={} fast_relevant={} fast_rejected={} fallback={} path={}",
+        "discovery={}ms targeted_discovery={}ms parse={}ms legacy_parse={}ms cold={}ms warm={}us turns={} fast_relevant={} fast_rejected={} fallback={} path={}",
         discovery_elapsed.as_millis(),
+        targeted_discovery_elapsed.as_millis(),
         parse_elapsed.as_millis(),
         legacy_elapsed.as_millis(),
         cold_elapsed.as_millis(),

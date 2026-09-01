@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
+import { verifyMultilineDragAutoCopy } from "./terminal-drag-copy.e2e-helper.mjs";
 
 const projectPath = process.env.TALKAK_MACOS_PROJECT;
 if (process.platform !== "darwin") {
@@ -11,7 +12,7 @@ if (!projectPath || !isAbsolute(projectPath)) {
 }
 
 describe("built macOS product path", () => {
-  it("pastes native clipboard text into a real PTY with Command+V", async () => {
+  it("pastes and drag-copies native clipboard text in a real PTY", async () => {
     await (await $('[data-testid="add-project-global"]')).waitForExist();
     await browser.execute(() => {
       localStorage.clear();
@@ -31,6 +32,11 @@ describe("built macOS product path", () => {
     try {
       await (await $('[data-testid="runtime-phase"][data-phase="running"]')).waitForExist({
         timeout: 20_000,
+      });
+      await verifyMultilineDragAutoCopy({
+        command: "printf 'talkakcopylineone\\ntalkakcopylinetwo\\ntalkakcopylinethree\\n'",
+        pasteChord: [Key.Command, "v"],
+        lineEnding: "\n",
       });
       await verifyPlainCommandVPaste();
     } finally {

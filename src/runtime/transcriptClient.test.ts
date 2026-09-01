@@ -63,18 +63,67 @@ describe("transcript client", () => {
     expect(calls).toBe(1);
   });
 
-  it("does not retain a renderer copy after a completed native prewarm", async () => {
+  it("keeps one completed prewarm for an immediate paint but still revalidates on read", async () => {
     let calls = 0;
+    const refreshed = { ...transcript, totalEntries: 1 };
     const client = createTranscriptClient(
       async <T>() => {
         calls += 1;
-        return transcript as T;
+        return (calls === 1 ? transcript : refreshed) as T;
       },
       () => true,
     );
 
     await client.prewarm(scope);
-    await expect(client.read(scope)).resolves.toEqual(transcript);
+    expect(client.peek(scope)).toBe(transcript);
+    await expect(client.read(scope)).resolves.toEqual(refreshed);
+    expect(client.peek(scope)).toBe(refreshed);
     expect(calls).toBe(2);
+  });
+
+  it("never exposes a completed transcript to another or unknown run", async () => {
+    const client = createTranscriptClient(
+      async <T>() => transcript as T,
+      () => true,
+    );
+
+    await client.prewarm(scope);
+
+    expect(client.peek({ ...scope, runId: 4 })).toBeUndefined();
+    expect(client.peek({ ...scope, runId: null })).toBeUndefined();
+  });
+
+  it("does not retain an absent or failed prewarm", async () => {
+    const absent = createTranscriptClient(
+      async <T>() => null as T,
+      () => true,
+    );
+    await absent.prewarm(scope);
+    expect(absent.peek(scope)).toBeUndefined();
+
+    const failed = createTranscriptClient(
+      async () => {
+        throw new Error("unreadable");
+      },
+      () => true,
+    );
+    await expect(failed.prewarm(scope)).rejects.toThrow("unreadable");
+    expect(failed.peek(scope)).toBeUndefined();
+  });
+
+  it("bounds the completed renderer cache to the most recently requested session", async () => {
+    const otherScope = { ...scope, sessionId: "session-2", runId: 4 };
+    const otherTranscript = { ...transcript, path: "other.jsonl" };
+    const client = createTranscriptClient(
+      async <T>(_command: string, args?: Record<string, unknown>) =>
+        (args?.sessionId === otherScope.sessionId ? otherTranscript : transcript) as T,
+      () => true,
+    );
+
+    await client.prewarm(scope);
+    await client.prewarm(otherScope);
+
+    expect(client.peek(scope)).toBeUndefined();
+    expect(client.peek(otherScope)).toBe(otherTranscript);
   });
 });
