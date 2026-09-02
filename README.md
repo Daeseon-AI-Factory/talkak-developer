@@ -21,6 +21,16 @@ This repository contains the interactive product shell and its first native runt
 - native macOS / native Windows / Windows WSL runtime target model
 - a provider-neutral native PTY boundary for spawn, write, read, resize, snapshot, kill, and discard
 - an ANSI terminal loaded on demand only after a desktop session starts
+- a rendered conversation log from the agent's own record: markdown, code-block and per-message
+  copy, tool summaries, decisions, day separators, token usage, revision-aware refresh
+- per-session agent activity (thinking, working with the last tool, needs input, done) on the pane,
+  the page tab and the attention strip, with turn-complete notices in Attention and optional native
+  OS notifications
+- terminal conveniences: clickable `file:line` references opening a configured editor, copy-on-select
+  that drops frame glyphs, OSC 52 clipboard, a scroll mode for mouse-owning programs, theme presets,
+  stale mouse-mode release, a runtime log viewer, sessions with program and last activity
+- command palette dispatch into the active session, project reorder, delete and reveal-in-folder,
+  direct project jump chords, and a phone composer that sends
 
 The Tauri desktop app can start the operating system's default shell in an explicit absolute working
 directory. Executables and arguments remain runtime configuration; no agent is hardcoded as the

@@ -279,3 +279,47 @@ Verified on this machine: constructing a path from the computed key **works** (N
 case-insensitive), but comparing the computed key against `readdir` output **fails**, because the
 on-disk casing is whichever spelling arrived first. Enumerate and match exact-first with a
 case-insensitive fallback — which `agent_transcript.rs` already does.
+
+---
+
+## 7. 2026-09-01/02 session — push transport and parity work
+
+Branch `agent/developer-workspace-ci`, commits `2bbf608..b486d7a`, pushed. Both desktop gates were
+green at `5c7f0a5` (run 33624684521); later pushes are on the CI at the time of writing.
+
+### What changed
+
+- **Terminal transport is push, not poll.** Broker protocol 3: bytes as base64, `Attach` turns a
+  dedicated connection into an `Output` stream driven by a Condvar the PTY reader signals
+  (`wait_read`), one-second status keepalives. App: `session_attach`/`session_detach` forward raw
+  32-byte-header frames over a Tauri channel; every broker-bound command runs off the IPC thread.
+  Renderer: `src/runtime/terminalStream.ts` commits cursors only after xterm consumed the bytes —
+  this closes the §2.1 double-write lead by construction. Measured in the built app: 40 000 lines in
+  3.5 s, echo and post-page-switch output within tens of ms, no duplicates.
+- **WebGL renderer: deliberately not used.** It was tried and removed: the full Talkak app parked it
+  because it breaks Korean IME composition in WKWebView (`ddalkkak/apps/desktop/src/TerminalPane.tsx`).
+- **Gates read xterm's buffer** through CI-only hooks (`window.__talkakTest`), not `.xterm-rows`; the
+  drag-copy probe dispatches page-side mouse events with `detail: 1` (WebDriver's carry 0, which
+  xterm 6 refuses); a macOS streaming journey (`e2e/macos-stream.e2e.mjs`) is in the gate. E2E specs
+  must PASTE commands: WebDriver keystrokes reach xterm twice on WebKit (keydown + non-composed
+  input, no keypress). Run the gates locally with a SHORT `HOME=/tmp/...` (unix socket path limit)
+  and rebuild the sidecar first — the CI-config build does not rebuild `src-tauri/binaries/`.
+- **Parity features** landed from the verified gap map (`gaps-verified.json` in the session
+  scratchpad, 34 gaps): rendered conversation log, agent activity + notices + native notifications,
+  file:line links + editor command, copy cleaning + toasts, OSC 52, scroll mode, theme presets,
+  DEC-mode release, resize debounce, log-emulator release, palette dispatch, project reorder/delete/
+  reveal, project jump chords, diagnostics log viewer, live-session program/age, broker in-memory
+  append before disk, attach-stream back-pressure, transcript revisions, antigravity provider,
+  resumed-session binding, usage totals. i18n dictionaries are split per surface under
+  `src/i18n/strings/`.
+- Bundle icon restored (`bundle.icon` was missing; the .app had no Resources).
+
+### Open, needing the owner
+
+- Signed auto-update (needs signing keys and CI secrets), AI usage gauges (provider-specific HTTP),
+  LLM summary fallback, fix cards: deliberately not built.
+- Windows: only CI-verified (clean NSIS install + WebDriver E2E). No hands-on Windows run this session.
+- `session-broker/src/runtime.rs` (744) and `src-tauri/src/session_runtime.rs` (708) exceed the
+  700-line guideline; split when next touched.
+- On this Mac an old broker (CI test build, protocol 2) held three idle zsh sessions on the shared
+  socket; the first launch of the new app retires it and ends them.
