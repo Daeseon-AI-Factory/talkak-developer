@@ -3,6 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentTranscript, TranscriptScope } from "./transcriptClient";
 import {
+  type TranscriptState,
+  nextTranscriptState,
   startTranscriptRefresh,
   transcriptPhaseIsLive,
   useAgentTranscript,
@@ -34,10 +36,13 @@ const scope: TranscriptScope = {
 const transcript: AgentTranscript = {
   source: "codex",
   path: "rollout.jsonl",
-  entries: [{ role: "assistant", text: "cached answer", at: null }],
+  entries: [{ role: "assistant", text: "cached answer", at: null, tools: [], decisions: [] }],
   totalEntries: 1,
   changedFiles: [],
   lastActivity: null,
+  revision: 1,
+  activity: { state: "idle", lastTool: null, at: null },
+  usage: null,
 };
 
 beforeEach(() => {
@@ -59,6 +64,22 @@ describe("transcript refresh scheduling", () => {
 
     expect(renderToStaticMarkup(createElement(Probe))).toBe("<span>loaded</span>");
     expect(transcriptPeek).toHaveBeenCalledWith(scope, 800);
+  });
+
+  it("keeps the previous state object when a poll hands back the same record", () => {
+    const previous: TranscriptState = { kind: "loaded", transcript };
+    const refreshed = { ...transcript, revision: 2 };
+
+    expect(nextTranscriptState(previous, transcript)).toBe(previous);
+    expect(nextTranscriptState(previous, refreshed)).toEqual({
+      kind: "loaded",
+      transcript: refreshed,
+    });
+    expect(nextTranscriptState({ kind: "loading" }, transcript)).toEqual({
+      kind: "loaded",
+      transcript,
+    });
+    expect(nextTranscriptState(previous, null)).toEqual({ kind: "absent" });
   });
 
   it("polls only while the agent process is live", () => {

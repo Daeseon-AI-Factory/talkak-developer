@@ -1,16 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { useConversationScroll } from "../conversationScroll";
+import { useEffect } from "react";
 import type { DevSession, InspectorMode, ProjectSource } from "../domain";
 import { useI18n } from "../i18n";
+import type { TranscriptUsage } from "../runtime/transcriptClient";
 import {
-  INITIAL_TRANSCRIPT_TURNS,
-  OLDER_TRANSCRIPT_PAGE,
+  formatTokenCount,
   formatTranscriptActivity,
-  formatTranscriptTime,
   latestAssistantExcerpt,
 } from "../runtime/transcriptPresentation";
 import { type TranscriptState, useAgentTranscript } from "../runtime/useAgentTranscript";
 import { runtimeLabel } from "../workspaceModel";
+import { ConversationView, TranscriptNotice } from "./ConversationView";
 import { Icon } from "./Icon";
 import { TerminalLogView } from "./TerminalLogView";
 
@@ -132,6 +131,8 @@ export function Inspector({
           session={session}
           state={transcriptState}
           preview={preview}
+          className="inspector__content conversation-list"
+          showMeta
         />
       ) : null}
     </aside>
@@ -268,9 +269,39 @@ function LocalTranscriptSummary({
           <SummarySection title={t("inspector.lastActivity")} empty={t("inspector.noActivity")}>
             {lastActivity ? <p className="summary-activity">{lastActivity}</p> : null}
           </SummarySection>
+          <UsageSection usage={transcript.usage} />
           <ChangedFiles files={transcript.changedFiles} />
         </>
       ) : null}
+    </div>
+  );
+}
+
+/** Token counts the agent's own record carries — a size, not a bill. Absent counts say so. */
+function UsageSection({ usage }: { usage: TranscriptUsage | null }) {
+  const { t } = useI18n();
+  return (
+    <SummarySection title={t("inspector.usage")} empty={t("inspector.noUsage")}>
+      {usage ? (
+        <div className="usage-grid">
+          <UsageRow label={t("inspector.usageOutput")} value={usage.outputTokens} />
+          <UsageRow label={t("inspector.usageInput")} value={usage.inputTokens} />
+          <UsageRow label={t("inspector.usageCacheRead")} value={usage.cacheReadTokens} />
+          <UsageRow label={t("inspector.usageCacheCreation")} value={usage.cacheCreationTokens} />
+          <small className="usage-grid__note">
+            {t("inspector.usageMessages", { count: usage.messages })}
+          </small>
+        </div>
+      ) : null}
+    </SummarySection>
+  );
+}
+
+function UsageRow({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="usage-row">
+      <span>{label}</span>
+      <strong title={value.toLocaleString()}>{formatTokenCount(value)}</strong>
     </div>
   );
 }
@@ -302,124 +333,5 @@ function SummarySection({ title, empty, children }: SummarySectionProps) {
       <h3>{title}</h3>
       {hasChildren ? children : <p className="summary-section__empty">{empty}</p>}
     </section>
-  );
-}
-
-/** Says why there is nothing to show, which is never the same as showing nothing. */
-function TranscriptNotice({ state }: { state: TranscriptState }) {
-  const { t } = useI18n();
-  if (state.kind === "loading")
-    return <p className="conversation-disclaimer">{t("transcript.loading")}</p>;
-  if (state.kind === "unsupported")
-    return <p className="conversation-disclaimer">{t("transcript.unsupported")}</p>;
-  if (state.kind === "absent")
-    return <p className="conversation-disclaimer">{t("transcript.absent")}</p>;
-  if (state.kind === "failed")
-    return (
-      <output className="conversation-disclaimer" data-tone="danger">
-        {t("transcript.failed", { message: state.message })}
-      </output>
-    );
-  return null;
-}
-
-interface DisplayConversationEntry {
-  key: string;
-  author: "you" | "agent" | "system";
-  time: string;
-  text: string;
-}
-
-function ConversationView({
-  session,
-  state,
-  preview,
-}: {
-  session: DevSession;
-  state: TranscriptState;
-  preview: boolean;
-}) {
-  const { t } = useI18n();
-  const [visibleCount, setVisibleCount] = useState(INITIAL_TRANSCRIPT_TURNS);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const prepareForOlder = useConversationScroll(scrollRef);
-
-  if (!preview && state.kind !== "loaded") {
-    return (
-      <div className="inspector__content conversation-list" ref={scrollRef}>
-        <TranscriptNotice state={state} />
-      </div>
-    );
-  }
-
-  const transcript = state.kind === "loaded" ? state.transcript : null;
-  const nativeStartIndex = transcript
-    ? Math.max(0, transcript.totalEntries - transcript.entries.length)
-    : 0;
-  const entries: DisplayConversationEntry[] = preview
-    ? session.conversation.map((entry) => ({
-        key: entry.id,
-        author: entry.author,
-        time: entry.time,
-        text: entry.text,
-      }))
-    : (transcript?.entries ?? []).map((entry, index) => ({
-        key: `${entry.at ?? "no-time"}-${nativeStartIndex + index}`,
-        author: entry.role === "user" ? "you" : "agent",
-        time: formatTranscriptTime(entry.at),
-        text: entry.text,
-      }));
-  const totalEntries = preview ? entries.length : (transcript?.totalEntries ?? entries.length);
-  const visibleEntries = entries.slice(-visibleCount);
-  const availableOlder = entries.length - visibleEntries.length;
-  const nextPageSize = Math.min(OLDER_TRANSCRIPT_PAGE, availableOlder);
-  const unavailableOlder = Math.max(0, totalEntries - entries.length);
-
-  return (
-    <div className="inspector__content conversation-list" ref={scrollRef}>
-      <div className="conversation-list__meta">
-        <span>{t("inspector.messageCount", { count: totalEntries })}</span>
-        <span>
-          {preview
-            ? t("inspector.previewData")
-            : t("transcript.source", { source: transcript?.source ?? "" })}
-        </span>
-      </div>
-      {unavailableOlder > 0 ? (
-        <p className="conversation-disclaimer">
-          {t("transcript.trimmed", { count: unavailableOlder })}
-        </p>
-      ) : null}
-      {availableOlder > 0 ? (
-        <button
-          className="conversation-list__older"
-          type="button"
-          onClick={() => {
-            prepareForOlder();
-            setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE);
-          }}
-        >
-          {t("transcript.showOlder", { count: nextPageSize })}
-        </button>
-      ) : null}
-      {visibleEntries.length === 0 ? (
-        <p className="conversation-disclaimer">{t("transcript.noMessages")}</p>
-      ) : null}
-      {visibleEntries.map((entry) => (
-        <article className="conversation-entry" data-author={entry.author} key={entry.key}>
-          <header>
-            <strong>
-              {entry.author === "you"
-                ? t("inspector.you")
-                : entry.author === "agent"
-                  ? t("inspector.agent")
-                  : t("inspector.system")}
-            </strong>
-            <time>{entry.time}</time>
-          </header>
-          <p>{entry.text}</p>
-        </article>
-      ))}
-    </div>
   );
 }

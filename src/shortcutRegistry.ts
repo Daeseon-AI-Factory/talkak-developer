@@ -19,7 +19,8 @@ export type ShortcutCommandId =
   | "nextProject"
   | "previousPane"
   | "nextPane"
-  | `focusPane${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+  | `focusPane${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
+  | "conversation";
 
 export interface ShortcutChord {
   code: string;
@@ -190,6 +191,15 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
       repeat: false,
     };
   }),
+  // The agent's conversation log, one chord away from the terminal log it sits beside. Windows
+  // takes Alt like splitDown does: Ctrl+Shift+L is already the terminal log there.
+  {
+    id: "conversation",
+    scope: "workspace",
+    macos: mac("KeyL", "L", { shift: true }),
+    windows: windows("KeyL", "L", { alt: true, shift: false }),
+    repeat: false,
+  },
 ] as const;
 
 export function shortcutDefinition(id: ShortcutCommandId): ShortcutDefinition {

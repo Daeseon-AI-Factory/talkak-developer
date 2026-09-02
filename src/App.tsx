@@ -358,6 +358,11 @@ export default function App() {
           setInspectorMode((current) => (current === "terminal" ? null : "terminal"));
         }
       },
+      conversation: () => {
+        if (activeSession) {
+          setInspectorMode((current) => (current === "conversation" ? null : "conversation"));
+        }
+      },
       previousPage: () => workspace.cyclePage(-1),
       nextPage: () => workspace.cyclePage(1),
       previousPane: () => workspace.cyclePane(-1),

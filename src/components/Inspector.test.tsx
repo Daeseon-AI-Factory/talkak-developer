@@ -1,7 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DevSession } from "../domain";
 import { I18nProvider } from "../i18n";
+import type { AgentTranscript } from "../runtime/transcriptClient";
+import type { TranscriptState } from "../runtime/useAgentTranscript";
 import { createWorkspaceSession } from "../sessionModel";
 import { Inspector } from "./Inspector";
 
@@ -15,6 +17,15 @@ vi.mock("./TerminalLogView", () => ({
   }) => (
     <div data-terminal-log-session={sessionId} data-terminal-log-run={currentRunId ?? "none"} />
   ),
+}));
+
+// The hook is the native seam; the tests hand the Inspector each transcript state directly.
+const transcriptState = vi.hoisted(() => ({
+  current: { kind: "unsupported" } as { kind: string },
+}));
+
+vi.mock("../runtime/useAgentTranscript", () => ({
+  useAgentTranscript: () => ({ state: transcriptState.current }),
 }));
 
 function session(): DevSession {
@@ -31,6 +42,24 @@ function session(): DevSession {
     nextStep: "FAKE NEXT STEP",
     launchRequested: false,
   });
+}
+
+function loadedTranscript(overrides: Partial<AgentTranscript> = {}): TranscriptState {
+  return {
+    kind: "loaded",
+    transcript: {
+      source: "codex",
+      path: "rollout.jsonl",
+      entries: [],
+      totalEntries: 0,
+      changedFiles: [],
+      lastActivity: null,
+      revision: 1,
+      activity: { state: "idle", lastTool: null, at: null },
+      usage: null,
+      ...overrides,
+    },
+  };
 }
 
 function render(
@@ -53,6 +82,10 @@ function render(
     </I18nProvider>,
   );
 }
+
+beforeEach(() => {
+  transcriptState.current = { kind: "unsupported" };
+});
 
 describe("Inspector transcript views", () => {
   it("does not present seeded summary fields as facts for a local session", () => {
@@ -109,5 +142,53 @@ describe("Inspector transcript views", () => {
 
     expect(markup).toContain('data-terminal-log-session="session-1"');
     expect(markup).toContain('data-terminal-log-run="42"');
+  });
+
+  it("shows the record's token usage, and says so when the record has none", () => {
+    transcriptState.current = loadedTranscript({
+      usage: {
+        inputTokens: 1234,
+        outputTokens: 987,
+        cacheReadTokens: 2_500_000,
+        cacheCreationTokens: 0,
+        messages: 12,
+      },
+    });
+
+    const withUsage = render(session(), "local", "summary");
+
+    expect(withUsage).toContain("토큰 사용량");
+    expect(withUsage).toContain(">1.2k<");
+    expect(withUsage).toContain(">987<");
+    expect(withUsage).toContain(">2.5M<");
+    expect(withUsage).toContain("기록된 응답 12개의 합계");
+    expect(withUsage).not.toContain("이 에이전트 기록에는 토큰 사용량이 없습니다.");
+
+    transcriptState.current = loadedTranscript({ usage: null });
+
+    expect(render(session(), "local", "summary")).toContain(
+      "이 에이전트 기록에는 토큰 사용량이 없습니다.",
+    );
+  });
+
+  it("renders the record's markdown and tool summary in the conversation tab", () => {
+    transcriptState.current = loadedTranscript({
+      entries: [
+        {
+          role: "assistant",
+          text: "Ran the **suite**.",
+          at: null,
+          tools: ["Bash", "Bash", "Read"],
+          decisions: [],
+        },
+      ],
+      totalEntries: 1,
+    });
+
+    const markup = render(session(), "local", "conversation");
+
+    expect(markup).toContain("<strong>suite</strong>");
+    expect(markup).toContain("도구 · Bash ×2 · Read");
+    expect(markup).toContain("codex 세션 기록");
   });
 });

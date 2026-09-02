@@ -1,15 +1,15 @@
-import { type CSSProperties, type RefObject, useRef, useState } from "react";
-import { useConversationScroll } from "../conversationScroll";
+import { type CSSProperties, useRef, useState } from "react";
 import type { DevSession, Project } from "../domain";
 import { useI18n } from "../i18n";
+import { sendSessionInput, sessionAcceptsInput } from "../runtime/sessionInput";
+import type { TranscriptUsage } from "../runtime/transcriptClient";
 import {
-  INITIAL_TRANSCRIPT_TURNS,
-  OLDER_TRANSCRIPT_PAGE,
+  formatTokenCount,
   formatTranscriptActivity,
-  formatTranscriptTime,
   latestAssistantExcerpt,
 } from "../runtime/transcriptPresentation";
 import { type TranscriptState, useAgentTranscript } from "../runtime/useAgentTranscript";
+import { ConversationView, TranscriptNotice } from "./ConversationView";
 import { TerminalLogView } from "./TerminalLogView";
 
 export type MobileSessionTab = "conversation" | "terminal" | "summary";
@@ -40,6 +40,12 @@ const quickReplyKeys = [
   "mobile.quickReview",
 ] as const;
 
+/** What the last Send attempt for one session came to; a failure names its cause. */
+type SendState =
+  | { kind: "idle" }
+  | { kind: "sending"; sessionId: string }
+  | { kind: "failed"; sessionId: string; message: string };
+
 export function MobileSessionView({
   project,
   session,
@@ -56,6 +62,7 @@ export function MobileSessionView({
 }: MobileSessionViewProps) {
   const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const [sendState, setSendState] = useState<SendState>({ kind: "idle" });
   const visibleReview = reviewedDraft === draft ? reviewedDraft : null;
   const preview = project.source === "preview";
   const { state: transcriptState } = useAgentTranscript(
@@ -72,7 +79,22 @@ export function MobileSessionView({
     session?.runtimeStatus?.phase ?? null,
   );
 
+  // The session's live PTY is the only thing Send can reach: an example project has none, and
+  // a session that is not running would drop the bytes on the floor.
+  const canSend = Boolean(session) && !preview && sessionAcceptsInput(session?.runtimeStatus);
+  const sending = sendState.kind === "sending" && sendState.sessionId === session?.id;
+  const sendFailure =
+    sendState.kind === "failed" && sendState.sessionId === session?.id ? sendState.message : null;
+  const sendLabel = preview
+    ? t("mobile.sendPreview")
+    : !canSend
+      ? t("mobile.sendNotRunning")
+      : sending
+        ? t("mobile.sending")
+        : t("mobile.send");
+
   function updateDraft(value: string) {
+    if (sendState.kind === "failed") setSendState({ kind: "idle" });
     onDraftChange(value);
   }
 
@@ -84,6 +106,30 @@ export function MobileSessionView({
   function openDraftReview() {
     if (!session || !draft.trim()) return;
     onReviewDraft();
+  }
+
+  async function sendReviewedDraft() {
+    if (!session || !visibleReview || !canSend || sending) return;
+    const sessionId = session.id;
+    setSendState({ kind: "sending", sessionId });
+    const failures: string[] = [];
+    const delivered = await sendSessionInput(
+      sessionId,
+      session.runtimeStatus,
+      `${visibleReview}\r`,
+      (cause) => failures.push(cause instanceof Error ? cause.message : String(cause)),
+    );
+    if (delivered) {
+      setSendState({ kind: "idle" });
+      // A sent draft is no longer a draft; clearing it also clears its review.
+      onDraftChange("");
+      return;
+    }
+    setSendState({
+      kind: "failed",
+      sessionId,
+      message: failures[0] ?? t("mobile.sendNotRunning"),
+    });
   }
 
   return (
@@ -162,11 +208,12 @@ export function MobileSessionView({
             }
           >
             {activeTab === "conversation" ? (
-              <ConversationTab
+              <ConversationView
                 key={`${project.path}:${session.id}:${session.runtimeStatus?.runId ?? "no-run"}`}
                 session={session}
                 state={transcriptState}
                 preview={preview}
+                className="mobile-conversation-list"
                 scrollRef={contentRef}
               />
             ) : null}
@@ -238,13 +285,26 @@ export function MobileSessionView({
           <section className="mobile-draft-review" aria-live="polite">
             <h2>{t("mobile.reviewDraft")}</h2>
             <p className="mobile-draft-review__text">{visibleReview}</p>
-            <strong className="mobile-draft-review__status">{t("mobile.notSent")}</strong>
+            {sendFailure ? (
+              <output className="mobile-draft-review__status" data-tone="danger">
+                {t("mobile.sendFailed", { message: sendFailure })}
+              </output>
+            ) : (
+              <strong className="mobile-draft-review__status">{t("mobile.notSent")}</strong>
+            )}
             <div className="mobile-draft-review__actions">
               <button type="button" style={touchTarget} onClick={onEditDraft}>
                 {t("mobile.editDraft")}
               </button>
-              <button type="button" style={touchTarget} disabled>
-                {t("mobile.sendUnavailable")}
+              <button
+                className="mobile-draft-review__send"
+                type="button"
+                style={touchTarget}
+                disabled={!canSend || sending}
+                title={sendLabel}
+                onClick={() => void sendReviewedDraft()}
+              >
+                {sendLabel}
               </button>
             </div>
           </section>
@@ -276,89 +336,6 @@ function MobileTab({ id, activeTab, label, onSelect }: MobileTabProps) {
   );
 }
 
-function ConversationTab({
-  session,
-  state,
-  preview,
-  scrollRef,
-}: {
-  session: DevSession;
-  state: TranscriptState;
-  preview: boolean;
-  scrollRef: RefObject<HTMLElement | null>;
-}) {
-  const { t } = useI18n();
-  const [visibleCount, setVisibleCount] = useState(INITIAL_TRANSCRIPT_TURNS);
-  const prepareForOlder = useConversationScroll(scrollRef);
-
-  if (!preview && state.kind !== "loaded") return <MobileTranscriptNotice state={state} />;
-
-  const transcript = state.kind === "loaded" ? state.transcript : null;
-  const nativeStartIndex = transcript
-    ? Math.max(0, transcript.totalEntries - transcript.entries.length)
-    : 0;
-  const entries = preview
-    ? session.conversation.map((entry) => ({
-        key: entry.id,
-        author: entry.author,
-        time: entry.time,
-        text: entry.text,
-      }))
-    : (transcript?.entries ?? []).map((entry, index) => ({
-        key: `${entry.at ?? "no-time"}-${nativeStartIndex + index}`,
-        author: entry.role === "user" ? ("you" as const) : ("agent" as const),
-        time: formatTranscriptTime(entry.at),
-        text: entry.text,
-      }));
-  const visibleEntries = entries.slice(-visibleCount);
-  const availableOlder = entries.length - visibleEntries.length;
-  const nextPageSize = Math.min(OLDER_TRANSCRIPT_PAGE, availableOlder);
-  const unavailableOlder = transcript
-    ? Math.max(0, transcript.totalEntries - transcript.entries.length)
-    : 0;
-
-  return (
-    <div className="mobile-conversation-list">
-      {preview ? <p className="conversation-disclaimer">{t("inspector.previewData")}</p> : null}
-      {unavailableOlder > 0 ? (
-        <p className="conversation-disclaimer">
-          {t("transcript.trimmed", { count: unavailableOlder })}
-        </p>
-      ) : null}
-      {availableOlder > 0 ? (
-        <button
-          className="conversation-list__older"
-          type="button"
-          onClick={() => {
-            prepareForOlder();
-            setVisibleCount((current) => current + OLDER_TRANSCRIPT_PAGE);
-          }}
-        >
-          {t("transcript.showOlder", { count: nextPageSize })}
-        </button>
-      ) : null}
-      {visibleEntries.length === 0 ? (
-        <p className="conversation-disclaimer">{t("transcript.noMessages")}</p>
-      ) : null}
-      {visibleEntries.map((entry) => (
-        <article className="mobile-conversation-entry" data-author={entry.author} key={entry.key}>
-          <header>
-            <strong>
-              {entry.author === "you"
-                ? t("inspector.you")
-                : entry.author === "agent"
-                  ? t("inspector.agent")
-                  : t("inspector.system")}
-            </strong>
-            <time>{entry.time}</time>
-          </header>
-          <p>{entry.text}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
 function TerminalTab({ session, local }: { session: DevSession; local: boolean }) {
   const { text } = useI18n();
   if (local)
@@ -386,7 +363,7 @@ function SummaryTab({
   preview: boolean;
 }) {
   const { t, text } = useI18n();
-  if (!preview && state.kind !== "loaded") return <MobileTranscriptNotice state={state} />;
+  if (!preview && state.kind !== "loaded") return <TranscriptNotice state={state} />;
 
   if (!preview && state.kind === "loaded") {
     const latestReply = latestAssistantExcerpt(state.transcript.entries);
@@ -403,6 +380,7 @@ function SummaryTab({
           <h2>{t("inspector.lastActivity")}</h2>
           <p>{lastActivity ?? t("inspector.noActivity")}</p>
         </section>
+        <MobileUsage usage={state.transcript.usage} />
         <MobileChangedFiles files={state.transcript.changedFiles} />
       </div>
     );
@@ -436,6 +414,36 @@ function SummaryTab({
   );
 }
 
+function MobileUsage({ usage }: { usage: TranscriptUsage | null }) {
+  const { t } = useI18n();
+  return (
+    <section>
+      <h2>{t("inspector.usage")}</h2>
+      {usage ? (
+        <>
+          <ul>
+            <li>
+              {t("inspector.usageOutput")} · {formatTokenCount(usage.outputTokens)}
+            </li>
+            <li>
+              {t("inspector.usageInput")} · {formatTokenCount(usage.inputTokens)}
+            </li>
+            <li>
+              {t("inspector.usageCacheRead")} · {formatTokenCount(usage.cacheReadTokens)}
+            </li>
+            <li>
+              {t("inspector.usageCacheCreation")} · {formatTokenCount(usage.cacheCreationTokens)}
+            </li>
+          </ul>
+          <p>{t("inspector.usageMessages", { count: usage.messages })}</p>
+        </>
+      ) : (
+        <p>{t("inspector.noUsage")}</p>
+      )}
+    </section>
+  );
+}
+
 function MobileChangedFiles({ files }: { files: readonly string[] }) {
   const { t } = useI18n();
   return (
@@ -454,21 +462,4 @@ function MobileChangedFiles({ files }: { files: readonly string[] }) {
       )}
     </section>
   );
-}
-
-function MobileTranscriptNotice({ state }: { state: TranscriptState }) {
-  const { t } = useI18n();
-  if (state.kind === "loading")
-    return <p className="conversation-disclaimer">{t("transcript.loading")}</p>;
-  if (state.kind === "unsupported")
-    return <p className="conversation-disclaimer">{t("transcript.unsupported")}</p>;
-  if (state.kind === "absent")
-    return <p className="conversation-disclaimer">{t("transcript.absent")}</p>;
-  if (state.kind === "failed")
-    return (
-      <output className="conversation-disclaimer" data-tone="danger">
-        {t("transcript.failed", { message: state.message })}
-      </output>
-    );
-  return null;
 }

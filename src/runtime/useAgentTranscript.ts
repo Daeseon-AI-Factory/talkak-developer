@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TerminalRuntimePhase } from "../domain";
 import { type AgentTranscript, type TranscriptScope, transcriptClient } from "./transcriptClient";
 
@@ -47,6 +47,11 @@ export function useAgentTranscript(
   const state: TranscriptState =
     snapshot.scopeKey === scopeKey ? snapshot.state : transcriptInitialState(request);
 
+  // The state the last read for this scope produced, read by the next poll without waiting for a
+  // render: it carries the revision to send, and the object to keep when nothing changed.
+  const latestRef = useRef<{ scopeKey: string | null; state: TranscriptState }>(snapshot);
+  latestRef.current = { scopeKey, state };
+
   useEffect(() => {
     if (
       !active ||
@@ -62,12 +67,15 @@ export function useAgentTranscript(
 
     const load = async () => {
       try {
-        const transcript = await transcriptClient.read(request, 800);
+        const previous = latestRef.current.scopeKey === requestKey ? latestRef.current.state : null;
+        const known = previous?.kind === "loaded" ? previous.transcript : null;
+        const transcript = await transcriptClient.read(request, 800, known?.revision);
         if (cancelled) return;
-        setSnapshot({
-          scopeKey: requestKey,
-          state: transcript ? { kind: "loaded", transcript } : { kind: "absent" },
-        });
+        const next = nextTranscriptState(previous, transcript);
+        // The same object back means the record did not change: leave React's state alone so the
+        // panel does not re-render for a poll that found nothing.
+        if (next === previous) return;
+        setSnapshot({ scopeKey: requestKey, state: next });
       } catch (cause: unknown) {
         if (cancelled) return;
         setSnapshot({
@@ -92,6 +100,19 @@ export function useAgentTranscript(
   }, [active, sessionId, runId, projectPath, startedAt, agentCommand, runtimePhase, refreshMs]);
 
   return { state };
+}
+
+/**
+ * The state a completed read leads to. When the read handed back the very transcript object the
+ * previous loaded state holds, that state is returned as-is so a caller can skip its update.
+ */
+export function nextTranscriptState(
+  previous: TranscriptState | null,
+  transcript: AgentTranscript | null,
+): TranscriptState {
+  if (!transcript) return { kind: "absent" };
+  if (previous?.kind === "loaded" && previous.transcript === transcript) return previous;
+  return { kind: "loaded", transcript };
 }
 
 function transcriptInitialState(scope: TranscriptScope | null): TranscriptState {

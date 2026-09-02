@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentTranscript, TranscriptScope } from "./transcriptClient";
-import { createTranscriptClient } from "./transcriptClient";
+import type { AgentTranscript, TranscriptReadResult, TranscriptScope } from "./transcriptClient";
+import { createTranscriptClient, normalizeTranscriptRead } from "./transcriptClient";
 
 const scope: TranscriptScope = {
   sessionId: "session-1",
@@ -17,32 +17,41 @@ const transcript: AgentTranscript = {
   totalEntries: 0,
   changedFiles: [],
   lastActivity: null,
+  revision: 3,
+  activity: { state: "idle", lastTool: null, at: null },
+  usage: null,
 };
 
+const loaded = (value: AgentTranscript): TranscriptReadResult => ({
+  kind: "transcript",
+  transcript: value,
+});
+
+type Call = { command: string; args?: Record<string, unknown> };
+
 describe("transcript client", () => {
-  it("passes the Talkak session scope and recent 800-turn tail to the native command", async () => {
-    const calls: Array<{ command: string; args?: Record<string, unknown> }> = [];
+  it("passes the Talkak session scope, the 800-turn tail and a known revision to the native command", async () => {
+    const calls: Call[] = [];
     const client = createTranscriptClient(
       async <T>(command: string, args?: Record<string, unknown>) => {
         calls.push({ command, args });
-        return transcript as T;
+        return loaded(transcript) as T;
       },
       () => true,
     );
 
     await client.read(scope);
+    await client.read(scope, 800, 3);
 
     expect(calls).toEqual([
-      {
-        command: "agent_transcript",
-        args: { ...scope, limit: 800 },
-      },
+      { command: "agent_transcript", args: { ...scope, limit: 800 } },
+      { command: "agent_transcript", args: { ...scope, limit: 800, knownRevision: 3 } },
     ]);
   });
 
   it("coalesces an in-flight prewarm with the first panel read", async () => {
-    let resolve: ((value: AgentTranscript | null) => void) | undefined;
-    const pending = new Promise<AgentTranscript | null>((done) => {
+    let resolve: ((value: TranscriptReadResult) => void) | undefined;
+    const pending = new Promise<TranscriptReadResult>((done) => {
       resolve = done;
     });
     let calls = 0;
@@ -56,7 +65,7 @@ describe("transcript client", () => {
 
     const warming = client.prewarm(scope);
     const reading = client.read(scope);
-    resolve?.(transcript);
+    resolve?.(loaded(transcript));
 
     await expect(reading).resolves.toEqual(transcript);
     await warming;
@@ -65,11 +74,11 @@ describe("transcript client", () => {
 
   it("keeps one completed prewarm for an immediate paint but still revalidates on read", async () => {
     let calls = 0;
-    const refreshed = { ...transcript, totalEntries: 1 };
+    const refreshed = { ...transcript, totalEntries: 1, revision: 4 };
     const client = createTranscriptClient(
       async <T>() => {
         calls += 1;
-        return (calls === 1 ? transcript : refreshed) as T;
+        return loaded(calls === 1 ? transcript : refreshed) as T;
       },
       () => true,
     );
@@ -81,9 +90,41 @@ describe("transcript client", () => {
     expect(calls).toBe(2);
   });
 
+  it("hands back the very object an unchanged answer refers to", async () => {
+    let calls = 0;
+    const client = createTranscriptClient(
+      async <T>() => {
+        calls += 1;
+        return (calls === 1 ? loaded(transcript) : { kind: "unchanged", revision: 3 }) as T;
+      },
+      () => true,
+    );
+
+    const first = await client.read(scope);
+    const second = await client.read(scope, 800, first?.revision);
+
+    expect(second).toBe(first);
+    expect(client.peek(scope)).toBe(first);
+    expect(calls).toBe(2);
+  });
+
+  it("asks for the full record once when an unchanged answer has nothing retained behind it", async () => {
+    const calls: Call[] = [];
+    const client = createTranscriptClient(
+      async <T>(command: string, args?: Record<string, unknown>) => {
+        calls.push({ command, args });
+        return (calls.length === 1 ? { kind: "unchanged", revision: 9 } : loaded(transcript)) as T;
+      },
+      () => true,
+    );
+
+    await expect(client.read(scope, 800, 9)).resolves.toBe(transcript);
+    expect(calls.map((call) => call.args?.knownRevision)).toEqual([9, undefined]);
+  });
+
   it("never exposes a completed transcript to another or unknown run", async () => {
     const client = createTranscriptClient(
-      async <T>() => transcript as T,
+      async <T>() => loaded(transcript) as T,
       () => true,
     );
 
@@ -95,7 +136,7 @@ describe("transcript client", () => {
 
   it("does not retain an absent or failed prewarm", async () => {
     const absent = createTranscriptClient(
-      async <T>() => null as T,
+      async <T>() => ({ kind: "absent" }) as T,
       () => true,
     );
     await absent.prewarm(scope);
@@ -116,7 +157,7 @@ describe("transcript client", () => {
     const otherTranscript = { ...transcript, path: "other.jsonl" };
     const client = createTranscriptClient(
       async <T>(_command: string, args?: Record<string, unknown>) =>
-        (args?.sessionId === otherScope.sessionId ? otherTranscript : transcript) as T,
+        loaded(args?.sessionId === otherScope.sessionId ? otherTranscript : transcript) as T,
       () => true,
     );
 
@@ -125,5 +166,43 @@ describe("transcript client", () => {
 
     expect(client.peek(scope)).toBeUndefined();
     expect(client.peek(otherScope)).toBe(otherTranscript);
+  });
+});
+
+describe("transcript read normalization", () => {
+  it("reads the tagged answer as it is", () => {
+    expect(normalizeTranscriptRead({ kind: "absent" })).toEqual({ kind: "absent" });
+    expect(normalizeTranscriptRead({ kind: "unchanged", revision: 7 })).toEqual({
+      kind: "unchanged",
+      revision: 7,
+    });
+    expect(normalizeTranscriptRead(loaded(transcript))).toEqual(loaded(transcript));
+  });
+
+  it("still shows a record from a shell that answers with the older untagged shape", () => {
+    const legacy = {
+      source: "claude",
+      path: "session.jsonl",
+      entries: [{ role: "assistant", text: "done", at: null }],
+      totalEntries: 1,
+      changedFiles: [],
+      lastActivity: null,
+    };
+
+    const result = normalizeTranscriptRead(legacy);
+
+    expect(result.kind).toBe("transcript");
+    if (result.kind !== "transcript") return;
+    expect(result.transcript.entries[0]).toEqual({
+      role: "assistant",
+      text: "done",
+      at: null,
+      tools: [],
+      decisions: [],
+    });
+    expect(result.transcript.revision).toBe(0);
+    expect(result.transcript.activity).toEqual({ state: "idle", lastTool: null, at: null });
+    expect(result.transcript.usage).toBeNull();
+    expect(normalizeTranscriptRead(null)).toEqual({ kind: "absent" });
   });
 });

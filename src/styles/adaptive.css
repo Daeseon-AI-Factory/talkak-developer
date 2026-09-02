@@ -441,32 +441,36 @@
     gap: 10px;
   }
 
-  .mobile-conversation-entry {
+  /* The shared conversation entries, sized for a thumb: the grid gap replaces their margin. */
+  .mobile-conversation-list .conversation-entry {
+    margin: 0;
     padding: 12px;
-    border: 1px solid var(--border);
     border-radius: 11px;
-    background: rgba(255, 255, 255, 0.02);
   }
 
-  .mobile-conversation-entry[data-author="you"] {
+  .mobile-conversation-list .conversation-entry[data-author="you"] {
     margin-left: 24px;
     border-color: rgba(167, 139, 250, 0.3);
   }
 
-  .mobile-conversation-entry header {
-    display: flex;
-    justify-content: space-between;
+  .mobile-conversation-list .conversation-entry header {
     color: var(--text-dim);
     font-size: 12px;
   }
 
-  .mobile-conversation-entry p {
-    margin: 8px 0 0;
-    color: var(--text-secondary);
+  .mobile-conversation-list .conversation-entry__body {
     font-size: 15px;
     line-height: 1.6;
-    overflow-wrap: anywhere;
-    white-space: pre-wrap;
+  }
+
+  /* No hover on a touch screen: the copy buttons stay visible. */
+  .mobile-conversation-list .conversation-copy {
+    opacity: 1;
+    font-size: 12px;
+  }
+
+  .mobile-draft-review__status[data-tone="danger"] {
+    color: var(--warning);
   }
 
   .mobile-terminal {
@@ -594,7 +598,7 @@
   .attention-card,
   .attention-detail,
   .mobile-session-view__header,
-  .mobile-conversation-entry,
+  .mobile-conversation-list .conversation-entry,
   .mobile-summary,
   .setting-card {
     overflow-wrap: anywhere;
