@@ -11,3 +11,6 @@ src-tauri/icons/ios/
 !.env.example
 src-tauri/binaries/
 session-broker/target/
+
+# Agent worktrees created by the Claude Code harness
+.claude/worktrees/

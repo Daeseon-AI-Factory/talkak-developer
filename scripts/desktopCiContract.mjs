@@ -217,7 +217,7 @@ export function validateDesktopCi(
     'driverProvider: "embedded"',
     "appBinaryPath,",
     "application: appBinaryPath",
-    'specs: ["./e2e/macos-product.e2e.mjs"]',
+    'specs: ["./e2e/macos-product.e2e.mjs", "./e2e/macos-stream.e2e.mjs"]',
   ]) {
     if (!macosWebdriverConfigSource.includes(fragment)) {
       errors.push(`macOS WebDriver config is missing: ${fragment}`);
@@ -264,7 +264,8 @@ export function validateDesktopCi(
     '[data-testid="attention-list"]',
     "attentionList.isFocused()",
     '[data-phase="exited"]',
-    ".terminal-log__host .xterm-rows",
+    // The log is read through xterm's buffer (the CI test hooks), not the DOM renderer's rows.
+    "__talkakTest?.terminalLogLines()",
   ]) {
     if (!windowsE2eSource.includes(fragment)) {
       errors.push(`Windows product E2E is missing: ${fragment}`);
@@ -283,7 +284,8 @@ export function validateDesktopCi(
     'mode === "webdriver-ci"',
     "node scripts/check-webdriver-bundle.mjs absent",
     "node scripts/check-webdriver-bundle.mjs present",
-    'const markers = ["__wdio_original_core__", "WDIO Tauri Plugin"]',
+    'const markers = ["__wdio_original_core__", "WDIO Tauri Plugin", "__talkakTest"]',
+    'import("./webdriverTestHooks")',
   ];
   for (const fragment of boundaryFragments) {
     if (!webdriverBoundarySource.includes(fragment)) {

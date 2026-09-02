@@ -28,7 +28,7 @@ const macosWebdriverConfig = [
   'driverProvider: "embedded"',
   "appBinaryPath,",
   "application: appBinaryPath",
-  'specs: ["./e2e/macos-product.e2e.mjs"]',
+  'specs: ["./e2e/macos-product.e2e.mjs", "./e2e/macos-stream.e2e.mjs"]',
 ].join("\n");
 const windowsE2e = [
   'import { isAbsolute } from "node:path";',
@@ -48,7 +48,7 @@ const windowsE2e = [
   '[data-testid="attention-list"]',
   "attentionList.isFocused()",
   '[data-phase="exited"]',
-  ".terminal-log__host .xterm-rows",
+  "__talkakTest?.terminalLogLines()",
 ].join("\n");
 const macosE2e = [
   'import { isAbsolute } from "node:path";',
@@ -81,7 +81,8 @@ const webdriverBoundary = [
   'mode === "webdriver-ci"',
   "node scripts/check-webdriver-bundle.mjs absent",
   "node scripts/check-webdriver-bundle.mjs present",
-  'const markers = ["__wdio_original_core__", "WDIO Tauri Plugin"]',
+  'const markers = ["__wdio_original_core__", "WDIO Tauri Plugin", "__talkakTest"]',
+  'import("./webdriverTestHooks")',
 ].join("\n");
 
 const windowsCiConfig = JSON.stringify({
@@ -398,8 +399,8 @@ test("rejects removing the absolute external-project guard", () => {
   );
 });
 
-test("rejects an installed-product test that does not inspect terminal log rows", () => {
-  const mutated = windowsE2e.replace(".terminal-log__host .xterm-rows", ".terminal-log__host");
+test("rejects an installed-product test that does not read the terminal log buffer", () => {
+  const mutated = windowsE2e.replace("__talkakTest?.terminalLogLines()", ".terminal-log__host");
   assert.match(
     validate(
       baseWorkflow,

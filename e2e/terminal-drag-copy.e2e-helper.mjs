@@ -185,14 +185,37 @@ async function dragAcrossVisibleTerminalLines() {
     }
   });
 
-  const screen = await $('[data-testid="live-terminal"] .xterm-screen');
-  await browser
-    .action("pointer", { parameters: { pointerType: "mouse" } })
-    .move({ duration: 0, origin: screen, x: drag.startOffsetX, y: drag.startOffsetY })
-    .down({ button: "left" })
-    .move({ duration: 200, origin: screen, x: drag.endOffsetX, y: drag.endOffsetY })
-    .up({ button: "left" })
-    .perform();
+  // The drag is dispatched from inside the page rather than through WebDriver's pointer actions.
+  // WebDriver's synthesised mouse events carry `detail: 0` on WebKit and Chromium alike, and
+  // xterm 6 only starts a selection from a mousedown whose `detail` is 1 (a real single click),
+  // so the driver's drag never selected anything on either platform. A real mouse always reports
+  // detail 1; these events say what a real mouse says.
+  await browser.execute((points) => {
+    const at = (x, y) => document.elementFromPoint(x, y) ?? document.body;
+    const fire = (type, x, y, buttons) => {
+      const options = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: x,
+        clientY: y,
+        button: 0,
+        buttons,
+        detail: type === "mousemove" ? 0 : 1,
+        view: window,
+      };
+      at(x, y).dispatchEvent(new MouseEvent(type, options));
+    };
+    const { startX, startY, endX, endY } = points;
+    fire("mousedown", startX, startY, 1);
+    const steps = 8;
+    for (let step = 1; step <= steps; step += 1) {
+      const x = startX + ((endX - startX) * step) / steps;
+      const y = startY + ((endY - startY) * step) / steps;
+      fire("mousemove", x, y, 1);
+    }
+    fire("mouseup", endX, endY, 0);
+  }, drag.absolutePoints);
   return drag;
 }
 
