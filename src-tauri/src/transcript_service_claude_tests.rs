@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent_transcript::claude_project_dir_name;
+use crate::transcript_paths::claude_project_dir_name;
 use session_broker::store::StoredSession;
 use std::fs::{create_dir_all, FileTimes, OpenOptions};
 use std::io::Write;
@@ -125,9 +125,11 @@ fn explicit_resume_binds_the_matching_old_claude_session() {
 }
 
 #[test]
-fn continue_stays_unbound_without_exact_ownership() {
+fn continue_stays_unbound_when_two_same_project_records_advanced_after_launch() {
     let temp = TempDir::new().unwrap();
     let project = "C:/work/app";
+    // Both records were written just now, after the launch below: mtime cannot say which of the
+    // two same-cwd panes owns which, so neither binds.
     claude_record(
         temp.path(),
         project,
@@ -155,6 +157,47 @@ fn continue_stays_unbound_without_exact_ownership() {
         );
         let (service, _) = service_with_definition(&temp, &definition);
         assert!(read(&service, session_id, project).is_none());
+    }
+}
+
+#[test]
+fn continue_binds_the_only_record_that_advanced_after_launch_as_probable() {
+    let temp = TempDir::new().unwrap();
+    let project = "C:/work/app";
+    let started = parse_rfc3339_ms("2026-08-31T10:00:00Z").unwrap() as u64;
+    let stale = claude_record(
+        temp.path(),
+        project,
+        OLD_ID,
+        "2026-08-30T08:00:00Z",
+        "older",
+    );
+    // Untouched since before this run: not the record the resumed agent is writing.
+    set_modified(&stale, started - 3_600_000);
+    let advanced = claude_record(
+        temp.path(),
+        project,
+        NEW_ID,
+        "2026-08-30T09:00:00Z",
+        "resumed here",
+    );
+    // A Windows-spelled project path resolves to the same Claude directory name.
+    for (session_id, args, spelled) in [
+        ("talkak-continue-short", vec!["-c"], "C:/work/app"),
+        ("talkak-continue-long", vec!["--continue"], "C:\\work\\app"),
+        ("talkak-resume-picker", vec!["--resume"], "C:\\work\\app"),
+        (
+            "talkak-resume-named",
+            vec!["-r", "search term"],
+            "C:/work/app",
+        ),
+    ] {
+        let definition = definition(session_id, spelled, 1, started, &args);
+        let (service, _) = service_with_definition(&temp, &definition);
+        let transcript = read(&service, session_id, project).expect("the only advanced record");
+        assert_eq!(PathBuf::from(&transcript.path), advanced);
+        assert_eq!(transcript.binding, "probable");
+        assert_eq!(transcript.entries[1].text, "resumed here");
     }
 }
 
@@ -244,7 +287,7 @@ fn same_time_fork_candidates_are_ambiguous() {
 }
 
 #[test]
-fn app_lifetime_continue_does_not_reuse_a_bound_file_without_exact_ownership() {
+fn app_lifetime_continue_resumes_the_bound_file_when_it_alone_advanced() {
     let temp = TempDir::new().unwrap();
     let project = "C:/work/app";
     let at = "2026-08-31T10:00:00Z";
@@ -252,10 +295,9 @@ fn app_lifetime_continue_does_not_reuse_a_bound_file_without_exact_ownership() {
     let started = parse_rfc3339_ms(at).unwrap() as u64;
     let first = definition("talkak-lifetime", project, 1, started, &[]);
     let (service, store) = service_with_definition(&temp, &first);
-    assert_eq!(
-        PathBuf::from(read(&service, "talkak-lifetime", project).unwrap().path),
-        path
-    );
+    let exact = read(&service, "talkak-lifetime", project).unwrap();
+    assert_eq!(PathBuf::from(&exact.path), path);
+    assert_eq!(exact.binding, "exact");
 
     let resumed_at = system_time_ms(SystemTime::now()) as u64;
     store
@@ -267,10 +309,32 @@ fn app_lifetime_continue_does_not_reuse_a_bound_file_without_exact_ownership() {
             &["--continue"],
         ))
         .unwrap();
+    // Nothing advanced yet: the new run stays pending rather than showing the old binding.
+    assert!(read(&service, "talkak-lifetime", project).is_none());
+
     let mut file = OpenOptions::new().append(true).open(&path).unwrap();
     writeln!(file, "{}", assistant_turn("2026-08-31T10:01:00Z", "after")).unwrap();
     file.flush().unwrap();
+    let resumed = read(&service, "talkak-lifetime", project).expect("the resumed record");
+    assert_eq!(PathBuf::from(&resumed.path), path);
+    assert_eq!(resumed.binding, "probable");
+    assert_eq!(resumed.entries[1].text, "before\n\nafter");
+    assert_ne!(resumed.revision, exact.revision);
 
+    // A second record advancing in the same project makes ownership ambiguous again.
+    let other = claude_record(temp.path(), project, NEW_ID, at, "other pane");
+    store
+        .record(&definition(
+            "talkak-lifetime",
+            project,
+            3,
+            system_time_ms(SystemTime::now()) as u64,
+            &["--continue"],
+        ))
+        .unwrap();
+    writeln!(file, "{}", assistant_turn("2026-08-31T10:02:00Z", "later")).unwrap();
+    file.flush().unwrap();
+    set_modified(&other, system_time_ms(SystemTime::now()) as u64 + 500);
     assert!(read(&service, "talkak-lifetime", project).is_none());
 }
 

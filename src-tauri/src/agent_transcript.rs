@@ -6,28 +6,29 @@
 //! either is `demo.ts`. Every real session showed an empty panel under a note promising a
 //! transcript adapter.
 //!
-//! This is that adapter. Both agents this product runs already write a structured JSONL record of
+//! This is that adapter. The agents this product runs already write a structured JSONL record of
 //! their own session, which is a far better source than scraping the terminal: the turns are
-//! already separated, unwrapped, and include the edited file names.
-//!
-//!   Claude Code  ~/.claude/projects/<cwd with every non-alphanumeric turned into '-'>/<id>.jsonl
-//!   Codex        ~/.codex/sessions/YYYY/MM/DD/rollout-<time>-<uuid>.jsonl
-//!
-//! Codex does not encode the directory in the path, so its first line — `session_meta` — carries
-//! `payload.cwd` and that is what a project is matched against.
+//! already separated, unwrapped, and include the edited file names. Each provider's record shape
+//! lives in its own module (`transcript_claude`, `transcript_codex`, `transcript_antigravity`);
+//! this module owns the neutral projection they all fold into.
 //!
 //! Only the bounded panel projection crosses IPC; one real record already exceeded 16 MB.
 
 use serde::Serialize;
 use std::collections::VecDeque;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+use crate::transcript_activity::{ActivityTracker, AgentActivity};
 use crate::transcript_line_filter;
+use crate::transcript_usage::{UsageSample, UsageTotals};
 
 pub(crate) const MAX_TRANSCRIPT_ENTRIES: usize = 800;
 pub(crate) const MAX_TRANSCRIPT_TURN_CHARS: usize = 60_000;
+/// Tool names kept per turn. A long agentic turn runs hundreds of tools; the summary line needs
+/// the shape of that, not an unbounded list.
+pub(crate) const MAX_TRANSCRIPT_TURN_TOOLS: usize = 400;
 
-/// One turn, normalised across both agents.
+/// One turn, normalised across every agent.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TranscriptEntry {
@@ -35,12 +36,40 @@ pub(crate) struct TranscriptEntry {
     pub role: String,
     pub text: String,
     pub at: Option<String>,
+    /// Tool names the assistant ran during this turn, in call order.
+    pub tools: Vec<String>,
+    /// Questions the assistant put to the person during this turn.
+    pub decisions: Vec<Decision>,
+}
+
+impl TranscriptEntry {
+    pub(crate) fn new(role: &str, text: String, at: Option<String>) -> Self {
+        Self {
+            role: role.to_string(),
+            text,
+            at,
+            tools: Vec::new(),
+            decisions: Vec::new(),
+        }
+    }
+}
+
+/// One question the agent asked, with what the person picked once the answer is recorded.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Decision {
+    pub question: String,
+    pub options: Vec<String>,
+    pub selected: Option<String>,
+    /// The provider's call id, used to match the later answer record. Never crosses IPC.
+    #[serde(skip)]
+    pub call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentTranscript {
-    /// Which agent wrote this record: "claude" or "codex".
+    /// Which agent wrote this record: "claude", "codex" or "antigravity".
     pub source: String,
     /// The record's own path, so a reader can go find it.
     pub path: String,
@@ -51,12 +80,21 @@ pub(crate) struct AgentTranscript {
     /// Files the agent edited or wrote, most recently touched last.
     pub changed_files: Vec<String>,
     pub last_activity: Option<String>,
+    /// Changes whenever the projection changed; a reader that already holds it asks for less.
+    pub revision: u64,
+    /// "exact" when the record provably belongs to this session, "probable" when it was the only
+    /// record in the project that advanced after launch.
+    pub binding: String,
+    pub activity: AgentActivity,
+    /// Token totals when the record carries them; absent for an agent that records none.
+    pub usage: Option<UsageTotals>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TranscriptSource {
     Claude,
     Codex,
+    Antigravity,
 }
 
 impl TranscriptSource {
@@ -64,112 +102,23 @@ impl TranscriptSource {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
+            Self::Antigravity => "antigravity",
         }
     }
 }
 
-pub(crate) fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
+/// How sure discovery was that a record belongs to the session it was bound to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Binding {
+    Exact,
+    Probable,
 }
 
-pub(crate) fn modified_at(path: &Path) -> std::time::SystemTime {
-    std::fs::metadata(path)
-        .and_then(|data| data.modified())
-        .unwrap_or(std::time::UNIX_EPOCH)
-}
-
-/// Claude Code's directory name for a working directory: every character that is not a letter or a
-/// digit becomes '-'. `C:\Sources\talkak-developer` becomes `C--Sources-talkak-developer`, and a
-/// UNC path keeps its leading pair as `--`.
-///
-/// Past 200 characters the name is truncated and a hash of the ORIGINAL path is appended, so two
-/// deep paths sharing a long prefix stay apart. The hash is the harness's own `h*31 + charCode`
-/// over UTF-16 units, rendered in base 36; `encode_utf16` rather than `chars` matters the moment a
-/// path contains Korean or an emoji.
-pub(crate) fn claude_project_dir_name(project_path: &str) -> String {
-    // Per UTF-16 CODE UNIT, not per char. The harness does this with a JavaScript regex carrying no
-    // /u flag, so an astral character — an emoji in a path — is two units and becomes two dashes.
-    // Iterating chars would produce one, and the name would not match the directory on disk.
-    // (Hangul is in the BMP, so a Korean path is unaffected either way.)
-    let sanitised: String = project_path
-        .encode_utf16()
-        .map(|unit| match u8::try_from(unit) {
-            Ok(byte) if byte.is_ascii_alphanumeric() => byte as char,
-            _ => '-',
-        })
-        .collect();
-    // Every replacement is ASCII, so the sanitised string is ASCII and a char count is a unit count.
-    if sanitised.chars().count() <= 200 {
-        return sanitised;
-    }
-    let head: String = sanitised.chars().take(200).collect();
-    format!("{head}-{}", base36(hash32(project_path)))
-}
-
-fn hash32(text: &str) -> i32 {
-    let mut hash: i32 = 0;
-    for unit in text.encode_utf16() {
-        hash = hash
-            .wrapping_shl(5)
-            .wrapping_sub(hash)
-            .wrapping_add(i32::from(unit));
-    }
-    hash
-}
-
-/// Base 36 of the hash's magnitude, matching `Math.abs(h).toString(36)`.
-///
-/// Widened to i64 before taking the magnitude: `i32::MIN.wrapping_abs()` is still `i32::MIN`, which
-/// is negative, so a `while value > 0` loop produced an EMPTY string and a directory name ending in
-/// a bare dash. JavaScript answers "zik0zk" there.
-fn base36(value: i32) -> String {
-    let mut magnitude = i64::from(value).abs();
-    if magnitude == 0 {
-        return "0".to_string();
-    }
-    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
-    let mut out = Vec::new();
-    while magnitude > 0 {
-        out.push(DIGITS[(magnitude % 36) as usize]);
-        magnitude /= 36;
-    }
-    out.reverse();
-    String::from_utf8(out).unwrap_or_default()
-}
-
-/// Paths compared the way a user means them: separators and case do not distinguish two spellings
-/// of the same directory on Windows, and a trailing separator never does anywhere.
-pub(crate) fn normalised_path(path: &str) -> String {
-    let unified = path.replace('\\', "/");
-    let trimmed = unified.trim_end_matches('/');
-    if cfg!(windows) {
-        trimmed.to_lowercase()
-    } else {
-        trimmed.to_string()
-    }
-}
-
-pub(crate) fn collect_rollouts(directory: &Path, found: &mut Vec<PathBuf>, depth: usize) {
-    // sessions/YYYY/MM/DD — deeper than that is not this layout, and a symlink loop is not a hazard
-    // worth inheriting.
-    if depth > 4 {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            collect_rollouts(&path, found, depth + 1);
-        } else if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
-        {
-            found.push(path);
+impl Binding {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Probable => "probable",
         }
     }
 }
@@ -183,6 +132,10 @@ pub(crate) struct Collected {
     last_at: Option<String>,
     /// The provider-defined group still being folded into, if any.
     open_group: Option<String>,
+    activity: ActivityTracker,
+    usage: Option<UsageTotals>,
+    /// Counts every visible change so the service can tell an unchanged projection apart.
+    mutations: u64,
 }
 
 impl Collected {
@@ -193,12 +146,29 @@ impl Collected {
             changed: Vec::new(),
             last_at: None,
             open_group: None,
+            activity: ActivityTracker::new(),
+            usage: None,
+            mutations: 0,
         }
     }
 
-    fn push(&mut self, mut entry: TranscriptEntry, limit: usize) {
+    /// Moves whenever any projected field changed, including the activity timestamp.
+    pub(crate) fn version(&self) -> u64 {
+        self.mutations.wrapping_add(self.activity.changes())
+    }
+
+    pub(crate) fn activity(&self) -> AgentActivity {
+        self.activity.snapshot()
+    }
+
+    pub(crate) fn activity_mut(&mut self) -> &mut ActivityTracker {
+        &mut self.activity
+    }
+
+    pub(crate) fn push(&mut self, mut entry: TranscriptEntry, limit: usize) {
         entry.text = cap_turn_text(&entry.text);
         self.total += 1;
+        self.mutations += 1;
         if entry.at.is_some() {
             self.last_at = entry.at.clone();
         }
@@ -210,7 +180,12 @@ impl Collected {
 
     /// Appends, or folds into the turn already open under the same id. A merged block joins the
     /// text it continues rather than starting a new turn, and does not count as another turn.
-    fn push_merging(&mut self, entry: TranscriptEntry, group: Option<String>, limit: usize) {
+    pub(crate) fn push_merging(
+        &mut self,
+        entry: TranscriptEntry,
+        group: Option<String>,
+        limit: usize,
+    ) {
         if let Some(id) = group {
             if self.open_group.as_deref() == Some(id.as_str()) {
                 if let Some(last) = self.entries.back_mut() {
@@ -229,10 +204,14 @@ impl Collected {
                             );
                         }
                     }
+                    last.tools.extend(entry.tools);
+                    last.tools.truncate(MAX_TRANSCRIPT_TURN_TOOLS);
+                    last.decisions.extend(entry.decisions);
                     if let Some(at) = entry.at {
                         last.at = Some(at.clone());
                         self.last_at = Some(at);
                     }
+                    self.mutations += 1;
                     return;
                 }
             }
@@ -243,20 +222,115 @@ impl Collected {
         self.push(entry, limit);
     }
 
-    fn touch_open_group_at(&mut self, group: &str, at: Option<String>) {
+    /// Fills the text of a turn that a tool call opened, otherwise starts a new turn that keeps
+    /// the group open for later tool calls. Providers whose replies stay separate entries use this.
+    pub(crate) fn push_or_fill(&mut self, entry: TranscriptEntry, group: &str, limit: usize) {
+        if self.open_group.as_deref() == Some(group) {
+            if let Some(last) = self.entries.back_mut() {
+                if last.text.is_empty() && last.role == entry.role {
+                    last.text = cap_turn_text(&entry.text);
+                    if let Some(at) = entry.at {
+                        last.at = Some(at.clone());
+                        self.last_at = Some(at);
+                    }
+                    self.mutations += 1;
+                    return;
+                }
+            }
+        }
+        self.push(entry, limit);
+        self.open_group = Some(group.to_string());
+    }
+
+    pub(crate) fn close_group(&mut self) {
+        self.open_group = None;
+    }
+
+    pub(crate) fn touch_open_group_at(&mut self, group: &str, at: Option<String>) {
         if self.open_group.as_deref() != Some(group) {
             return;
         }
         if let (Some(last), Some(at)) = (self.entries.back_mut(), at) {
             last.at = Some(at.clone());
             self.last_at = Some(at);
+            self.mutations += 1;
         }
     }
 
-    fn touched(&mut self, file: &str) {
+    /// Records a tool call on the open turn, or opens an empty turn for it when the agent started
+    /// with a tool before saying anything.
+    pub(crate) fn attach_tool(
+        &mut self,
+        group: &str,
+        name: &str,
+        decisions: Vec<Decision>,
+        at: Option<String>,
+        limit: usize,
+    ) {
+        if self.open_group.as_deref() == Some(group) {
+            if let Some(last) = self.entries.back_mut() {
+                if last.tools.len() < MAX_TRANSCRIPT_TURN_TOOLS {
+                    last.tools.push(name.to_string());
+                }
+                last.decisions.extend(decisions);
+                if let Some(at) = at {
+                    last.at = Some(at.clone());
+                    self.last_at = Some(at);
+                }
+                self.mutations += 1;
+                return;
+            }
+        }
+        let mut entry = TranscriptEntry::new("assistant", String::new(), at);
+        entry.tools.push(name.to_string());
+        entry.decisions = decisions;
+        self.push_merging(entry, Some(group.to_string()), limit);
+    }
+
+    /// The answer to a question arrived: mark the picked option on the turn that asked it. The
+    /// result text carries `"question"="label"` pairs, so an option is picked iff `="<label>"`
+    /// appears — anchored on the `=` so a label inside the question text is not a false match.
+    pub(crate) fn resolve_decisions(&mut self, call_id: &str, result_text: &str) {
+        let Some(last) = self.entries.back_mut() else {
+            return;
+        };
+        for decision in last
+            .decisions
+            .iter_mut()
+            .filter(|decision| decision.call_id.as_deref() == Some(call_id))
+        {
+            let picked: Vec<&str> = decision
+                .options
+                .iter()
+                .filter(|label| result_text.contains(&format!("=\"{label}\"")))
+                .map(String::as_str)
+                .collect();
+            if !picked.is_empty() {
+                decision.selected = Some(picked.join(", "));
+                self.mutations += 1;
+            }
+        }
+    }
+
+    pub(crate) fn touched(&mut self, file: &str) {
         // Most recently touched last, and named once however many times it was edited.
         self.changed.retain(|existing| existing != file);
         self.changed.push(file.to_string());
+        self.mutations += 1;
+    }
+
+    pub(crate) fn add_usage(&mut self, sample: UsageSample) {
+        self.usage
+            .get_or_insert_with(UsageTotals::default)
+            .add(sample);
+        self.mutations += 1;
+    }
+
+    pub(crate) fn replace_usage(&mut self, total: UsageSample) {
+        self.usage
+            .get_or_insert_with(UsageTotals::default)
+            .replace(total);
+        self.mutations += 1;
     }
 
     pub(crate) fn snapshot(
@@ -274,11 +348,15 @@ impl Collected {
             total_entries: self.total,
             changed_files: self.changed.clone(),
             last_activity: self.last_at.clone(),
+            revision: 0,
+            binding: Binding::Exact.as_str().to_string(),
+            activity: self.activity.snapshot(),
+            usage: self.usage.clone(),
         }
     }
 
     #[cfg(test)]
-    fn finish(self, source: &str, path: &Path) -> AgentTranscript {
+    pub(crate) fn finish(self, source: &str, path: &Path) -> AgentTranscript {
         AgentTranscript {
             source: source.to_string(),
             path: path.to_string_lossy().into_owned(),
@@ -286,6 +364,10 @@ impl Collected {
             total_entries: self.total,
             changed_files: self.changed,
             last_activity: self.last_at,
+            revision: 0,
+            binding: Binding::Exact.as_str().to_string(),
+            activity: self.activity.snapshot(),
+            usage: self.usage,
         }
     }
 }
@@ -321,8 +403,15 @@ fn collect_line_unfiltered(
         return;
     };
     match source {
-        TranscriptSource::Claude => collect_claude_value(&value, collected, limit),
-        TranscriptSource::Codex => collect_codex_value(&value, collected, limit),
+        TranscriptSource::Claude => {
+            crate::transcript_claude::collect_claude_value(&value, collected, limit)
+        }
+        TranscriptSource::Codex => {
+            crate::transcript_codex::collect_codex_value(&value, collected, limit)
+        }
+        TranscriptSource::Antigravity => {
+            crate::transcript_antigravity::collect_antigravity_value(&value, collected, limit)
+        }
     }
 }
 
@@ -336,165 +425,20 @@ pub(crate) fn collect_line_without_filter_for_test(
     collect_line_unfiltered(source, line, collected, limit);
 }
 
-fn collect_claude_value(value: &serde_json::Value, collected: &mut Collected, limit: usize) {
-    // A sidechain is a subagent's separate conversation and never affects the visible turn.
-    if value.get("isSidechain").and_then(|flag| flag.as_bool()) == Some(true) {
-        return;
-    }
-    let role = match value.get("type").and_then(|kind| kind.as_str()) {
-        Some("user") => "user",
-        Some("assistant") => "assistant",
-        _ => return,
-    };
-    // TALKAK uses every real user-prompt record as the assistant-turn boundary, even when the
-    // prompt is image-only and therefore has no text to render. Tool-result records are also typed
-    // as `user`, but remain inside the current turn.
-    let is_user_prompt = role == "user"
-        && match value
-            .get("message")
-            .and_then(|message| message.get("content"))
-        {
-            Some(serde_json::Value::String(_)) => true,
-            Some(serde_json::Value::Array(blocks)) => !blocks.iter().any(|block| {
-                block.get("type").and_then(|kind| kind.as_str()) == Some("tool_result")
-            }),
-            _ => false,
-        };
-    if value.get("isMeta").and_then(|flag| flag.as_bool()) == Some(true) {
-        if is_user_prompt {
-            collected.open_group = None;
-        }
-        return;
-    }
-    let at = value
-        .get("timestamp")
-        .and_then(|timestamp| timestamp.as_str())
-        .map(str::to_string);
-    let content = value
-        .get("message")
-        .and_then(|message| message.get("content"));
-    let mut text = String::new();
-    match content {
-        Some(serde_json::Value::String(plain)) => text.push_str(plain),
-        Some(serde_json::Value::Array(blocks)) => {
-            for block in blocks {
-                match block.get("type").and_then(|kind| kind.as_str()) {
-                    Some("text") => {
-                        if let Some(value) = block.get("text").and_then(|text| text.as_str()) {
-                            if !text.is_empty() {
-                                text.push_str("\n\n");
-                            }
-                            text.push_str(value);
-                        }
-                    }
-                    Some("tool_use") => {
-                        let name = block
-                            .get("name")
-                            .and_then(|name| name.as_str())
-                            .unwrap_or("");
-                        if matches!(name, "Edit" | "Write" | "NotebookEdit") {
-                            if let Some(file) = block
-                                .get("input")
-                                .and_then(|input| input.get("file_path"))
-                                .and_then(|file| file.as_str())
-                            {
-                                collected.touched(file);
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        _ => {}
-    }
-    let text = strip_harness_wrapper(&text);
-    if text.is_empty() {
-        if is_user_prompt {
-            collected.open_group = None;
-        } else if role == "assistant" {
-            // A tool-only record still advances its visible assistant turn's timestamp.
-            collected.touch_open_group_at("claude-assistant-turn", at);
-        }
-        return;
-    }
-    // Claude can emit several API messages while answering one human prompt (for example around
-    // tool calls), and those messages have different ids. TALKAK's conversation reader groups the
-    // whole assistant side of that human turn; using message.id here split it into needless bubbles.
-    // A non-empty human user record clears this group, while tool-result records contain no visible
-    // text and deliberately leave it open.
-    let turn_group = (role == "assistant").then(|| "claude-assistant-turn".to_string());
-    collected.push_merging(
-        TranscriptEntry {
-            role: role.to_string(),
-            text,
-            at,
-        },
-        turn_group,
-        limit,
-    );
-}
-
-fn collect_codex_value(value: &serde_json::Value, collected: &mut Collected, limit: usize) {
-    if value.get("type").and_then(|kind| kind.as_str()) != Some("response_item") {
-        return;
-    }
-    let Some(payload) = value.get("payload") else {
-        return;
-    };
-    if payload.get("type").and_then(|kind| kind.as_str()) != Some("message") {
-        return;
-    }
-    let role = match payload.get("role").and_then(|role| role.as_str()) {
-        Some(role @ ("user" | "assistant")) => role,
-        _ => return,
-    };
-    let mut text = String::new();
-    if let Some(blocks) = payload
-        .get("content")
-        .and_then(|content| content.as_array())
-    {
-        for block in blocks {
-            if matches!(
-                block.get("type").and_then(|kind| kind.as_str()),
-                Some("input_text") | Some("output_text") | Some("text")
-            ) {
-                if let Some(value) = block.get("text").and_then(|text| text.as_str()) {
-                    if !text.is_empty() {
-                        text.push_str("\n\n");
-                    }
-                    text.push_str(value);
-                }
-            }
-        }
-    }
-    let text = strip_harness_wrapper(&text);
-    if text.is_empty() {
-        return;
-    }
-    collected.push(
-        TranscriptEntry {
-            role: role.to_string(),
-            text,
-            at: value
-                .get("timestamp")
-                .and_then(|timestamp| timestamp.as_str())
-                .map(str::to_string),
-        },
-        limit,
-    );
-}
-
-/// Both harnesses prepend machine-generated context to the first user turn — an
-/// `<environment_context>` block for codex, a `<local-command-caveat>` or `<system-reminder>` for
-/// Claude Code. Showing those as though the person had typed them is worse than showing nothing.
+/// Every harness prepends machine-generated context to a user turn — an `<environment_context>`
+/// block for codex, a `<local-command-caveat>` or `<system-reminder>` for Claude Code, and the
+/// slash-command envelope Claude Code records for a local command the agent never answers.
+/// Showing those as though the person had typed them is worse than showing nothing.
 pub(crate) fn strip_harness_wrapper(text: &str) -> String {
     let trimmed = text.trim();
-    const WRAPPERS: [&str; 4] = [
+    const WRAPPERS: [&str; 7] = [
         "<environment_context>",
         "<local-command-caveat>",
         "<system-reminder>",
         "<command-message>",
+        "<command-name>",
+        "<command-args>",
+        "<local-command-stdout>",
     ];
     for wrapper in WRAPPERS {
         if trimmed.starts_with(wrapper) {
@@ -514,43 +458,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_working_directory_becomes_the_name_claude_code_actually_uses() {
-        // Verified against the real directory on this machine.
-        assert_eq!(
-            claude_project_dir_name("C:\\Sources\\talkak-developer"),
-            "C--Sources-talkak-developer"
-        );
-        // A UNC path keeps its leading pair, and dots collapse the same way separators do.
-        assert_eq!(
-            claude_project_dir_name("\\\\wsl.localhost\\Ubuntu\\home\\daeseony"),
-            "--wsl-localhost-Ubuntu-home-daeseony"
-        );
-    }
-
-    #[test]
-    fn two_spellings_of_one_directory_match() {
-        assert_eq!(
-            normalised_path("C:\\Sources\\talkak-developer\\"),
-            normalised_path("C:/Sources/talkak-developer")
-        );
-        if cfg!(windows) {
-            assert_eq!(
-                normalised_path("C:/Sources/talkak-developer"),
-                normalised_path("c:/sources/talkak-developer")
-            );
-        } else {
-            assert_ne!(
-                normalised_path("C:/Sources/talkak-developer"),
-                normalised_path("c:/sources/talkak-developer")
-            );
-        }
-        assert_ne!(
-            normalised_path("C:/Sources/talkak"),
-            normalised_path("C:/Sources/talkak-developer")
-        );
-    }
-
-    #[test]
     fn harness_preamble_never_reaches_the_reader() {
         assert_eq!(
             strip_harness_wrapper(
@@ -568,6 +475,17 @@ mod tests {
             strip_harness_wrapper("<system-reminder>only</system-reminder>"),
             ""
         );
+        // A local slash command is an envelope the agent never answers.
+        assert_eq!(
+            strip_harness_wrapper(
+                "<command-name>/model</command-name>\n  <command-message>model</command-message>\n  <command-args></command-args>"
+            ),
+            ""
+        );
+        assert_eq!(
+            strip_harness_wrapper("<local-command-stdout>Set model to opus</local-command-stdout>"),
+            ""
+        );
         assert_eq!(strip_harness_wrapper("  plain words  "), "plain words");
     }
 
@@ -576,11 +494,7 @@ mod tests {
         let mut collected = Collected::new();
         for index in 0..10 {
             collected.push(
-                TranscriptEntry {
-                    role: "user".into(),
-                    text: format!("turn {index}"),
-                    at: Some(format!("t{index}")),
-                },
+                TranscriptEntry::new("user", format!("turn {index}"), Some(format!("t{index}"))),
                 3,
             );
         }
@@ -597,11 +511,7 @@ mod tests {
         // Claude may write one assistant turn across several records. The service-level tests also
         // cover the different-message-id case that occurs around tool calls.
         let mut collected = Collected::new();
-        let block = |text: &str| TranscriptEntry {
-            role: "assistant".into(),
-            text: text.into(),
-            at: Some("t".into()),
-        };
+        let block = |text: &str| TranscriptEntry::new("assistant", text.into(), Some("t".into()));
         collected.push_merging(block("first"), Some("msg_1".into()), 10);
         collected.push_merging(block("second"), Some("msg_1".into()), 10);
         collected.push_merging(block("a new reply"), Some("msg_2".into()), 10);
@@ -618,29 +528,13 @@ mod tests {
     fn a_user_turn_between_two_blocks_of_one_answer_breaks_the_group() {
         let mut collected = Collected::new();
         collected.push_merging(
-            TranscriptEntry {
-                role: "assistant".into(),
-                text: "a".into(),
-                at: None,
-            },
+            TranscriptEntry::new("assistant", "a".into(), None),
             Some("msg_1".into()),
             10,
         );
+        collected.push_merging(TranscriptEntry::new("user", "wait".into(), None), None, 10);
         collected.push_merging(
-            TranscriptEntry {
-                role: "user".into(),
-                text: "wait".into(),
-                at: None,
-            },
-            None,
-            10,
-        );
-        collected.push_merging(
-            TranscriptEntry {
-                role: "assistant".into(),
-                text: "b".into(),
-                at: None,
-            },
+            TranscriptEntry::new("assistant", "b".into(), None),
             Some("msg_1".into()),
             10,
         );
@@ -649,42 +543,65 @@ mod tests {
     }
 
     #[test]
-    fn base36_matches_javascript_including_the_edge_that_returned_nothing() {
-        // Math.abs(-2147483648).toString(36) === "zik0zk". Taking the magnitude in i32 leaves
-        // i32::MIN negative, and the loop then produced an empty suffix — a name ending in a dash.
-        assert_eq!(base36(i32::MIN), "zik0zk");
-        assert_eq!(base36(0), "0");
-        assert_eq!(base36(35), "z");
-        assert_eq!(base36(36), "10");
-        // The sign is dropped, never carried into the name.
-        assert_eq!(base36(-36), "10");
-    }
+    fn a_tool_before_any_words_opens_the_turn_the_words_then_fill() {
+        let mut collected = Collected::new();
+        collected.attach_tool("turn", "Read", Vec::new(), Some("t1".into()), 10);
+        collected.attach_tool("turn", "Bash", Vec::new(), Some("t2".into()), 10);
+        let transcript = collected.clone().finish("codex", Path::new("x.jsonl"));
+        assert_eq!(transcript.entries.len(), 1);
+        assert_eq!(transcript.entries[0].role, "assistant");
+        assert_eq!(transcript.entries[0].text, "");
+        assert_eq!(transcript.entries[0].tools, vec!["Read", "Bash"]);
+        assert_eq!(transcript.entries[0].at.as_deref(), Some("t2"));
 
-    #[test]
-    fn an_astral_character_counts_as_the_two_units_the_harness_sees() {
-        // The harness sanitises with a JavaScript regex that has no /u flag, so an emoji is two
-        // code units and becomes two dashes. Per char it would be one, and the computed name would
-        // not match the directory that actually exists.
-        assert_eq!(claude_project_dir_name("a\u{1F600}b"), "a--b");
-        // Hangul is in the BMP: one unit, one dash, either way.
-        assert_eq!(claude_project_dir_name("a한b"), "a-b");
-    }
-
-    #[test]
-    fn a_path_past_two_hundred_characters_keeps_a_hash_of_the_original() {
-        let deep = format!("C:\\{}", "segment\\".repeat(40));
-        let name = claude_project_dir_name(&deep);
-        assert!(
-            name.chars().count() > 200,
-            "the hash suffix is appended, not folded in"
+        collected.push_or_fill(
+            TranscriptEntry::new("assistant", "done".into(), Some("t3".into())),
+            "turn",
+            10,
         );
-        assert!(name
-            .chars()
-            .take(200)
-            .all(|c| c.is_ascii_alphanumeric() || c == '-'));
-        // Two long paths sharing the first 200 characters must not collide.
-        let sibling = format!("{deep}other\\");
-        assert_ne!(name, claude_project_dir_name(&sibling));
+        collected.push_or_fill(
+            TranscriptEntry::new("assistant", "and more".into(), Some("t4".into())),
+            "turn",
+            10,
+        );
+        let transcript = collected.finish("codex", Path::new("x.jsonl"));
+        assert_eq!(transcript.entries.len(), 2);
+        assert_eq!(transcript.entries[0].text, "done");
+        assert_eq!(transcript.entries[0].tools, vec!["Read", "Bash"]);
+        assert_eq!(transcript.entries[1].text, "and more");
+        assert_eq!(transcript.total_entries, 2);
+    }
+
+    #[test]
+    fn a_decision_is_resolved_only_by_its_own_answer() {
+        let mut collected = Collected::new();
+        let decisions = vec![
+            Decision {
+                question: "Ship it?".into(),
+                options: vec!["Yes".into(), "No".into()],
+                selected: None,
+                call_id: Some("ask-1".into()),
+            },
+            Decision {
+                question: "Which No?".into(),
+                options: vec!["No".into(), "Never".into()],
+                selected: None,
+                call_id: Some("ask-2".into()),
+            },
+        ];
+        collected.attach_tool("turn", "AskUserQuestion", decisions, None, 10);
+        let before = collected.version();
+        collected.resolve_decisions(
+            "ask-1",
+            r#"Your questions have been answered: "Ship it?"="No"."#,
+        );
+        let transcript = collected.clone().finish("claude", Path::new("x.jsonl"));
+        assert_eq!(
+            transcript.entries[0].decisions[0].selected.as_deref(),
+            Some("No")
+        );
+        assert_eq!(transcript.entries[0].decisions[1].selected, None);
+        assert_ne!(collected.version(), before);
     }
 
     #[test]
@@ -695,5 +612,24 @@ mod tests {
         collected.touched("a.rs");
         let transcript = collected.finish("claude", Path::new("x.jsonl"));
         assert_eq!(transcript.changed_files, vec!["b.rs", "a.rs"]);
+    }
+
+    #[test]
+    fn the_projection_carries_the_agreed_fields() {
+        let mut collected = Collected::new();
+        collected.push(TranscriptEntry::new("user", "hi".into(), None), 10);
+        let json = serde_json::to_value(collected.snapshot(
+            TranscriptSource::Antigravity,
+            Path::new("t"),
+            10,
+        ))
+        .unwrap();
+        assert_eq!(json["source"], "antigravity");
+        assert_eq!(json["binding"], "exact");
+        assert_eq!(json["revision"], 0);
+        assert_eq!(json["usage"], serde_json::Value::Null);
+        assert_eq!(json["activity"]["state"], "idle");
+        assert_eq!(json["entries"][0]["tools"], serde_json::json!([]));
+        assert_eq!(json["entries"][0]["decisions"], serde_json::json!([]));
     }
 }

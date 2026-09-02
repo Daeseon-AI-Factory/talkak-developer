@@ -1,6 +1,6 @@
 //! Small, provider-owned selection rules that keep transcript discovery deterministic.
 
-use crate::agent_transcript::normalised_path;
+use crate::transcript_paths::normalised_path;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]

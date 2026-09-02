@@ -1,5 +1,5 @@
 use super::*;
-use crate::agent_transcript::claude_project_dir_name;
+use crate::transcript_paths::claude_project_dir_name;
 use std::fs::{create_dir_all, OpenOptions};
 use std::io::Write;
 use std::path::Path;
@@ -110,7 +110,9 @@ fn parsed_lines(service: &TranscriptService, id: &str) -> usize {
     let cached = session_cache.lock().unwrap();
     match cached.as_ref().expect("the transcript should be cached") {
         CachedSession::Bound(bound) => bound.parsed_lines,
-        CachedSession::Pending(_) => panic!("the transcript should be bound"),
+        CachedSession::Pending(_) | CachedSession::Unbound(_) => {
+            panic!("the transcript should be bound")
+        }
     }
 }
 

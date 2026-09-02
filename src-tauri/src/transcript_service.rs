@@ -1,22 +1,24 @@
 //! Session-scoped discovery and incremental reading for agent-owned JSONL transcripts.
 //!
 //! Discovery is deliberately paid once per Talkak session. After that, the exact record path is
-//! bound to the session id and only bytes appended after the last complete line are parsed.
+//! bound to the session id and only bytes appended after the last complete line are parsed. A
+//! session with no record remembers that too: a plain shell pane is polled every few seconds, and
+//! re-listing every historical record on each poll kept the disk busy for nothing.
 
-use crate::agent_transcript::{
-    collect_line, home_dir, normalised_path, AgentTranscript, Collected, TranscriptSource,
-    MAX_TRANSCRIPT_ENTRIES,
-};
+use crate::agent_transcript::{AgentTranscript, Binding, TranscriptSource, MAX_TRANSCRIPT_ENTRIES};
+use crate::transcript_activity::AgentActivity;
+use crate::transcript_bound::BoundTranscript;
 use crate::transcript_discovery::{
-    discover_record, parse_rfc3339_ms, provider_hint, system_time_ms, Candidate,
+    discover_record, parse_rfc3339_ms, provider_hint, system_time_ms, watched_paths, Candidate,
 };
+use crate::transcript_paths::{home_dir, normalised_path};
 use crate::transcript_selection::claude_record_intent;
+use serde::Serialize;
 use session_broker::store::SessionStore;
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::SystemTime;
+use std::time::{Duration, Instant, SystemTime};
 
 #[derive(Clone)]
 pub(crate) struct TranscriptService {
@@ -31,6 +33,39 @@ pub(crate) struct TranscriptService {
 type SessionCache = Arc<Mutex<Option<CachedSession>>>;
 #[cfg(test)]
 type ColdReadHook = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// How the renderer identifies one Talkak session to every transcript command.
+#[derive(Debug, Clone)]
+pub(crate) struct TranscriptScope {
+    pub session_id: String,
+    pub run_id: Option<u64>,
+    pub project_path: String,
+    pub started_at: Option<String>,
+    pub agent_command: Option<String>,
+}
+
+/// What a transcript read hands back: the reader says which revision it already holds, and an
+/// unchanged record costs one stat instead of an 800-entry clone across IPC.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum TranscriptRead {
+    Unchanged { revision: u64 },
+    Transcript { transcript: Box<AgentTranscript> },
+    Absent,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct AgentActivityRead {
+    pub activity: AgentActivity,
+    pub revision: u64,
+}
+
+/// A missed discovery is retried after this, doubling up to the cap unless a watched directory
+/// changes first. The floor matches the renderer's poll, so the first retry is never later than
+/// today; the cap keeps a record that appears before its first timestamped line from being missed.
+const UNBOUND_RECHECK_MIN: Duration = Duration::from_secs(4);
+const UNBOUND_RECHECK_MAX: Duration = Duration::from_secs(30);
 
 impl Default for TranscriptService {
     fn default() -> Self {
@@ -79,6 +114,7 @@ impl TranscriptService {
         }
     }
 
+    #[cfg(test)]
     fn read(
         &self,
         session_id: String,
@@ -88,6 +124,54 @@ impl TranscriptService {
         agent_command: Option<String>,
         limit: usize,
     ) -> Result<Option<AgentTranscript>, String> {
+        let scope = TranscriptScope {
+            session_id,
+            run_id,
+            project_path,
+            started_at,
+            agent_command,
+        };
+        Ok(match self.read_changed(scope, None, limit)? {
+            TranscriptRead::Transcript { transcript } => Some(*transcript),
+            TranscriptRead::Unchanged { .. } | TranscriptRead::Absent => None,
+        })
+    }
+
+    fn read_changed(
+        &self,
+        scope: TranscriptScope,
+        known_revision: Option<u64>,
+        limit: usize,
+    ) -> Result<TranscriptRead, String> {
+        let limit = limit.clamp(1, MAX_TRANSCRIPT_ENTRIES);
+        let read = self.with_bound(scope, |bound| {
+            if known_revision == Some(bound.revision) {
+                TranscriptRead::Unchanged {
+                    revision: bound.revision,
+                }
+            } else {
+                TranscriptRead::Transcript {
+                    transcript: Box::new(bound.snapshot(limit)),
+                }
+            }
+        })?;
+        Ok(read.unwrap_or(TranscriptRead::Absent))
+    }
+
+    fn activity(&self, scope: TranscriptScope) -> Result<Option<AgentActivityRead>, String> {
+        self.with_bound(scope, |bound| AgentActivityRead {
+            activity: bound.activity(),
+            revision: bound.revision,
+        })
+    }
+
+    /// Resolves the session's bound record — binding, rebinding or remembering a miss — refreshes
+    /// it, and projects it. Every command shares this so each costs one stat and the appended lines.
+    fn with_bound<T>(
+        &self,
+        scope: TranscriptScope,
+        project: impl FnOnce(&BoundTranscript) -> T,
+    ) -> Result<Option<T>, String> {
         let home = self
             .home
             .as_deref()
@@ -99,7 +183,7 @@ impl TranscriptService {
                 .map_err(|_| "the transcript cache registry is unavailable".to_string())?;
             Arc::clone(
                 cache
-                    .entry(session_id.clone())
+                    .entry(scope.session_id.clone())
                     .or_insert_with(|| Arc::new(Mutex::new(None))),
             )
         };
@@ -112,11 +196,11 @@ impl TranscriptService {
         let current_run = self
             .store
             .as_deref()
-            .and_then(|store| store.definition(&session_id));
+            .and_then(|store| store.definition(&scope.session_id));
         let effective_project = current_run
             .as_ref()
             .and_then(|run| run.cwd.as_deref())
-            .unwrap_or(&project_path);
+            .unwrap_or(&scope.project_path);
         let stored_provider = current_run
             .as_ref()
             .and_then(|run| run.command.as_deref())
@@ -124,17 +208,18 @@ impl TranscriptService {
         let current_run_started_ms = current_run
             .as_ref()
             .and_then(|run| i64::try_from(run.started_at_ms).ok());
-        let effective_started_ms =
-            current_run_started_ms.or_else(|| started_at.as_deref().and_then(parse_rfc3339_ms));
+        let effective_started_ms = current_run_started_ms
+            .or_else(|| scope.started_at.as_deref().and_then(parse_rfc3339_ms));
         let effective_provider =
-            stored_provider.or_else(|| provider_hint(agent_command.as_deref()));
+            stored_provider.or_else(|| provider_hint(scope.agent_command.as_deref()));
         let claude_intent = current_run
             .as_ref()
             .filter(|_| stored_provider == Some(TranscriptSource::Claude))
             .and_then(|run| claude_record_intent(&run.args));
         let authoritative_run_id = current_run.as_ref().and_then(|run| run.run_id);
-        let effective_run_id = authoritative_run_id.or(run_id);
+        let effective_run_id = authoritative_run_id.or(scope.run_id);
         let project_key = normalised_path(effective_project);
+        let signature = (effective_run_id, effective_started_ms, effective_provider);
 
         if cached
             .as_ref()
@@ -157,7 +242,7 @@ impl TranscriptService {
                 }
                 _ => None,
             },
-            CachedSession::Pending(_) => None,
+            CachedSession::Pending(_) | CachedSession::Unbound(_) => None,
         });
         if let Some(current) = changed_run {
             let Some(CachedSession::Bound(bound)) = cached.take() else {
@@ -170,7 +255,7 @@ impl TranscriptService {
                 since_ms: current_run_started_ms
                     .unwrap_or_else(|| system_time_ms(SystemTime::now())),
                 source,
-                previous: Box::new(bound),
+                previous: bound,
             }));
         }
 
@@ -197,7 +282,16 @@ impl TranscriptService {
                 if candidate.path == pending.previous.path
                     && candidate.source == pending.previous.source
                 {
-                    Some(RebindResolution::Resume)
+                    // A probable match is only mtime proximity to the new run's start. For the
+                    // record this session already had open, that proves nothing until the file
+                    // has actually grown past what was read; until then the run stays pending
+                    // rather than showing the old conversation under a new run.
+                    if candidate.binding == Binding::Probable
+                        && !pending.previous.changed_since(pending.since_ms)
+                    {
+                        return Ok(None);
+                    }
+                    Some(RebindResolution::Resume(candidate.binding))
                 } else {
                     Some(RebindResolution::New(candidate))
                 }
@@ -205,7 +299,7 @@ impl TranscriptService {
                 && pending.previous.source == pending.source
                 && pending.previous.changed_since(pending.since_ms)
             {
-                Some(RebindResolution::Resume)
+                Some(RebindResolution::Resume(pending.previous.binding))
             } else {
                 return Ok(None);
             }
@@ -217,23 +311,45 @@ impl TranscriptService {
                 unreachable!("the pending transcript was resolved above")
             };
             let bound = match resolution {
-                RebindResolution::New(candidate) => {
-                    BoundTranscript::open(project_key.clone(), Some(pending.run_id), candidate)?
-                }
-                RebindResolution::Resume => {
+                RebindResolution::New(candidate) => Box::new(BoundTranscript::open(
+                    project_key.clone(),
+                    Some(pending.run_id),
+                    candidate,
+                )?),
+                RebindResolution::Resume(binding) => {
                     pending.previous.run_id = Some(pending.run_id);
+                    pending.previous.binding = binding;
                     pending.previous.refresh()?;
-                    *pending.previous
+                    pending.previous
                 }
             };
             *cached = Some(CachedSession::Bound(bound));
         }
 
+        let mut previous_wait = None;
+        if let Some(CachedSession::Unbound(probe)) = cached.as_ref() {
+            if probe.signature == signature {
+                if !probe.due() {
+                    return Ok(None);
+                }
+                previous_wait = Some(probe.next_after);
+            }
+            *cached = None;
+        }
         if cached.is_none() {
             #[cfg(test)]
             if let Some(hook) = &self.cold_read_hook {
-                hook(&session_id);
+                hook(&scope.session_id);
             }
+            // Snapshot before discovery, so a record created while discovery ran triggers the
+            // next poll's rescan instead of waiting out the backoff.
+            let watched = watched_paths(home, effective_project, effective_started_ms)
+                .into_iter()
+                .map(|path| {
+                    let modified = modified_opt(&path);
+                    (path, modified)
+                })
+                .collect();
             let Some(candidate) = discover_record(
                 home,
                 effective_project,
@@ -243,20 +359,30 @@ impl TranscriptService {
                 None,
             )?
             else {
+                *cached = Some(CachedSession::Unbound(UnboundProbe {
+                    project_key,
+                    signature,
+                    checked_at: Instant::now(),
+                    next_after: previous_wait
+                        .map(|wait| (wait * 2).min(UNBOUND_RECHECK_MAX))
+                        .unwrap_or(UNBOUND_RECHECK_MIN),
+                    watched,
+                }));
                 return Ok(None);
             };
-            let bound = BoundTranscript::open(project_key, effective_run_id, candidate)?;
+            let bound = Box::new(BoundTranscript::open(
+                project_key,
+                effective_run_id,
+                candidate,
+            )?);
             *cached = Some(CachedSession::Bound(bound));
         }
 
-        let CachedSession::Bound(bound) = cached
-            .as_mut()
-            .expect("a bound transcript was inserted above")
-        else {
+        let Some(CachedSession::Bound(bound)) = cached.as_mut() else {
             return Ok(None);
         };
         bound.refresh()?;
-        Ok(Some(bound.snapshot(limit.clamp(1, MAX_TRANSCRIPT_ENTRIES))))
+        Ok(Some(project(bound)))
     }
 }
 
@@ -271,7 +397,17 @@ fn replaces_cached_run(previous: u64, current: u64, authoritative: bool) -> bool
     }
 }
 
+fn modified_opt(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
+}
+
 /// Keep cold discovery and parsing off the window thread; per-session locks still coalesce reads.
+// The renderer sends these exact named fields (sessionId, runId, projectPath, startedAt,
+// agentCommand, limit, knownRevision); grouping them into a struct would just move the same
+// shape one level down without changing the Tauri command's IPC surface.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub(crate) async fn agent_transcript(
     service: tauri::State<'_, TranscriptService>,
@@ -281,25 +417,48 @@ pub(crate) async fn agent_transcript(
     started_at: Option<String>,
     agent_command: Option<String>,
     limit: usize,
-) -> Result<Option<AgentTranscript>, String> {
+    known_revision: Option<u64>,
+) -> Result<TranscriptRead, String> {
     let service = (*service).clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        service.read(
-            session_id,
-            run_id,
-            project_path,
-            started_at,
-            agent_command,
-            limit,
-        )
-    })
-    .await
-    .map_err(|error| format!("transcript worker failed: {error}"))?
+    let scope = TranscriptScope {
+        session_id,
+        run_id,
+        project_path,
+        started_at,
+        agent_command,
+    };
+    tauri::async_runtime::spawn_blocking(move || service.read_changed(scope, known_revision, limit))
+        .await
+        .map_err(|error| format!("transcript worker failed: {error}"))?
+}
+
+/// The activity projection alone: same cached binding, same one-stat refresh, no entry clone.
+#[tauri::command]
+pub(crate) async fn agent_activity(
+    service: tauri::State<'_, TranscriptService>,
+    session_id: String,
+    run_id: Option<u64>,
+    project_path: String,
+    started_at: Option<String>,
+    agent_command: Option<String>,
+) -> Result<Option<AgentActivityRead>, String> {
+    let service = (*service).clone();
+    let scope = TranscriptScope {
+        session_id,
+        run_id,
+        project_path,
+        started_at,
+        agent_command,
+    };
+    tauri::async_runtime::spawn_blocking(move || service.activity(scope))
+        .await
+        .map_err(|error| format!("transcript worker failed: {error}"))?
 }
 
 enum CachedSession {
-    Bound(BoundTranscript),
+    Bound(Box<BoundTranscript>),
     Pending(PendingRebind),
+    Unbound(UnboundProbe),
 }
 
 impl CachedSession {
@@ -307,6 +466,7 @@ impl CachedSession {
         match self {
             Self::Bound(bound) => &bound.project_key,
             Self::Pending(pending) => &pending.project_key,
+            Self::Unbound(probe) => &probe.project_key,
         }
     }
 }
@@ -321,134 +481,32 @@ struct PendingRebind {
 
 enum RebindResolution {
     New(Candidate),
-    Resume,
+    Resume(crate::agent_transcript::Binding),
 }
 
-struct BoundTranscript {
+/// A remembered discovery miss. It is trusted while the run, its start and its provider hint stay
+/// the same, none of the watched directories changed, and the recheck interval has not elapsed.
+struct UnboundProbe {
     project_key: String,
-    run_id: Option<u64>,
-    source: TranscriptSource,
-    path: PathBuf,
-    collected: Collected,
-    offset: u64,
-    observed_len: u64,
-    observed_modified: Option<SystemTime>,
-    #[cfg(test)]
-    parsed_lines: usize,
+    signature: (Option<u64>, Option<i64>, Option<TranscriptSource>),
+    checked_at: Instant,
+    next_after: Duration,
+    watched: Vec<(PathBuf, Option<SystemTime>)>,
 }
 
-impl BoundTranscript {
-    fn open(
-        project_key: String,
-        run_id: Option<u64>,
-        candidate: Candidate,
-    ) -> Result<Self, String> {
-        let mut bound = Self {
-            project_key,
-            run_id,
-            source: candidate.source,
-            path: candidate.path,
-            collected: Collected::new(),
-            offset: 0,
-            observed_len: 0,
-            observed_modified: None,
-            #[cfg(test)]
-            parsed_lines: 0,
-        };
-        bound.reset_and_parse()?;
-        Ok(bound)
-    }
-
-    fn changed_since(&self, since_ms: i64) -> bool {
-        let Ok(metadata) = std::fs::metadata(&self.path) else {
-            return false;
-        };
-        let advanced = metadata.len() > self.observed_len
-            || (metadata.len() == self.observed_len
-                && metadata.modified().ok() != self.observed_modified);
-        let modified_after_launch = metadata
-            .modified()
-            .ok()
-            .is_some_and(|value| system_time_ms(value) >= since_ms.saturating_sub(1_000));
-        advanced && modified_after_launch
-    }
-
-    fn refresh(&mut self) -> Result<(), String> {
-        let metadata = std::fs::metadata(&self.path)
-            .map_err(|error| format!("could not inspect the agent record: {error}"))?;
-        let modified = metadata.modified().ok();
-        if metadata.len() < self.observed_len
-            || self.offset > metadata.len()
-            || (metadata.len() == self.observed_len && modified != self.observed_modified)
-        {
-            return self.reset_and_parse();
-        }
-        if metadata.len() == self.observed_len {
-            return Ok(());
-        }
-        self.parse_through(metadata.len())?;
-        self.observed_len = metadata.len();
-        self.observed_modified = modified;
-        Ok(())
-    }
-
-    fn reset_and_parse(&mut self) -> Result<(), String> {
-        let metadata = std::fs::metadata(&self.path)
-            .map_err(|error| format!("could not inspect the agent record: {error}"))?;
-        self.collected = Collected::new();
-        self.offset = 0;
-        self.parse_through(metadata.len())?;
-        self.observed_len = metadata.len();
-        self.observed_modified = metadata.modified().ok();
-        Ok(())
-    }
-
-    fn parse_through(&mut self, target_len: u64) -> Result<(), String> {
-        let mut file = std::fs::File::open(&self.path)
-            .map_err(|error| format!("could not open the agent record: {error}"))?;
-        file.seek(SeekFrom::Start(self.offset))
-            .map_err(|error| format!("could not seek in the agent record: {error}"))?;
-        let remaining = target_len.saturating_sub(self.offset);
-        let mut reader = BufReader::new(file.take(remaining));
-        let mut line = Vec::new();
-        loop {
-            line.clear();
-            let read = reader
-                .read_until(b'\n', &mut line)
-                .map_err(|error| format!("could not read the agent record: {error}"))?;
-            if read == 0 || line.last() != Some(&b'\n') {
-                break;
-            }
-            self.offset += read as u64;
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            if let Ok(text) = std::str::from_utf8(&line) {
-                collect_line(
-                    self.source,
-                    text,
-                    &mut self.collected,
-                    MAX_TRANSCRIPT_ENTRIES,
-                );
-            }
-            #[cfg(test)]
-            {
-                self.parsed_lines += 1;
-            }
-        }
-        Ok(())
-    }
-
-    fn snapshot(&self, limit: usize) -> AgentTranscript {
-        self.collected.snapshot(
-            self.source,
-            &self.path,
-            limit.clamp(1, MAX_TRANSCRIPT_ENTRIES),
-        )
+impl UnboundProbe {
+    fn due(&self) -> bool {
+        self.checked_at.elapsed() >= self.next_after
+            || self
+                .watched
+                .iter()
+                .any(|(path, modified)| modified_opt(path) != *modified)
     }
 }
 
+#[cfg(test)]
+#[path = "transcript_service_cache_tests.rs"]
+mod cache_tests;
 #[cfg(test)]
 #[path = "transcript_service_claude_tests.rs"]
 mod claude_tests;
@@ -458,3 +516,6 @@ mod core_tests;
 #[cfg(test)]
 #[path = "transcript_service_extended_tests.rs"]
 mod extended_tests;
+#[cfg(test)]
+#[path = "transcript_service_perf_tests.rs"]
+mod perf_tests;

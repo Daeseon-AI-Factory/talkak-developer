@@ -6,10 +6,17 @@ mod project_commands;
 mod session_commands;
 mod session_runtime;
 mod session_stream;
+mod transcript_activity;
+mod transcript_antigravity;
+mod transcript_bound;
+mod transcript_claude;
+mod transcript_codex;
 mod transcript_discovery;
 mod transcript_line_filter;
+mod transcript_paths;
 mod transcript_selection;
 mod transcript_service;
+mod transcript_usage;
 
 #[cfg(test)]
 mod project_commands_tests;
@@ -25,7 +32,7 @@ use session_commands::{
 use session_runtime::SessionRuntime;
 use session_stream::{session_attach, session_detach, SessionStreams};
 use tauri::Manager;
-use transcript_service::{agent_transcript, TranscriptService};
+use transcript_service::{agent_activity, agent_transcript, TranscriptService};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +120,7 @@ pub fn run() {
     builder
         .invoke_handler(tauri::generate_handler![
             app_quit,
+            agent_activity,
             agent_transcript,
             clipboard_read_image_path,
             clipboard_read_text,

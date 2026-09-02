@@ -1,9 +1,11 @@
 //! Provider-neutral transcript discovery paid only while a session has no bound record.
 
-use crate::agent_transcript::{
-    claude_project_dir_name, collect_rollouts, modified_at, TranscriptSource,
+use crate::agent_transcript::{Binding, TranscriptSource};
+use crate::transcript_antigravity::{
+    antigravity_root, antigravity_start_ms, antigravity_transcripts,
 };
 use crate::transcript_line_filter::{codex_session_header, codex_session_header_prefix};
+use crate::transcript_paths::{claude_project_dir_name, collect_rollouts, modified_at};
 use crate::transcript_selection::{
     project_paths_match, unique_claude_resume_path, ClaudeRecordIntent,
 };
@@ -16,6 +18,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub(crate) struct Candidate {
     pub(crate) path: PathBuf,
     pub(crate) source: TranscriptSource,
+    pub(crate) binding: Binding,
     started_ms: Option<i64>,
     modified_ms: i64,
 }
@@ -32,8 +35,18 @@ pub(crate) fn discover_record(
         claude_intent,
         Some(ClaudeRecordIntent::ExistingTargetUnbound)
     ) {
-        return Ok(None);
+        return Ok(probable_claude_record(
+            home,
+            project_path,
+            session_started_ms,
+        ));
     }
+    let resumes_existing = matches!(
+        claude_intent,
+        Some(ClaudeRecordIntent::ResumeExact(_) | ClaudeRecordIntent::CurrentProjectExact(_))
+    );
+    // An exact id names its record outright; only launch-time discovery needs the mtime prefilter.
+    let claude_since_ms = session_started_ms.filter(|_| !resumes_existing);
     // A UUID resume can point at another worktree. Only one exact basename across Claude's
     // immediate project directories is safe; duplicate matches are deliberately ambiguous.
     let mut candidates = match claude_intent {
@@ -44,33 +57,26 @@ pub(crate) fn discover_record(
                 .collect()
         }
         _ => match hint {
-            Some(TranscriptSource::Claude) => claude_candidates(home, project_path),
+            Some(TranscriptSource::Claude) => {
+                claude_candidates(home, project_path, claude_since_ms)
+            }
             Some(TranscriptSource::Codex) => {
                 codex_candidates(home, project_path, session_started_ms)?
             }
+            Some(TranscriptSource::Antigravity) => antigravity_candidates(home, session_started_ms),
             None => {
-                let mut records = claude_candidates(home, project_path);
+                let mut records = claude_candidates(home, project_path, claude_since_ms);
                 records.extend(codex_candidates(home, project_path, session_started_ms)?);
+                records.extend(antigravity_candidates(home, session_started_ms));
                 records
             }
         },
     };
 
-    if let Some(intent) = claude_intent {
-        match intent {
-            ClaudeRecordIntent::ResumeExact(_) => {}
-            ClaudeRecordIntent::CurrentProjectExact(session_id) => {
-                candidates.retain(|candidate| candidate_stem_is(candidate, session_id));
-            }
-            ClaudeRecordIntent::ExistingTargetUnbound => return Ok(None),
-            ClaudeRecordIntent::ForkNew => {}
-        }
+    if let Some(ClaudeRecordIntent::CurrentProjectExact(session_id)) = claude_intent {
+        candidates.retain(|candidate| candidate_stem_is(candidate, session_id));
     }
 
-    let resumes_existing = matches!(
-        claude_intent,
-        Some(ClaudeRecordIntent::ResumeExact(_) | ClaudeRecordIntent::CurrentProjectExact(_))
-    );
     // Resume intents may deliberately select the already-bound path. The caller recognizes that
     // identity and refreshes its incremental cache instead of reparsing it.
     if !resumes_existing {
@@ -108,6 +114,25 @@ pub(crate) fn discover_record(
     }))
 }
 
+/// `--continue` and a bare or search-term `--resume` reopen a record whose first timestamp
+/// predates this run, so the usual start-time proof cannot apply. The record that advanced after
+/// launch is the one the agent is writing — but only when exactly one did: with two same-cwd panes
+/// mtime cannot say which owns which, and staying unbound beats showing the wrong conversation.
+fn probable_claude_record(
+    home: &Path,
+    project_path: &str,
+    session_started_ms: Option<i64>,
+) -> Option<Candidate> {
+    session_started_ms?;
+    let mut candidates = claude_candidates(home, project_path, session_started_ms);
+    if candidates.len() != 1 {
+        return None;
+    }
+    let mut candidate = candidates.pop()?;
+    candidate.binding = Binding::Probable;
+    Some(candidate)
+}
+
 fn ownership_key(candidate: &Candidate, target: Option<i64>) -> (u8, u64) {
     match (target, candidate.started_ms) {
         (Some(wanted), Some(started)) => (0, wanted.abs_diff(started)),
@@ -136,35 +161,44 @@ fn candidate_key(candidate: &Candidate, target: Option<i64>) -> (u8, u64, std::c
     }
 }
 
-fn claude_candidates(home: &Path, project_path: &str) -> Vec<Candidate> {
+/// The directory Claude Code writes this project's records into, whether or not it exists yet.
+pub(crate) fn claude_project_dir(home: &Path, project_path: &str) -> PathBuf {
     let root = home.join(".claude/projects");
     let wanted = claude_project_dir_name(project_path);
-    let Ok(entries) = std::fs::read_dir(root) else {
-        return Vec::new();
-    };
-    let mut exact = None;
     let mut fallback = None;
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name == wanted {
-            exact = Some(entry.path());
-            break;
-        }
-        if fallback.is_none() && name.eq_ignore_ascii_case(&wanted) {
-            fallback = Some(entry.path());
+    if let Ok(entries) = std::fs::read_dir(&root) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == wanted {
+                return entry.path();
+            }
+            if fallback.is_none() && name.eq_ignore_ascii_case(&wanted) {
+                fallback = Some(entry.path());
+            }
         }
     }
-    let Some(directory) = exact.or(fallback) else {
+    fallback.unwrap_or_else(|| root.join(wanted))
+}
+
+fn claude_candidates(
+    home: &Path,
+    project_path: &str,
+    session_started_ms: Option<i64>,
+) -> Vec<Candidate> {
+    let Ok(records) = std::fs::read_dir(claude_project_dir(home, project_path)) else {
         return Vec::new();
     };
-    let Ok(records) = std::fs::read_dir(directory) else {
-        return Vec::new();
-    };
+    // A record whose mtime predates the run cannot carry a first timestamp after it. Dropping it
+    // here skips opening and parsing every historical record in the project on each cold poll.
+    let earliest = session_started_ms.map(|started| started.saturating_sub(1_000));
     records
         .flatten()
         .map(|entry| entry.path())
         .filter(|path| path.extension().and_then(|value| value.to_str()) == Some("jsonl"))
+        .filter(|path| {
+            earliest.is_none_or(|earliest| system_time_ms(modified_at(path)) >= earliest)
+        })
         .map(claude_candidate)
         .collect()
 }
@@ -175,6 +209,7 @@ fn claude_candidate(path: PathBuf) -> Candidate {
         started_ms: claude_start_ms(&path),
         path,
         source: TranscriptSource::Claude,
+        binding: Binding::Exact,
     }
 }
 
@@ -198,6 +233,26 @@ fn claude_start_ms(path: &Path) -> Option<i64> {
     None
 }
 
+fn antigravity_candidates(home: &Path, session_started_ms: Option<i64>) -> Vec<Candidate> {
+    let earliest = session_started_ms.map(|started| started.saturating_sub(1_000));
+    antigravity_transcripts(home)
+        .into_iter()
+        .filter_map(|path| {
+            let modified_ms = system_time_ms(modified_at(&path));
+            if earliest.is_some_and(|earliest| modified_ms < earliest) {
+                return None;
+            }
+            Some(Candidate {
+                started_ms: antigravity_start_ms(&path),
+                modified_ms,
+                path,
+                source: TranscriptSource::Antigravity,
+                binding: Binding::Exact,
+            })
+        })
+        .collect()
+}
+
 fn codex_candidates(
     home: &Path,
     project_path: &str,
@@ -208,11 +263,11 @@ fn codex_candidates(
         return Ok(Vec::new());
     }
     if let Some(started_ms) = session_started_ms {
-        let nearby = inspect_codex_candidates(
-            codex_rollouts_near_start(&root, started_ms),
-            project_path,
-            Some(started_ms),
-        );
+        let mut records = Vec::new();
+        for directory in codex_shard_directories(&root, started_ms) {
+            collect_rollouts(&directory, &mut records, 0);
+        }
+        let nearby = inspect_codex_candidates(records, project_path, Some(started_ms));
         let earliest = started_ms.saturating_sub(1_000);
         if nearby
             .iter()
@@ -296,6 +351,7 @@ fn inspect_codex_candidates(
             modified_ms,
             path,
             source: TranscriptSource::Codex,
+            binding: Binding::Exact,
         });
         if session_started_ms.is_none() {
             break;
@@ -304,11 +360,10 @@ fn inspect_codex_candidates(
     candidates
 }
 
-fn codex_rollouts_near_start(root: &Path, started_ms: i64) -> Vec<PathBuf> {
-    let mut records = Vec::new();
-    // Codex shards rollouts by launch date. The folder can be one day either side of the UTC
-    // timestamp around a timezone boundary, so inspect those three tiny shards instead of every
-    // historical record. Header, cwd, and start-time checks below remain authoritative.
+/// Codex shards rollouts by launch date. The folder can be one day either side of the UTC
+/// timestamp around a timezone boundary, so a near-start search inspects those three tiny shards
+/// instead of every historical record. Header, cwd, and start-time checks remain authoritative.
+pub(crate) fn codex_shard_directories(root: &Path, started_ms: i64) -> Vec<PathBuf> {
     const DAY_MS: i64 = 86_400_000;
     let mut directories = Vec::with_capacity(3);
     for offset in [-DAY_MS, 0, DAY_MS] {
@@ -325,10 +380,27 @@ fn codex_rollouts_near_start(root: &Path, started_ms: i64) -> Vec<PathBuf> {
             directories.push(directory);
         }
     }
-    for directory in directories {
-        collect_rollouts(&directory, &mut records, 0);
+    directories
+}
+
+/// The directories whose mtime moves when a new record could have appeared for this project. A
+/// negative discovery result stays cached until one of them changes or its recheck interval ends.
+pub(crate) fn watched_paths(
+    home: &Path,
+    project_path: &str,
+    started_ms: Option<i64>,
+) -> Vec<PathBuf> {
+    let mut watched = vec![
+        home.join(".claude/projects"),
+        claude_project_dir(home, project_path),
+        antigravity_root(home),
+    ];
+    let codex_root = home.join(".codex/sessions");
+    match started_ms {
+        Some(started_ms) => watched.extend(codex_shard_directories(&codex_root, started_ms)),
+        None => watched.push(codex_root),
     }
-    records
+    watched
 }
 
 pub(crate) fn provider_hint(command: Option<&str>) -> Option<TranscriptSource> {
@@ -344,6 +416,7 @@ pub(crate) fn provider_hint(command: Option<&str>) -> Option<TranscriptSource> {
     match executable {
         "claude" | "claude-code" => Some(TranscriptSource::Claude),
         "codex" => Some(TranscriptSource::Codex),
+        "agy" | "antigravity" => Some(TranscriptSource::Antigravity),
         _ => None,
     }
 }
