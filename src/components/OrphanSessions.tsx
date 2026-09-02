@@ -2,9 +2,9 @@ import { useState } from "react";
 import { useI18n } from "../i18n";
 import { sortByRecentActivity } from "../runtime/liveSessionPresentation";
 import { type LiveSession, errorMessage, sessionClient } from "../runtime/sessionClient";
+import type { LiveSessionsState } from "../runtime/useLiveSessions";
 import { releaseTerminal } from "../terminalInstances";
 import { releaseDetachedTerminalLog } from "../terminalLogInstances";
-import type { LiveSessionsState } from "../runtime/useLiveSessions";
 import { ageLabel, programLabel } from "./liveSessionLabels";
 
 /**

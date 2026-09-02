@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { presentationModeForWidth } from "./adaptiveLayout";
 import { resolveAttentionRequest } from "./attentionModel";
 import { AttentionCenter } from "./components/AttentionCenter";

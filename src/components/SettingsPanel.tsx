@@ -11,8 +11,8 @@ import {
   effectiveSetting,
   featureSettingIds,
 } from "../settingsModel";
-import { TerminalSettingsSection } from "./TerminalSettingsSection";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { TerminalSettingsSection } from "./TerminalSettingsSection";
 
 interface SettingsPanelProps {
   state: SettingsState;
