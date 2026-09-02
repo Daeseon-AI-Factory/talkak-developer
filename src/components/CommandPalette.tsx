@@ -1,23 +1,30 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Project } from "../domain";
+import type { DevSession, Project } from "../domain";
 import { useI18n } from "../i18n";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
+import { DISPATCH_PREFIX, type PaletteEntry, paletteModel } from "./commandPaletteModel";
 
 interface CommandPaletteProps {
   open: boolean;
   projects: readonly Project[];
+  /** The session a `>` line is typed into; null when nothing is active. */
+  activeSession: DevSession | null;
   onClose: () => void;
   onOpenSession: (projectId: string, sessionId: string) => void;
   onOpenProject: (projectId: string) => void;
+  /** Type `text` into the active session as-is — no Enter; that keystroke stays the user's. */
+  onDispatch: (text: string) => void;
 }
 
 export function CommandPalette({
   open,
   projects,
+  activeSession,
   onClose,
   onOpenSession,
   onOpenProject,
+  onDispatch,
 }: CommandPaletteProps) {
   const { t, text } = useI18n();
   const [query, setQuery] = useState("");
@@ -50,33 +57,11 @@ export function CommandPalette({
     return () => window.removeEventListener("keydown", closeOnEscape, true);
   }, [onClose, open]);
 
-  const results = useMemo(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    if (!normalized) return projects;
-    return projects
-      .map((project) => ({
-        ...project,
-        sessions: project.sessions.filter((session) =>
-          [text(session.title), text(session.profile), session.branch, project.name]
-            .join(" ")
-            .toLocaleLowerCase()
-            .includes(normalized),
-        ),
-      }))
-      .filter(
-        (project) =>
-          project.name.toLocaleLowerCase().includes(normalized) || project.sessions.length > 0,
-      );
-  }, [projects, query, text]);
-
-  const entries = useMemo(
-    () =>
-      results.flatMap((project) => [
-        { kind: "project" as const, project },
-        ...project.sessions.map((session) => ({ kind: "session" as const, project, session })),
-      ]),
-    [results],
+  const model = useMemo(
+    () => paletteModel(projects, query, activeSession, text),
+    [activeSession, projects, query, text],
   );
+  const { entries, results } = model;
 
   useEffect(() => {
     if (entries.length === 0) {
@@ -94,11 +79,17 @@ export function CommandPalette({
 
   if (!open) return null;
 
-  const openSelectedEntry = () => {
-    const entry = entries[selectedIndex];
+  const activate = (entry: PaletteEntry | undefined) => {
     if (!entry) return;
-    if (entry.kind === "session") onOpenSession(entry.project.id, entry.session.id);
-    else onOpenProject(entry.project.id);
+    if (entry.kind === "dispatch") {
+      // An entry that cannot deliver stays on screen saying why, instead of closing as if it did.
+      if (!entry.enabled) return;
+      onDispatch(entry.text);
+    } else if (entry.kind === "session") {
+      onOpenSession(entry.project.id, entry.session.id);
+    } else {
+      onOpenProject(entry.project.id);
+    }
     onClose();
   };
 
@@ -111,6 +102,7 @@ export function CommandPalette({
     entries.findIndex((entry) => entry.kind === "project" && entry.project.id === projectId);
   const sessionEntryIndex = (sessionId: string) =>
     entries.findIndex((entry) => entry.kind === "session" && entry.session.id === sessionId);
+  const dispatchEntry = entries.find((entry) => entry.kind === "dispatch");
 
   return (
     <div
@@ -148,7 +140,7 @@ export function CommandPalette({
                 setSelectedIndex(event.key === "Home" ? 0 : Math.max(0, entries.length - 1));
               } else if (event.key === "Enter") {
                 event.preventDefault();
-                openSelectedEntry();
+                activate(entries[selectedIndex]);
               }
             }}
             aria-activedescendant={
@@ -169,7 +161,43 @@ export function CommandPalette({
           // list itself is only a programmatic focus target.
           tabIndex={-1}
         >
-          {results.length > 0 ? (
+          {dispatchEntry?.kind === "dispatch" ? (
+            <div className="command-group">
+              <button
+                type="button"
+                className="command-dispatch"
+                id="command-entry-0"
+                data-testid="command-dispatch"
+                // biome-ignore lint/a11y/useSemanticElements: an <option> cannot render the row this shows;
+                // the listbox keeps focus in the search field instead.
+                role="option"
+                aria-selected={selectedIndex === 0}
+                aria-disabled={!dispatchEntry.enabled}
+                data-active={selectedIndex === 0}
+                data-enabled={dispatchEntry.enabled}
+                data-command-index={0}
+                onMouseEnter={() => setSelectedIndex(0)}
+                onClick={() => activate(dispatchEntry)}
+              >
+                <Icon name="terminal" size={15} />
+                <span>
+                  <strong>
+                    {dispatchEntry.enabled && dispatchEntry.sessionTitle
+                      ? t("command.dispatchInto", { session: text(dispatchEntry.sessionTitle) })
+                      : t("command.dispatchUnavailable")}
+                  </strong>
+                  <small>
+                    {dispatchEntry.enabled
+                      ? dispatchEntry.text.length > 0
+                        ? t("command.dispatchTypedOnly", { text: dispatchEntry.text })
+                        : t("command.dispatchEmpty")
+                      : t("command.dispatchUnavailableDetail")}
+                  </small>
+                </span>
+                <kbd>↵</kbd>
+              </button>
+            </div>
+          ) : results.length > 0 ? (
             results.map((project) => (
               <div className="command-group" key={project.id}>
                 <button
@@ -235,7 +263,11 @@ export function CommandPalette({
             <div className="command-empty">{t("command.noResults")}</div>
           )}
         </div>
-        <footer>{t("command.hint")}</footer>
+        <footer>
+          {model.mode === "dispatch"
+            ? t("command.dispatchHint")
+            : t("command.hint", { prefix: DISPATCH_PREFIX })}
+        </footer>
       </dialog>
     </div>
   );

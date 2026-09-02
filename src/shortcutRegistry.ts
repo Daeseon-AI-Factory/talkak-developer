@@ -22,7 +22,8 @@ export type ShortcutCommandId =
   | `focusPane${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
   | "conversation"
   | "scrollMode"
-  | "jumpToBottom";
+  | "jumpToBottom"
+  | `focusProject${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
 export interface ShortcutChord {
   code: string;
@@ -219,6 +220,21 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     windows: windows("PageDown", "PgDn"),
     repeat: false,
   },
+  // Jump straight to the Nth project in the sidebar, from any screen — reaching the fourth
+  // project took three presses of ↑/↓. The digits are taken by the pane jumps, so this is the
+  // next modifier up: ⌘⌥N, and on Windows the same Ctrl+Alt slot splitDown already uses (plain
+  // Ctrl stays the terminal's). Ctrl+Alt is AltGr on some non-US Windows layouts, where AltGr+digit
+  // types a character; Ctrl+Alt+D accepted that trade-off before this did.
+  ...Array.from({ length: 9 }, (_, index) => {
+    const digit = index + 1;
+    return {
+      id: `focusProject${digit}` as ShortcutCommandId,
+      scope: "global" as ShortcutScope,
+      macos: mac(`Digit${digit}`, String(digit), { alt: true }),
+      windows: windows(`Digit${digit}`, String(digit), { alt: true, shift: false }),
+      repeat: false,
+    };
+  }),
 ] as const;
 
 export function shortcutDefinition(id: ShortcutCommandId): ShortcutDefinition {

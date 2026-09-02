@@ -50,6 +50,14 @@ export interface LiveSession {
   runId: number;
   processId: number | null;
   running: boolean;
+  /** When this run was spawned, in milliseconds since the epoch. Absent from an older broker. */
+  startedAtMs?: number | null;
+  /** When the PTY last produced output, in milliseconds since the epoch; null until it has. */
+  lastOutputMs?: number | null;
+  /** The working directory the run was asked to start in. */
+  cwd?: string | null;
+  /** The program the run was asked to start; null means the OS default shell. */
+  command?: string | null;
 }
 
 /** An open output stream; `detach` ends it. Frames stop arriving once detach is called. */

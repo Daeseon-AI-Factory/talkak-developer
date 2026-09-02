@@ -41,9 +41,14 @@
 .session-table__head,
 .session-row {
   display: grid;
-  grid-template-columns: minmax(190px, 1.4fr) minmax(130px, 1fr) minmax(120px, 0.8fr) 90px 56px;
+  grid-template-columns: minmax(180px, 1.3fr) minmax(110px, 0.8fr) minmax(110px, 0.7fr) 84px 96px 96px 56px;
   align-items: center;
   gap: 16px;
+}
+
+.session-row__age {
+  color: var(--text-dim);
+  font-size: 11px;
 }
 
 .session-table__head {
@@ -324,4 +329,22 @@
 
 .orphan-sessions__pid {
   font-family: var(--mono);
+}
+
+.orphan-sessions__identity,
+.orphan-sessions__activity,
+.orphan-sessions__state {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+
+.orphan-sessions__identity small,
+.orphan-sessions__activity small {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

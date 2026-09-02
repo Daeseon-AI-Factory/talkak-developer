@@ -3,6 +3,7 @@ use serde::Serialize;
 mod agent_transcript;
 mod clipboard_commands;
 mod editor_commands;
+mod diagnostics_commands;
 mod project_commands;
 mod session_commands;
 mod session_runtime;
@@ -26,6 +27,7 @@ mod session_client_tests;
 
 use clipboard_commands::{clipboard_read_image_path, clipboard_read_text, clipboard_write_text};
 use editor_commands::open_source_location;
+use diagnostics_commands::broker_log_tail;
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
     session_discard, session_kill, session_live, session_read, session_resize, session_snapshot,
@@ -124,6 +126,7 @@ pub fn run() {
             app_quit,
             agent_activity,
             agent_transcript,
+            broker_log_tail,
             clipboard_read_image_path,
             clipboard_read_text,
             clipboard_write_text,

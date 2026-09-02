@@ -56,8 +56,18 @@ export const project = {
     "orphans.finished": "끝남",
     "orphans.pid": "PID {pid}",
     "orphans.noPid": "PID 없음",
+    "orphans.started": "시작 {age}",
+    "orphans.lastOutput": "마지막 출력 {age}",
     "orphans.unsupported":
       "실행 중인 브로커가 이 기능보다 먼저 시작되어 세션 목록을 알려주지 못합니다. 앱을 완전히 종료했다 다시 켜면 새 브로커가 뜹니다.",
+    "projects.deleteConfirmTitle": "{project} 프로젝트를 삭제할까요?",
+    "projects.deleteConfirmRunning":
+      "세션 {sessions}개가 있고 그중 {running}개가 실행 중입니다. 프로젝트 설정과 페이지 배치는 이 기기에서 지워지지만, 세션은 종료되지 않고 브로커에서 계속 돌아가며 세션 화면의 남은 세션 목록에 나타납니다.",
+    "projects.deleteConfirmIdle":
+      "세션 {sessions}개가 있습니다. 프로젝트 설정과 페이지 배치는 이 기기에서 지워지고, 세션은 종료되지 않습니다.",
+    "projects.deleteConfirmAccept": "프로젝트 삭제",
+    "projects.deleteConfirmAcceptDetail": "세션은 종료되지 않습니다",
+    "projects.deleteConfirmCancel": "그대로 두기",
   },
   en: {
     "projectDialog.eyebrow": "LOCAL PROJECT",
@@ -115,7 +125,17 @@ export const project = {
     "orphans.finished": "finished",
     "orphans.pid": "PID {pid}",
     "orphans.noPid": "no PID",
+    "orphans.started": "started {age}",
+    "orphans.lastOutput": "last output {age}",
     "orphans.unsupported":
       "The running broker started before this feature existed and cannot list sessions. Quit the app fully and reopen it to get a current broker.",
+    "projects.deleteConfirmTitle": "Delete project {project}?",
+    "projects.deleteConfirmRunning":
+      "{sessions} sessions, {running} of them running. The project's settings and page layout are removed from this device; the sessions are not stopped — they keep going in the broker and appear under Left behind on the Sessions screen.",
+    "projects.deleteConfirmIdle":
+      "{sessions} sessions. The project's settings and page layout are removed from this device; nothing is stopped.",
+    "projects.deleteConfirmAccept": "Delete project",
+    "projects.deleteConfirmAcceptDetail": "Sessions are not stopped",
+    "projects.deleteConfirmCancel": "Keep it",
   },
 };

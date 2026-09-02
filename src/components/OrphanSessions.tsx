@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useI18n } from "../i18n";
+import { sortByRecentActivity } from "../runtime/liveSessionPresentation";
 import { type LiveSession, errorMessage, sessionClient } from "../runtime/sessionClient";
 import { releaseTerminal } from "../terminalInstances";
 import { releaseDetachedTerminalLog } from "../terminalLogInstances";
+import type { LiveSessionsState } from "../runtime/useLiveSessions";
+import { ageLabel, programLabel } from "./liveSessionLabels";
 
 /**
  * Sessions the broker still holds that no pane in this workspace refers to.
@@ -10,43 +13,25 @@ import { releaseDetachedTerminalLog } from "../terminalLogInstances";
  * Closing a pane detaches rather than kills — that is the feature that lets an agent keep working
  * — but nothing ever listed what was left behind, so shells accumulated for days, invisible, and
  * an agent inside one held its own files open against the next launch. This is the missing
- * `tmux ls` and `tmux kill-session`.
+ * `tmux ls` and `tmux kill-session`: what is running, where, since when, and when it last said
+ * anything, so a forgotten shell can be told from an agent mid-task.
  */
-export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlySet<string> }) {
+export function OrphanSessions({
+  knownSessionIds,
+  live,
+}: {
+  knownSessionIds: ReadonlySet<string>;
+  live: LiveSessionsState;
+}) {
   const { t } = useI18n();
-  const [sessions, setSessions] = useState<LiveSession[]>([]);
-  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [stopError, setStopError] = useState<string | null>(null);
 
-  const [unsupported, setUnsupported] = useState(false);
-
-  const refresh = useCallback(async () => {
-    if (!sessionClient.available()) return;
-    try {
-      setSessions(await sessionClient.liveSessions());
-      setError(null);
-      setUnsupported(false);
-    } catch (cause: unknown) {
-      // A broker started before this feature existed does not know the request. Saying so beats
-      // an empty list, which would claim there is nothing to clean up while dozens run.
-      const message = errorMessage(cause);
-      setSessions([]);
-      if (/bad request|unexpected broker response/i.test(message)) {
-        setUnsupported(true);
-        setError(null);
-      } else {
-        setUnsupported(false);
-        setError(message);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const orphans = sessions.filter((session) => !knownSessionIds.has(session.sessionId));
+  const orphans = sortByRecentActivity(
+    live.sessions.filter((session) => !knownSessionIds.has(session.sessionId)),
+  );
   if (!sessionClient.available()) return null;
+  const error = stopError ?? live.error;
 
   async function stop(session: LiveSession) {
     setBusy(session.sessionId);
@@ -60,12 +45,12 @@ export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlyS
       // the pane closed; the session is gone from the broker, so nothing should hold it open.
       releaseTerminal(session.sessionId);
       releaseDetachedTerminalLog(session.sessionId);
-      setError(null);
+      setStopError(null);
     } catch (cause: unknown) {
-      setError(errorMessage(cause));
+      setStopError(errorMessage(cause));
     } finally {
       setBusy(null);
-      await refresh();
+      await live.refresh();
     }
   }
 
@@ -81,7 +66,7 @@ export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlyS
           <strong>{t("orphans.title", { count: orphans.length })}</strong>
         </div>
         <div className="orphan-sessions__actions">
-          <button type="button" onClick={() => void refresh()}>
+          <button type="button" onClick={() => void live.refresh()}>
             {t("orphans.refresh")}
           </button>
           {orphans.length > 0 ? (
@@ -93,23 +78,43 @@ export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlyS
       </header>
       <p className="orphan-sessions__description">{t("orphans.description")}</p>
       {error ? <output className="orphan-sessions__error">{error}</output> : null}
-      {unsupported ? (
+      {live.unsupported ? (
         <output className="orphan-sessions__error">{t("orphans.unsupported")}</output>
       ) : null}
-      {unsupported ? null : orphans.length === 0 ? (
+      {live.unsupported ? null : orphans.length === 0 ? (
         <p className="orphan-sessions__empty">{t("orphans.empty")}</p>
       ) : (
         <ul>
           {orphans.map((session) => (
             <li key={session.sessionId}>
-              <code>{session.sessionId}</code>
-              <span data-running={session.running}>
-                {session.running ? t("orphans.running") : t("orphans.finished")}
+              <span className="orphan-sessions__identity">
+                <code>{session.sessionId}</code>
+                <small>
+                  <strong>{programLabel(t, session)}</strong>
+                  {session.cwd ? <span title={session.cwd}> · {session.cwd}</span> : null}
+                </small>
               </span>
-              <span className="orphan-sessions__pid">
-                {session.processId === null
-                  ? t("orphans.noPid")
-                  : t("orphans.pid", { pid: session.processId })}
+              <span className="orphan-sessions__activity">
+                <span>
+                  {t("orphans.lastOutput", {
+                    age: ageLabel(t, live.observedAtMs, session.lastOutputMs, "age.never"),
+                  })}
+                </span>
+                <small>
+                  {t("orphans.started", {
+                    age: ageLabel(t, live.observedAtMs, session.startedAtMs, "age.unknown"),
+                  })}
+                </small>
+              </span>
+              <span className="orphan-sessions__state">
+                <span data-running={session.running}>
+                  {session.running ? t("orphans.running") : t("orphans.finished")}
+                </span>
+                <small className="orphan-sessions__pid">
+                  {session.processId === null
+                    ? t("orphans.noPid")
+                    : t("orphans.pid", { pid: session.processId })}
+                </small>
               </span>
               <button
                 type="button"

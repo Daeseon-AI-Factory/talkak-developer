@@ -11,7 +11,7 @@
 //! its usefulness; one with live sessions survives any number of app restarts.
 
 use crate::protocol::{Request, Response, PROTOCOL_VERSION};
-use crate::runtime::{AttachSessionRequest, ReadSessionRequest, SessionRuntime};
+use crate::runtime::{AttachSessionRequest, SessionRuntime};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -153,19 +153,33 @@ async fn write_frame<W: AsyncWrite + Unpin>(
 /// output, or after the keepalive interval with an empty status frame. Frames are written straight
 /// to the connection, so a client that stops reading applies backpressure through the socket, and
 /// a client that closed it fails the next write — which is how this loop ends when a pane detaches.
+///
+/// The stream is *attached* for its whole life: each turn's `after` tells the session's output
+/// gate how far this client has got, and the PTY reader thread holds back rather than evict bytes
+/// past it. Socket backpressure alone only stalled this loop; the ring kept filling behind it.
 async fn stream_output<W: AsyncWrite + Unpin>(
     write_half: &mut W,
     runtime: Arc<SessionRuntime>,
     request: AttachSessionRequest,
 ) {
+    let reader = match runtime.attach(&request.session_id) {
+        Ok(reader) => Arc::new(reader),
+        Err(error) => {
+            let _ = write_frame(
+                write_half,
+                &Response::Error {
+                    message: error.to_string(),
+                },
+            )
+            .await;
+            return;
+        }
+    };
     let mut after = request.after;
     loop {
-        let runtime = Arc::clone(&runtime);
-        let session_id = request.session_id.clone();
-        let outcome = tokio::task::spawn_blocking(move || {
-            runtime.wait_read(ReadSessionRequest { session_id, after }, STREAM_KEEPALIVE)
-        })
-        .await;
+        let reader = Arc::clone(&reader);
+        let outcome =
+            tokio::task::spawn_blocking(move || reader.wait_read(after, STREAM_KEEPALIVE)).await;
         let (response, finished) = match outcome {
             Ok(Ok(read)) => {
                 after = read.next;

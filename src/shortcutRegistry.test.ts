@@ -53,6 +53,27 @@ describe("shortcut registry", () => {
     ).toBeNull();
   });
 
+  it("jumps to a project by number from any screen without taking the pane digits", () => {
+    expect(shortcutDisplay("macos", "focusProject4")).toBe("⌘⌥4");
+    expect(shortcutDisplay("windows", "focusProject4")).toBe("Ctrl+Alt+4");
+    // Global: a project switch is how you leave any screen, so it works with the workspace off.
+    expect(
+      commandForShortcut(event({ code: "Digit4", metaKey: true, altKey: true }), "macos", false)
+        ?.id,
+    ).toBe("focusProject4");
+    expect(
+      commandForShortcut(event({ code: "Digit9", ctrlKey: true, altKey: true }), "windows", false)
+        ?.id,
+    ).toBe("focusProject9");
+    // The pane jump keeps its chord; plain Ctrl+digit still reaches the Windows terminal.
+    expect(commandForShortcut(event({ code: "Digit4", metaKey: true }), "macos", true)?.id).toBe(
+      "focusPane4",
+    );
+    expect(
+      commandForShortcut(event({ code: "Digit4", ctrlKey: true }), "windows", true),
+    ).toBeNull();
+  });
+
   it("has no duplicate chord within a platform and scope", () => {
     for (const platform of ["macos", "windows"] as const) {
       const seen = new Set<string>();

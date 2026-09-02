@@ -11,16 +11,21 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{mpsc, Mutex, PoisonError};
+use std::thread;
 
 use crate::runtime::RuntimeError;
 
 /// Exact internal storage limits, not product promises.
 const MAX_LOG_BYTES: u64 = 8 * 1024 * 1024;
 /// How much of the tail survives a rotation. Keeping half amortises the rewrite cost.
-const LOG_RETAINED_BYTES: usize = 2 * 1024 * 1024;
+const LOG_RETAINED_BYTES: u64 = 2 * 1024 * 1024;
+/// Chunks a session's log writer may have queued before the reader thread starts dropping them.
+/// PTY reads are at most 8 KiB, so this is a few megabytes of disk lag — far more than a healthy
+/// disk ever accumulates, and the live terminal must never wait for a sick one.
+const LOG_QUEUE_CHUNKS: usize = 512;
 
 const DEFINITION_EXTENSION: &str = "json";
 const OUTPUT_EXTENSION: &str = "log";
@@ -67,17 +72,111 @@ pub struct RestorableSession {
 #[derive(Debug, Default)]
 pub struct SessionStore {
     root: Option<PathBuf>,
-    /// Open output logs, one per session. `append_output` runs on the PTY reader thread for every
-    /// chunk the shell produces, AHEAD of the in-memory append the live terminal reads from; when
-    /// it opened, appended, stat-ed and closed the file each time, that was three or four syscalls
-    /// of latency on every burst of output. The handle and its size are kept here instead.
-    open_logs: Mutex<HashMap<String, OpenLog>>,
+    /// One writer thread per session with an open output log. `append_output` runs on the PTY
+    /// reader thread for every chunk the shell produces; it hands the chunk to the writer and
+    /// returns. The disk — its write, and the occasional rotation that rewrites two megabytes —
+    /// is the writer's problem, never the terminal's.
+    writers: Mutex<HashMap<String, LogWriter>>,
 }
 
 #[derive(Debug)]
-struct OpenLog {
-    file: fs::File,
-    bytes: u64,
+struct LogWriter {
+    sender: mpsc::SyncSender<LogMessage>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+#[derive(Debug)]
+enum LogMessage {
+    Chunk(Vec<u8>),
+    /// Answered once every chunk queued before it is in the file.
+    Flush(mpsc::SyncSender<()>),
+    Close,
+}
+
+impl LogWriter {
+    fn start(session_id: &str, path: PathBuf) -> Option<Self> {
+        let (sender, receiver) = mpsc::sync_channel(LOG_QUEUE_CHUNKS);
+        let thread = thread::Builder::new()
+            .name(format!("talkak-log-writer-{session_id}"))
+            .spawn(move || write_log(&path, receiver))
+            .ok()?;
+        Some(Self {
+            sender,
+            thread: Some(thread),
+        })
+    }
+
+    /// Queue a chunk without waiting. A full queue drops it: the log is evidence, and evidence
+    /// that costs the live terminal a stall is not worth keeping. `false` means the writer is gone.
+    fn offer(&self, chunk: &[u8]) -> bool {
+        match self.sender.try_send(LogMessage::Chunk(chunk.to_vec())) {
+            Ok(()) | Err(mpsc::TrySendError::Full(_)) => true,
+            Err(mpsc::TrySendError::Disconnected(_)) => false,
+        }
+    }
+
+    /// Block until everything queued so far is in the file.
+    fn flush(sender: &mpsc::SyncSender<LogMessage>) {
+        let (ack, done) = mpsc::sync_channel(1);
+        if sender.send(LogMessage::Flush(ack)).is_ok() {
+            let _ = done.recv();
+        }
+    }
+
+    /// Drain, close the file, and wait for the thread — so the file can be deleted afterwards
+    /// even on Windows, which refuses to remove a file something still has open.
+    fn close(mut self) {
+        let _ = self.sender.send(LogMessage::Close);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+/// The writer thread: owns the file handle and the byte count, and rotates in place.
+fn write_log(path: &Path, receiver: mpsc::Receiver<LogMessage>) {
+    let Some((mut file, mut bytes)) = open_log(path) else {
+        return;
+    };
+    while let Ok(message) = receiver.recv() {
+        match message {
+            LogMessage::Chunk(chunk) => {
+                if file.write_all(&chunk).is_err() {
+                    // The handle is no longer trustworthy. Leaving makes the next chunk start a
+                    // fresh writer over a freshly opened file.
+                    return;
+                }
+                bytes += chunk.len() as u64;
+                if bytes > MAX_LOG_BYTES {
+                    // Rotation rewrites the file under a new inode; the handle goes with it.
+                    drop(file);
+                    rotate(path);
+                    match open_log(path) {
+                        Some((reopened, size)) => {
+                            file = reopened;
+                            bytes = size;
+                        }
+                        None => return,
+                    }
+                }
+            }
+            LogMessage::Flush(ack) => {
+                let _ = file.flush();
+                let _ = ack.send(());
+            }
+            LogMessage::Close => return,
+        }
+    }
+}
+
+fn open_log(path: &Path) -> Option<(fs::File, u64)> {
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .ok()?;
+    let bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+    Some((file, bytes))
 }
 
 impl SessionStore {
@@ -88,7 +187,7 @@ impl SessionStore {
         match fs::create_dir_all(&root) {
             Ok(()) => Self {
                 root: Some(root),
-                open_logs: Mutex::default(),
+                writers: Mutex::default(),
             },
             Err(_) => Self::default(),
         }
@@ -114,14 +213,23 @@ impl SessionStore {
         Ok(())
     }
 
+    /// Stop a session's writer and wait for it to let go of the file.
     fn close_log(&self, session_id: &str) {
-        if let Ok(mut logs) = self.open_logs.lock() {
-            logs.remove(session_id);
+        let writer = self
+            .writers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(session_id);
+        // Joined outside the lock: the reader thread must not queue behind a slow disk.
+        if let Some(writer) = writer {
+            writer.close();
         }
     }
 
-    /// Append output for a session. Errors are swallowed: losing a log line must never break the
-    /// live terminal, and the reader thread has no channel to report on.
+    /// Append output for a session. Never blocks on the disk and never fails loudly: the chunk is
+    /// handed to the session's writer thread, and a chunk that cannot be queued is dropped — losing
+    /// a log line must never break the live terminal, and the reader thread has no channel to
+    /// report on.
     pub fn append_output(&self, session_id: &str, bytes: &[u8]) {
         let Some(root) = self.root.as_deref() else {
             return;
@@ -129,30 +237,35 @@ impl SessionStore {
         if bytes.is_empty() {
             return;
         }
-        let path = entry_path(root, session_id, OUTPUT_EXTENSION);
-        let Ok(mut logs) = self.open_logs.lock() else {
-            return;
-        };
-        if !logs.contains_key(session_id) {
-            let Ok(file) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        let mut writers = self.writers.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(writer) = writers.get(session_id) {
+            if writer.offer(bytes) {
                 return;
-            };
-            let bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
-            logs.insert(session_id.to_owned(), OpenLog { file, bytes });
+            }
+            // The writer died (its file went bad); a fresh one takes over from here.
+            if let Some(dead) = writers.remove(session_id) {
+                dead.close();
+            }
         }
-        let Some(log) = logs.get_mut(session_id) else {
+        let path = entry_path(root, session_id, OUTPUT_EXTENSION);
+        let Some(writer) = LogWriter::start(session_id, path) else {
             return;
         };
-        if log.file.write_all(bytes).is_err() {
-            // The handle is no longer trustworthy; the next chunk reopens the file.
-            logs.remove(session_id);
-            return;
-        }
-        log.bytes += bytes.len() as u64;
-        if log.bytes > MAX_LOG_BYTES {
-            // Rotation rewrites the file under a new inode, so the open handle must go with it.
-            logs.remove(session_id);
-            rotate(&path);
+        writer.offer(bytes);
+        writers.insert(session_id.to_owned(), writer);
+    }
+
+    /// Wait until every chunk appended so far is on disk. The writer thread otherwise lags the
+    /// live terminal by design; anything reading the file wants the lag closed first.
+    pub fn flush(&self, session_id: &str) {
+        let sender = self
+            .writers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(session_id)
+            .map(|writer| writer.sender.clone());
+        if let Some(sender) = sender {
+            LogWriter::flush(&sender);
         }
     }
 
@@ -161,6 +274,7 @@ impl SessionStore {
         let Some(root) = self.root.as_deref() else {
             return Vec::new();
         };
+        self.flush(session_id);
         fs::read(entry_path(root, session_id, OUTPUT_EXTENSION)).unwrap_or_default()
     }
 
@@ -239,6 +353,20 @@ impl SessionStore {
     }
 }
 
+impl Drop for SessionStore {
+    /// Let every writer drain before the store goes: the broker shutting down, or a test reading
+    /// the files back through a new store over the same root.
+    fn drop(&mut self) {
+        let writers = self
+            .writers
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        for (_, writer) in writers.drain() {
+            writer.close();
+        }
+    }
+}
+
 /// Hex so every byte of an id maps to `[0-9a-f]`. That is a legal file name on both platforms and
 /// cannot produce a separator, a `..`, or a Windows reserved device name.
 fn encode_name(session_id: &str) -> String {
@@ -263,12 +391,25 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     fs::rename(&temporary, path)
 }
 
+/// Keep the newest `LOG_RETAINED_BYTES` of the file. Reads only that tail — the writer thread is
+/// the one doing this, and pulling the whole eight megabytes through memory was most of the cost.
 fn rotate(path: &Path) {
-    let Ok(existing) = fs::read(path) else {
+    let Ok(mut existing) = fs::File::open(path) else {
         return;
     };
-    let start = existing.len().saturating_sub(LOG_RETAINED_BYTES);
-    let _ = write_atomically(path, &existing[start..]);
+    let Ok(length) = existing.metadata().map(|meta| meta.len()) else {
+        return;
+    };
+    let start = length.saturating_sub(LOG_RETAINED_BYTES);
+    if existing.seek(SeekFrom::Start(start)).is_err() {
+        return;
+    }
+    let mut tail = Vec::with_capacity((length - start) as usize);
+    if existing.read_to_end(&mut tail).is_err() {
+        return;
+    }
+    drop(existing);
+    let _ = write_atomically(path, &tail);
 }
 
 #[cfg(test)]
@@ -322,6 +463,7 @@ mod tests {
             .record(&sample("pane-1", 1_755_255_600_000))
             .expect("record should write");
         first.append_output("pane-1", b"build finished\n");
+        // Dropping the store waits for its writer, so nothing is still in flight here.
         drop(first);
 
         // A new store instance over the same root can read the internal evidence.
@@ -430,6 +572,43 @@ mod tests {
             output.len()
         );
         assert!(output.ends_with(b"NEWEST"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn appends_keep_their_order_and_a_flush_closes_the_lag() {
+        // The writer thread lags the reader by design; `output` must still see every byte that
+        // was appended before it was asked, in the order it was appended.
+        let root = store_root("ordered");
+        let store = SessionStore::at(&root);
+        store
+            .record(&sample("pane-1", 1_755_255_600_000))
+            .expect("record");
+        let mut expected = Vec::new();
+        for index in 0..200_u32 {
+            let line = format!("line {index}\n");
+            store.append_output("pane-1", line.as_bytes());
+            expected.extend_from_slice(line.as_bytes());
+        }
+        assert_eq!(store.output("pane-1"), expected);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_writer_whose_file_vanished_is_replaced_by_the_next_append() {
+        // Windows will not let the file go while the writer holds it, so this exercise is unix
+        // shaped; the recovery path it proves — a dead writer being replaced — is the same code
+        // on both platforms.
+        let root = store_root("replace");
+        let store = SessionStore::at(&root);
+        store
+            .record(&sample("pane-1", 1_755_255_600_000))
+            .expect("record");
+        store.append_output("pane-1", b"before ");
+        store.flush("pane-1");
+        store.close_log("pane-1");
+        store.append_output("pane-1", b"after");
+        assert_eq!(store.output("pane-1"), b"before after");
         let _ = fs::remove_dir_all(&root);
     }
 }

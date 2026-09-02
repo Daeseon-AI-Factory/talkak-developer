@@ -73,6 +73,30 @@ export function updateLocalProject(project: Project, draft: ProjectDraft): Proje
   };
 }
 
+/**
+ * The list without one local project. A preview project is not removable — it is the example
+ * that stands in until a real one exists — so an id that names one (or nothing) leaves the list
+ * as it was, and callers can compare identity to learn nothing changed.
+ */
+export function removeLocalProject(projects: readonly Project[], projectId: string): Project[] {
+  const target = projects.find((project) => project.id === projectId);
+  if (!target || target.source !== "local") return [...projects];
+  return projects.filter((project) => project.id !== projectId);
+}
+
+/**
+ * The list with the project at `from` moved to `to`, everything else keeping its order. Out-of-range
+ * indices and a no-op move return a copy unchanged, so a keyboard "move up" on the first row is
+ * harmless rather than an error.
+ */
+export function moveProject(projects: readonly Project[], from: number, to: number): Project[] {
+  const next = [...projects];
+  if (from === to || from < 0 || to < 0 || from >= next.length || to >= next.length) return next;
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
 export function readStoredProjects(storage: ProjectStorage): Project[] {
   try {
     const serialized = storage.getItem(PROJECTS_STORAGE_KEY);
