@@ -22,7 +22,19 @@ export const settings = {
     "settings.attentionDetection": "확인 요청 모으기",
     "settings.attentionDetectionHint": "명시적인 결정·검토 요청을 확인함에 모읍니다.",
     "settings.notifications": "알림",
-    "settings.notificationsHint": "허용된 환경에서 상태 알림을 준비합니다.",
+    "settings.notificationsHint":
+      "에이전트의 응답 완료와 입력 대기를 확인함과 시스템 알림으로 알립니다.",
+    "settings.nativePermission": "시스템 알림",
+    "settings.nativePermission.checking": "권한 확인 중…",
+    "settings.nativePermission.granted":
+      "앱에서 보낼 수 있음 · 실제 표시 여부는 OS 알림 설정을 따릅니다",
+    "settings.nativePermission.denied":
+      "OS가 이 앱의 알림을 거부했습니다. OS 알림 설정에서 허용하세요.",
+    "settings.nativePermission.prompt": "아직 권한을 요청하지 않았습니다",
+    "settings.nativePermission.unavailable": "브라우저 미리보기에서는 사용할 수 없음",
+    "settings.nativePermission.request": "권한 요청",
+    "settings.notificationsBlocked":
+      "알림이 켜져 있지만 시스템 권한이 없어 OS 알림은 전달되지 않습니다. 앱 안 확인함에는 계속 표시됩니다.",
     "settings.remoteAccess": "원격 접속",
     "settings.remoteAccessHint": "추후 호스트 연결을 허용할 자리입니다.",
     "settings.voiceInput": "음성 입력",
@@ -53,7 +65,19 @@ export const settings = {
     "settings.attentionDetectionHint":
       "Collect explicit decision and review requests in the inbox.",
     "settings.notifications": "Notifications",
-    "settings.notificationsHint": "Prepare status notifications where the environment allows them.",
+    "settings.notificationsHint":
+      "Announce agent turn completion and input requests in the inbox and as system notifications.",
+    "settings.nativePermission": "System notifications",
+    "settings.nativePermission.checking": "Checking permission…",
+    "settings.nativePermission.granted":
+      "The app may send them · whether the OS shows them follows its own notification settings",
+    "settings.nativePermission.denied":
+      "The OS refused notifications for this app. Allow them in the OS notification settings.",
+    "settings.nativePermission.prompt": "Permission has not been requested yet",
+    "settings.nativePermission.unavailable": "Unavailable in the browser preview",
+    "settings.nativePermission.request": "Request permission",
+    "settings.notificationsBlocked":
+      "Notifications are on, but without system permission no OS notification is delivered. The in-app inbox still shows them.",
     "settings.remoteAccess": "Remote access",
     "settings.remoteAccessHint": "Reserved for a future host connection.",
     "settings.voiceInput": "Voice input",

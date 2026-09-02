@@ -119,3 +119,76 @@ describe("AttentionCenter", () => {
     expect(detail).not.toContain("stream closed");
   });
 });
+
+const agentNotices: RuntimeAttentionNotice[] = [
+  {
+    source: "local-pty",
+    id: "runtime:request-session:2:turn-complete",
+    projectId: project.id,
+    sessionId: "request-session",
+    observedAt: "2026-08-14T01:04:00.000Z",
+    event: { kind: "turn-complete", lastTool: "Edit" },
+  },
+  {
+    source: "local-pty",
+    id: "runtime:exit-session:3:needs-input",
+    projectId: project.id,
+    sessionId: "exit-session",
+    observedAt: "2026-08-14T01:05:00.000Z",
+    event: { kind: "needs-input", lastTool: null },
+  },
+];
+
+describe("AttentionCenter agent record notices", () => {
+  it("lists a blocked agent right after PTY errors and a finished turn last", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <AttentionCenter
+          requests={[request]}
+          runtimeNotices={[...runtimeNotices, ...agentNotices]}
+          projects={[project]}
+          selectedRequestId={null}
+          onSelectRequest={() => {}}
+          onResolve={() => false}
+          onOpenSession={() => {}}
+          onOpenRuntimeSession={() => {}}
+          onAcknowledgeRuntimeNotice={() => {}}
+        />
+      </I18nProvider>,
+    );
+
+    const order = ["error", "needs-input", "exited", "turn-complete"].map((kind) =>
+      markup.indexOf(`data-runtime-kind="${kind}"`),
+    );
+    const requestIndex = markup.indexOf("Approval request");
+    expect(order.every((index) => index > -1)).toBe(true);
+    expect(order[0]).toBeLessThan(order[1]);
+    expect(order[1]).toBeLessThan(requestIndex);
+    expect(requestIndex).toBeLessThan(order[2]);
+    expect(order[2]).toBeLessThan(order[3]);
+    expect(markup).toContain("Edit");
+  });
+
+  it("opens the session itself for an agent notice, and names the record as the source", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <AttentionCenter
+          requests={[]}
+          runtimeNotices={agentNotices}
+          projects={[project]}
+          selectedRequestId="runtime:exit-session:3:needs-input"
+          onSelectRequest={() => {}}
+          onResolve={() => false}
+          onOpenSession={() => {}}
+          onOpenRuntimeSession={() => {}}
+          onAcknowledgeRuntimeNotice={() => {}}
+        />
+      </I18nProvider>,
+    );
+    const detail = markup.slice(markup.indexOf('<article class="attention-detail"'));
+
+    expect(detail).toContain('data-testid="open-agent-session"');
+    expect(detail).not.toContain('data-testid="open-runtime-terminal"');
+    expect(detail).toContain('data-testid="ack-runtime-notice"');
+  });
+});

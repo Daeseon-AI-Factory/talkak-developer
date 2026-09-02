@@ -435,6 +435,30 @@
   line-height: 1.45;
 }
 
+/* The OS side of the notifications toggle: what will actually be delivered, stated as a fact. */
+.setting-card__native {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.setting-card__native button {
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.setting-card__native strong {
+  flex-basis: 100%;
+  color: var(--warning);
+  font-size: 12px;
+}
+
 .sidebar-action[data-active="true"] {
   border-color: var(--border-strong);
   background: var(--accent-soft);

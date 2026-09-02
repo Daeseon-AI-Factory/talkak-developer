@@ -31,6 +31,20 @@ export const attention = {
     "attention.stale": "요청이 바뀌었거나 이미 처리됐습니다. 목록을 다시 확인하세요.",
     "attention.noChoices": "이 요청에는 선택지가 없습니다. 세션에서 원문을 확인하세요.",
     "attention.openSession": "세션 보기",
+    "attention.agentEyebrow": "에이전트 기록",
+    "attention.runtimeTurnComplete": "응답 완료",
+    "attention.runtimeNeedsInput": "입력 대기",
+    "attention.runtimeTurnCompleteTitle": "{session}이(가) 응답을 마쳤습니다",
+    "attention.runtimeNeedsInputTitle": "{session}이(가) 답을 기다립니다",
+    "attention.runtimeTurnCompleteDescription":
+      "에이전트 기록에 완료된 응답이 남았습니다. 세션을 열어 결과를 확인하세요.",
+    "attention.runtimeNeedsInputDescription":
+      "에이전트가 질문이나 승인을 기다리고 있습니다. 세션에서 답해 주세요.",
+    "attention.runtimeToolSuffix": "마지막 도구: {tool}",
+    "attention.agentObserved":
+      "에이전트가 스스로 남긴 기록에서 읽은 상태입니다. 훅이나 전역 설정은 건드리지 않습니다.",
+    "attention.nativeTurnCompleteBody": "에이전트가 응답을 마쳤습니다.",
+    "attention.nativeNeedsInputBody": "에이전트가 답을 기다리고 있습니다.",
   },
   en: {
     "attention.eyebrow": "ATTENTION",
@@ -63,5 +77,19 @@ export const attention = {
     "attention.stale": "The request changed or was already handled. Review the inbox again.",
     "attention.noChoices": "This request has no choices. Open the session to review the source.",
     "attention.openSession": "View session",
+    "attention.agentEyebrow": "AGENT RECORD",
+    "attention.runtimeTurnComplete": "Turn complete",
+    "attention.runtimeNeedsInput": "Needs input",
+    "attention.runtimeTurnCompleteTitle": "{session} finished its turn",
+    "attention.runtimeNeedsInputTitle": "{session} is waiting for your answer",
+    "attention.runtimeTurnCompleteDescription":
+      "The agent record shows a completed reply. Open the session to read it.",
+    "attention.runtimeNeedsInputDescription":
+      "The agent is waiting on a question or approval. Answer it in the session.",
+    "attention.runtimeToolSuffix": "Last tool: {tool}",
+    "attention.agentObserved":
+      "Read from the record the agent writes for itself. No hook or global config is touched.",
+    "attention.nativeTurnCompleteBody": "The agent finished its turn.",
+    "attention.nativeNeedsInputBody": "The agent is waiting for your answer.",
   },
 };

@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { useI18n } from "../i18n";
 import {
+  type NativePermissionView,
+  useNativeNotificationPermission,
+} from "../runtime/nativeNotifications";
+import {
   type FeatureSettingId,
   type SettingScope,
   type SettingsState,
@@ -33,6 +37,7 @@ const settingKeys = {
 export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: SettingsPanelProps) {
   const { t } = useI18n();
   const [scope, setScope] = useState<SettingScope>("app");
+  const nativePermission = useNativeNotificationPermission();
   const context =
     scope === "app"
       ? {}
@@ -78,6 +83,13 @@ export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: Se
               <div>
                 <strong>{t(labelKey)}</strong>
                 <p>{t(hintKey)}</p>
+                {id === "notifications" ? (
+                  <NativeNotificationStatus
+                    permission={nativePermission.permission}
+                    effective={effective}
+                    onRequest={nativePermission.request}
+                  />
+                ) : null}
               </div>
               <fieldset
                 className="setting-control"
@@ -112,6 +124,54 @@ export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: Se
         })}
       </div>
     </section>
+  );
+}
+
+const permissionKeys: Record<
+  NativePermissionView,
+  | "settings.nativePermission.checking"
+  | "settings.nativePermission.granted"
+  | "settings.nativePermission.denied"
+  | "settings.nativePermission.prompt"
+  | "settings.nativePermission.unavailable"
+> = {
+  checking: "settings.nativePermission.checking",
+  granted: "settings.nativePermission.granted",
+  denied: "settings.nativePermission.denied",
+  prompt: "settings.nativePermission.prompt",
+  unavailable: "settings.nativePermission.unavailable",
+};
+
+/**
+ * What the OS side will actually do, next to the toggle that asks for it. The toggle is a wish;
+ * this is the fact — and when the two disagree, the panel says so rather than showing "On".
+ */
+function NativeNotificationStatus({
+  permission,
+  effective,
+  onRequest,
+}: {
+  permission: NativePermissionView;
+  effective: boolean;
+  onRequest: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <p
+      className="setting-card__native"
+      data-testid="native-notification-status"
+      data-permission={permission}
+    >
+      <span>{t("settings.nativePermission")}</span> <span>{t(permissionKeys[permission])}</span>
+      {permission === "prompt" ? (
+        <button type="button" onClick={onRequest}>
+          {t("settings.nativePermission.request")}
+        </button>
+      ) : null}
+      {effective && permission !== "granted" && permission !== "checking" ? (
+        <strong>{t("settings.notificationsBlocked")}</strong>
+      ) : null}
+    </p>
   );
 }
 

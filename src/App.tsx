@@ -34,12 +34,9 @@ import {
 } from "./pageClose";
 import { platformFromUserAgent } from "./platform";
 import { type ProjectDraft, browserProjectStorage } from "./projectStore";
-import {
-  type RuntimeAttentionNotice,
-  runtimeAttentionNoticeKey,
-  runtimeAttentionNotices,
-} from "./runtime/runtimeAttentionModel";
+import type { RuntimeAttentionNotice } from "./runtime/runtimeAttentionModel";
 import { foregroundTerminalSessionIds } from "./runtime/sessionVisibility";
+import { useRuntimeNotices } from "./runtime/useRuntimeNotices";
 import { createWorkspaceSession } from "./sessionModel";
 import {
   type FeatureSettingId,
@@ -93,9 +90,6 @@ export default function App() {
     useState<AttentionRequest[]>(initialAttentionRequests);
   const attentionRequestsRef = useRef<AttentionRequest[]>(initialAttentionRequests);
   const [selectedAttentionId, setSelectedAttentionId] = useState<string | null>(null);
-  const [acknowledgedRuntimeNotices, setAcknowledgedRuntimeNotices] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
   const [settings, setSettings] = useState(createDefaultSettingsState);
   const [draftsBySession, setDraftsBySession] = useState<Record<string, string>>({});
   const [mobileTabsBySession, setMobileTabsBySession] = useState<Record<string, MobileSessionTab>>(
@@ -117,14 +111,11 @@ export default function App() {
   const commandShortcut = shortcutDisplay(platform, "palette");
   const guideShortcut = shortcutDisplay(platform, "guide");
   const sidebarShortcut = shortcutDisplay(platform, "toggleSidebar");
-  const observedRuntimeNotices = useMemo(() => runtimeAttentionNotices(projects), [projects]);
-  const runtimeNotices = useMemo(
-    () =>
-      observedRuntimeNotices.filter(
-        (notice) => !acknowledgedRuntimeNotices.has(runtimeAttentionNoticeKey(notice)),
-      ),
-    [acknowledgedRuntimeNotices, observedRuntimeNotices],
-  );
+  const { runtimeNotices, acknowledgeRuntimeNotice: dismissRuntimeNotice } = useRuntimeNotices({
+    projects,
+    settings,
+    focusedSessionId: activeSection === "workspace" ? activeSessionId : null,
+  });
   const openAttentionCount =
     attentionRequests.filter((request) => request.status === "open").length + runtimeNotices.length;
   const voiceEnabled = effectiveSetting(settings, "voiceInput", {
@@ -157,14 +148,6 @@ export default function App() {
       // The layout remains usable when persistence is unavailable.
     }
   }, [sidebarMode]);
-
-  useEffect(() => {
-    const activeKeys = new Set(observedRuntimeNotices.map(runtimeAttentionNoticeKey));
-    setAcknowledgedRuntimeNotices((current) => {
-      const retained = new Set([...current].filter((key) => activeKeys.has(key)));
-      return retained.size === current.size ? current : retained;
-    });
-  }, [observedRuntimeNotices]);
 
   function selectProject(projectId: string) {
     workspace.selectProject(projectId);
@@ -318,13 +301,7 @@ export default function App() {
   }
 
   function acknowledgeRuntimeNotice(notice: RuntimeAttentionNotice) {
-    const key = runtimeAttentionNoticeKey(notice);
-    setAcknowledgedRuntimeNotices((current) => {
-      if (current.has(key)) return current;
-      const next = new Set(current);
-      next.add(key);
-      return next;
-    });
+    dismissRuntimeNotice(notice);
     if (selectedAttentionId === notice.id) setSelectedAttentionId(null);
   }
 

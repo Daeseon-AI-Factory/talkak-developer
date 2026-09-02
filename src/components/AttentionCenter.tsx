@@ -3,7 +3,11 @@ import { openAttentionRequests } from "../attentionModel";
 import type { AttentionRequest, Project, TerminalRuntimeOperation } from "../domain";
 import { type Locale, useI18n } from "../i18n";
 import { exitWasInterrupted } from "../runtime/exitStatus";
-import type { RuntimeAttentionNotice } from "../runtime/runtimeAttentionModel";
+import {
+  type RuntimeAttentionKind,
+  type RuntimeAttentionNotice,
+  isAgentRecordNotice,
+} from "../runtime/runtimeAttentionModel";
 import { Icon } from "./Icon";
 
 interface AttentionCenterProps {
@@ -75,13 +79,21 @@ export function AttentionCenter({
   const lastRequestIdRef = useRef<string | null>(null);
   const requestButtonRefs = useRef(new Map<string, HTMLButtonElement>());
   const openRequests = useMemo(() => openAttentionRequests(requests), [requests]);
-  const runtimeErrors = runtimeNotices.filter((notice) => notice.event.kind === "error");
-  const runtimeExits = runtimeNotices.filter((notice) => notice.event.kind === "exited");
+  const noticesOf = (kind: RuntimeAttentionKind) =>
+    runtimeNotices.filter((notice) => notice.event.kind === kind);
+  // Order of urgency: a failing PTY, then an agent that cannot go on without an answer, then
+  // decision requests, then processes that ended, then replies waiting to be read.
+  const runtimeErrors = noticesOf("error");
+  const runtimeNeedsInput = noticesOf("needs-input");
+  const runtimeExits = noticesOf("exited");
+  const runtimeTurns = noticesOf("turn-complete");
+  const urgentRuntime = runtimeErrors[0] ?? runtimeNeedsInput[0] ?? null;
   const selectedRuntimeById = runtimeNotices.find((notice) => notice.id === selectedRequestId);
   const selectedRequestById = requests.find((request) => request.id === selectedRequestId);
   const defaultRuntime =
-    runtimeErrors[0] ?? (openRequests.length === 0 ? (runtimeExits[0] ?? null) : null);
-  const defaultRequest = runtimeErrors.length === 0 ? (openRequests[0] ?? null) : null;
+    urgentRuntime ??
+    (openRequests.length === 0 ? (runtimeExits[0] ?? runtimeTurns[0] ?? null) : null);
+  const defaultRequest = urgentRuntime === null ? (openRequests[0] ?? null) : null;
   const selectedRuntime =
     selectedRequestId === null ? defaultRuntime : (selectedRuntimeById ?? null);
   const selectedRequest =
@@ -156,18 +168,14 @@ export function AttentionCenter({
         onClick={() => selectRequest(notice.id)}
       >
         <span className="attention-card__meta">
-          <span>
-            {notice.event.kind === "error"
-              ? t("attention.runtimeError")
-              : t("attention.runtimeExited")}
-          </span>
+          <span>{runtimeNoticeKindLabel(notice, t)}</span>
           <span>{context.project?.name ?? notice.projectId}</span>
           <time dateTime={notice.observedAt}>{formatAttentionTime(notice.observedAt, locale)}</time>
         </span>
         <strong>{runtimeNoticeTitle(notice, sessionTitle, t)}</strong>
         <span className="attention-card__description">{runtimeNoticeDescription(notice, t)}</span>
         <span className="attention-card__footer">
-          <span>{t("attention.runtimeEyebrow")}</span>
+          <span>{runtimeNoticeEyebrow(notice, t)}</span>
           <span>{sessionTitle}</span>
         </span>
       </button>
@@ -202,6 +210,7 @@ export function AttentionCenter({
             </div>
           ) : null}
           {runtimeErrors.map(renderRuntimeNotice)}
+          {runtimeNeedsInput.map(renderRuntimeNotice)}
           {openRequests.map((request) => {
             const context = findContext(projects, request);
             return (
@@ -235,6 +244,7 @@ export function AttentionCenter({
             );
           })}
           {runtimeExits.map(renderRuntimeNotice)}
+          {runtimeTurns.map(renderRuntimeNotice)}
         </nav>
 
         <article
@@ -248,8 +258,13 @@ export function AttentionCenter({
               notice={selectedRuntime}
               projects={projects}
               onBack={returnToList}
+              // A finished reply or a pending question wants the session itself; a PTY fault
+              // wants the raw terminal log.
               onOpenSession={() =>
-                onOpenRuntimeSession(selectedRuntime.projectId, selectedRuntime.sessionId)
+                (isAgentRecordNotice(selectedRuntime) ? onOpenSession : onOpenRuntimeSession)(
+                  selectedRuntime.projectId,
+                  selectedRuntime.sessionId,
+                )
               }
               onAcknowledge={() => acknowledgeRuntimeNotice(selectedRuntime)}
             />
@@ -311,6 +326,7 @@ function RuntimeAttentionDetail({
   const { t, text } = useI18n();
   const context = findContext(projects, notice);
   const sessionTitle = context.session ? text(context.session.title) : notice.sessionId;
+  const agentRecord = isAgentRecordNotice(notice);
   return (
     <>
       <button className="attention-detail__back" type="button" onClick={onBack}>
@@ -318,12 +334,8 @@ function RuntimeAttentionDetail({
         {t("attention.back")}
       </button>
       <div className="attention-detail__meta">
-        <span>
-          {notice.event.kind === "error"
-            ? t("attention.runtimeError")
-            : t("attention.runtimeExited")}
-        </span>
-        <span>{t("attention.runtimeEyebrow")}</span>
+        <span>{runtimeNoticeKindLabel(notice, t)}</span>
+        <span>{runtimeNoticeEyebrow(notice, t)}</span>
       </div>
       <p className="attention-detail__context">
         {context.project?.name ?? notice.projectId} / {sessionTitle}
@@ -333,11 +345,11 @@ function RuntimeAttentionDetail({
       <button
         className="attention-detail__session"
         type="button"
-        data-testid="open-runtime-terminal"
+        data-testid={agentRecord ? "open-agent-session" : "open-runtime-terminal"}
         onClick={onOpenSession}
       >
         <Icon name="terminal" size={17} />
-        {t("attention.openTerminalLog")}
+        {agentRecord ? t("attention.openSession") : t("attention.openTerminalLog")}
         <Icon name="chevron" size={15} />
       </button>
       <button
@@ -349,39 +361,74 @@ function RuntimeAttentionDetail({
         <Icon name="check" size={17} />
         {t("attention.runtimeAcknowledge")}
       </button>
-      <p className="attention-detail__notice">{t("attention.runtimeObserved")}</p>
+      <p className="attention-detail__notice">
+        {agentRecord ? t("attention.agentObserved") : t("attention.runtimeObserved")}
+      </p>
     </>
   );
+}
+
+type Translate = ReturnType<typeof useI18n>["t"];
+
+function runtimeNoticeKindLabel(notice: RuntimeAttentionNotice, t: Translate): string {
+  switch (notice.event.kind) {
+    case "error":
+      return t("attention.runtimeError");
+    case "exited":
+      return t("attention.runtimeExited");
+    case "needs-input":
+      return t("attention.runtimeNeedsInput");
+    case "turn-complete":
+      return t("attention.runtimeTurnComplete");
+  }
+}
+
+function runtimeNoticeEyebrow(notice: RuntimeAttentionNotice, t: Translate): string {
+  return isAgentRecordNotice(notice) ? t("attention.agentEyebrow") : t("attention.runtimeEyebrow");
 }
 
 function runtimeNoticeTitle(
   notice: RuntimeAttentionNotice,
   sessionTitle: string,
-  t: ReturnType<typeof useI18n>["t"],
+  t: Translate,
 ): string {
-  return notice.event.kind === "error"
-    ? t("attention.runtimeErrorTitle", { session: sessionTitle })
-    : t("attention.runtimeExitedTitle", { session: sessionTitle });
+  switch (notice.event.kind) {
+    case "error":
+      return t("attention.runtimeErrorTitle", { session: sessionTitle });
+    case "exited":
+      return t("attention.runtimeExitedTitle", { session: sessionTitle });
+    case "needs-input":
+      return t("attention.runtimeNeedsInputTitle", { session: sessionTitle });
+    case "turn-complete":
+      return t("attention.runtimeTurnCompleteTitle", { session: sessionTitle });
+  }
 }
 
-function runtimeNoticeDescription(
-  notice: RuntimeAttentionNotice,
-  t: ReturnType<typeof useI18n>["t"],
-): string {
-  if (notice.event.kind === "error") {
-    return notice.event.fault
+function runtimeNoticeDescription(notice: RuntimeAttentionNotice, t: Translate): string {
+  const event = notice.event;
+  if (event.kind === "error") {
+    return event.fault
       ? t("attention.runtimeErrorDescription", {
-          operation: t(runtimeOperationKeys[notice.event.fault.operation]),
-          message: notice.event.fault.message,
+          operation: t(runtimeOperationKeys[event.fault.operation]),
+          message: event.fault.message,
         })
       : t("attention.runtimeUnknownError");
   }
-  if (exitWasInterrupted(notice.event.exitCode)) {
+  if (event.kind === "needs-input" || event.kind === "turn-complete") {
+    const base =
+      event.kind === "needs-input"
+        ? t("attention.runtimeNeedsInputDescription")
+        : t("attention.runtimeTurnCompleteDescription");
+    return event.lastTool
+      ? `${base} ${t("attention.runtimeToolSuffix", { tool: event.lastTool })}`
+      : base;
+  }
+  if (exitWasInterrupted(event.exitCode)) {
     return t("attention.runtimeExitedInterrupted");
   }
-  return notice.event.exitCode === null
+  return event.exitCode === null
     ? t("attention.runtimeExitedUnknown")
-    : t("attention.runtimeExitedCode", { code: notice.event.exitCode });
+    : t("attention.runtimeExitedCode", { code: event.exitCode });
 }
 
 interface AttentionDetailProps {
