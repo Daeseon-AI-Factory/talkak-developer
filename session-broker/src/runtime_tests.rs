@@ -418,20 +418,28 @@ fn wait_read_returns_on_output_and_on_exit_without_polling() {
             data: setup,
         })
         .expect("setup input");
-    // Drain the prompt and setup echo so the wait below starts from silence.
+    // Drain until the shell has been silent for a whole wait: a cold PowerShell on a CI runner
+    // prints its prompt seconds after spawn, so a fixed settling period is not silence.
     let mut cursor = 0;
-    let settled_at = Instant::now() + Duration::from_millis(400);
-    while Instant::now() < settled_at {
+    let quiet_deadline = Instant::now() + PTY_WAIT;
+    loop {
         let read = runtime
             .wait_read(
                 ReadSessionRequest {
                     session_id: "waiter".into(),
                     after: cursor,
                 },
-                Duration::from_millis(100),
+                Duration::from_millis(300),
             )
             .expect("drain");
         cursor = read.next;
+        if read.bytes.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < quiet_deadline,
+            "the shell never went quiet after setup"
+        );
     }
 
     // Nothing pending: the wait must run its full timeout and come back empty, still running.
