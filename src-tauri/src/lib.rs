@@ -4,6 +4,8 @@ mod agent_transcript;
 mod clipboard_commands;
 mod diagnostics_commands;
 mod editor_commands;
+mod env_vault;
+mod env_vault_commands;
 mod project_commands;
 mod session_commands;
 mod session_runtime;
@@ -28,6 +30,8 @@ mod session_client_tests;
 use clipboard_commands::{clipboard_read_image_path, clipboard_read_text, clipboard_write_text};
 use diagnostics_commands::broker_log_tail;
 use editor_commands::open_source_location;
+use env_vault::EnvVault;
+use env_vault_commands::{env_vault_delete, env_vault_import, env_vault_list, env_vault_set};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
     session_discard, session_kill, session_live, session_read, session_resize, session_snapshot,
@@ -112,6 +116,7 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir().ok();
             app.manage(SessionRuntime::attach(app_data_dir.clone()));
             app.manage(SessionStreams::default());
+            app.manage(EnvVault::open(app_data_dir.clone()));
             app.manage(TranscriptService::new(
                 app_data_dir.map(|directory| directory.join("sessions")),
             ));
@@ -140,6 +145,10 @@ pub fn run() {
             session_spawn,
             session_snapshot,
             session_read,
+            env_vault_list,
+            env_vault_set,
+            env_vault_delete,
+            env_vault_import,
             session_attach,
             session_detach,
             session_write,

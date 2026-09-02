@@ -18,6 +18,8 @@ function render(notificationsOn: boolean): string {
       <SettingsPanel
         state={state}
         projectId="project-1"
+        projectPath={null}
+        projectName="Preview"
         sessionId={null}
         onSetOverride={() => {}}
       />

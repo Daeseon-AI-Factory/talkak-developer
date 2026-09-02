@@ -12,12 +12,16 @@ import {
   featureSettingIds,
 } from "../settingsModel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
+import { EnvVaultSection } from "./EnvVaultSection";
 import { TerminalSettingsSection } from "./TerminalSettingsSection";
 import { UpdateSettingsSection } from "./UpdateSettingsSection";
 
 interface SettingsPanelProps {
   state: SettingsState;
   projectId: string;
+  /** The active project's folder when it is a local project; null for a preview project. */
+  projectPath: string | null;
+  projectName: string;
   sessionId: string | null;
   onSetOverride: (
     scope: SettingScope,
@@ -37,7 +41,14 @@ const settingKeys = {
   voiceInput: ["settings.voiceInput", "settings.voiceInputHint"],
 } as const;
 
-export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: SettingsPanelProps) {
+export function SettingsPanel({
+  state,
+  projectId,
+  projectPath,
+  projectName,
+  sessionId,
+  onSetOverride,
+}: SettingsPanelProps) {
   const { t } = useI18n();
   const [scope, setScope] = useState<SettingScope>("app");
   const nativePermission = useNativeNotificationPermission();
@@ -127,6 +138,7 @@ export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: Se
         })}
       </div>
 
+      <EnvVaultSection projectPath={projectPath} projectName={projectName} />
       <UpdateSettingsSection />
       <TerminalSettingsSection />
       <DiagnosticsPanel />

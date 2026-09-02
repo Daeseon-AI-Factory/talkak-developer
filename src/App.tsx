@@ -566,6 +566,8 @@ export default function App() {
           <SettingsPanel
             state={settings}
             projectId={activeProject.id}
+            projectPath={activeProject.source === "local" ? activeProject.path : null}
+            projectName={text(activeProject.name)}
             sessionId={activeSession?.id ?? null}
             onSetOverride={updateSetting}
           />

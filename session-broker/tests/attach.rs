@@ -142,6 +142,7 @@ fn an_attached_connection_receives_output_as_it_happens_and_a_final_frame_at_exi
         cwd: Some(cwd.to_string_lossy().into_owned()),
         command,
         args,
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     })) {
@@ -293,6 +294,7 @@ fn dropping_the_stream_connection_ends_the_stream_and_the_broker_still_retires()
         cwd: Some(cwd.to_string_lossy().into_owned()),
         command,
         args,
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     })) {

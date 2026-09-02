@@ -126,6 +126,7 @@ fn a_new_client_reattaches_to_the_run_the_old_client_left_behind() {
         cwd: Some(cwd.to_string_lossy().into_owned()),
         command,
         args,
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     })) {

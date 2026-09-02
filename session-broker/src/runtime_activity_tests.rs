@@ -22,6 +22,7 @@ fn live_sessions_carry_launch_time_program_and_last_output_time() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -123,6 +124,7 @@ fn an_attached_stream_loses_nothing_from_a_burst_three_times_the_ring() {
                 "-c".into(),
                 format!("head -c {BURST} /dev/zero | tr '\\000' a"),
             ],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })

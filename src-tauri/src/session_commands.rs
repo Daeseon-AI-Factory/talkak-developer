@@ -1,3 +1,4 @@
+use crate::env_vault::EnvVault;
 use crate::session_runtime::{
     LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
     SessionRead, SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
@@ -9,11 +10,15 @@ use tauri::State;
 // broker — a connect, a lockstep exchange, sometimes a wait for a pool slot — and inline on the
 // IPC thread one slow answer held every other pane's keystrokes and resizes behind it.
 
+/// The vault's values ride along on every spawn, keyed by the session's working directory: the
+/// app-wide entries, the project's over them, and `TALKAK_ENV_KEYS` naming what arrived.
 #[tauri::command(async)]
 pub(crate) fn session_spawn(
     runtime: State<'_, SessionRuntime>,
-    request: SpawnSessionRequest,
+    vault: State<'_, EnvVault>,
+    mut request: SpawnSessionRequest,
 ) -> Result<SessionSnapshot, String> {
+    request.env = vault.session_env(request.cwd.as_deref());
     runtime.spawn(request).map_err(|error| error.to_string())
 }
 

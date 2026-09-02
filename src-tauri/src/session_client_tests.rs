@@ -48,6 +48,7 @@ fn the_client_runs_a_full_session_lifecycle_through_a_detached_broker() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command,
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -159,6 +160,7 @@ fn a_second_client_adopts_the_broker_and_finds_the_first_clients_session() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command,
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -200,6 +202,7 @@ fn a_subscribed_stream_delivers_live_output_and_ends_when_the_run_exits() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command,
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })

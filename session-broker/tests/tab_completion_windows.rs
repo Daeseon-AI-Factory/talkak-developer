@@ -19,6 +19,7 @@ fn pressing_tab_completes_a_path_in_the_default_shell() {
             cwd: Some("C:\\".into()),
             command: None,
             args: Vec::new(),
+            env: Vec::new(),
             cols: 100,
             rows: 30,
         })

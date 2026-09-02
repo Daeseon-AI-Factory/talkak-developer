@@ -40,6 +40,7 @@ fn an_inherited_no_color_never_reaches_a_pane() {
         cwd: None,
         command: None,
         args: Vec::new(),
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     });
@@ -63,6 +64,32 @@ fn an_inherited_no_color_never_reaches_a_pane() {
 }
 
 #[test]
+fn vault_environment_reaches_the_child_and_wins_over_the_inherited_value() {
+    std::env::set_var("TALKAK_VAULT_PROBE", "inherited");
+    let command = command_for_request(&SpawnSessionRequest {
+        session_id: "vault".into(),
+        cwd: None,
+        command: None,
+        args: Vec::new(),
+        env: vec![
+            ("TALKAK_VAULT_PROBE".into(), "from-vault".into()),
+            ("".into(), "skipped".into()),
+            ("BAD=NAME".into(), "skipped".into()),
+        ],
+        cols: 80,
+        rows: 24,
+    });
+    std::env::remove_var("TALKAK_VAULT_PROBE");
+    assert_eq!(
+        command
+            .get_env("TALKAK_VAULT_PROBE")
+            .map(|value| value.to_string_lossy().into_owned()),
+        Some("from-vault".to_string())
+    );
+    assert!(command.get_env("BAD=NAME").is_none());
+}
+
+#[test]
 fn a_disabling_clicolor_is_dropped_but_a_deliberate_one_survives() {
     // The macOS spelling of the same instruction. Only the negative form goes — this product has to
     // behave the same on both platforms, and someone who forces colour on meant it.
@@ -72,6 +99,7 @@ fn a_disabling_clicolor_is_dropped_but_a_deliberate_one_survives() {
             cwd: None,
             command: None,
             args: Vec::new(),
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -114,6 +142,7 @@ fn the_default_windows_shell_is_a_powershell_when_one_is_installed() {
         cwd: None,
         command: None,
         args: Vec::new(),
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     });
@@ -138,6 +167,7 @@ fn a_spawn_tells_the_child_it_is_talking_to_a_colour_terminal() {
         cwd: None,
         command: None,
         args: Vec::new(),
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     });
@@ -183,6 +213,7 @@ fn a_real_child_process_reads_the_colour_terminal_variables_back() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: Some(command.into()),
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -224,6 +255,7 @@ fn eight_panes_run_at_once_without_reading_each_other() {
                 cwd: Some(cwd.to_string_lossy().into_owned()),
                 command: None,
                 args: vec![],
+                env: Vec::new(),
                 cols: 80,
                 rows: 24,
             })
@@ -333,6 +365,7 @@ fn spawn_rejects_relative_working_directories() {
             cwd: Some("relative/path".into()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -352,6 +385,7 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -407,6 +441,7 @@ fn wait_read_returns_on_output_and_on_exit_without_polling() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -588,6 +623,7 @@ fn native_pty_closes_after_command_exits_without_kill() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: Some(command.into()),
             args,
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -614,6 +650,7 @@ fn native_interactive_shell_reports_exit_without_waiting_for_reader_close() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -640,6 +677,7 @@ fn stale_run_mutations_are_rejected() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -690,6 +728,7 @@ fn dropping_a_runtime_with_a_live_session_returns() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -716,6 +755,7 @@ fn discard_rejects_a_running_session() {
             cwd: Some(cwd.to_string_lossy().into_owned()),
             command: None,
             args: vec![],
+            env: Vec::new(),
             cols: 80,
             rows: 24,
         })
@@ -745,6 +785,7 @@ fn discard_allows_an_exited_session_id_to_start_again() {
         cwd: Some(cwd.to_string_lossy().into_owned()),
         command: None,
         args: vec![],
+        env: Vec::new(),
         cols: 80,
         rows: 24,
     };
@@ -874,6 +915,7 @@ fn a_recorded_session_and_its_output_survive_a_new_runtime_over_the_same_root() 
                 cwd: Some(cwd.to_string_lossy().into_owned()),
                 command: None,
                 args: vec![],
+                env: Vec::new(),
                 cols: 80,
                 rows: 24,
             })

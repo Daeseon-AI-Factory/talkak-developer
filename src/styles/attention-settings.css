@@ -659,3 +659,85 @@
   flex: 1;
   min-width: 0;
 }
+
+/* Environment vault */
+.env-vault__scope {
+  margin: 10px 0;
+}
+
+.env-vault__list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.env-vault__entry {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 2fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  font-size: 12px;
+}
+
+.env-vault__key {
+  font-weight: 600;
+}
+
+.env-vault__value code {
+  word-break: break-all;
+}
+
+.env-vault__secret {
+  opacity: 0.7;
+}
+
+.env-vault__empty {
+  padding: 6px 10px;
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+.env-vault__form {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 2fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.env-vault__form input[type="text"],
+.env-vault__form input[type="password"],
+.env-vault__form input:not([type]) {
+  min-width: 0;
+}
+
+.env-vault__secret-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.env-vault__import {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.env-vault__import textarea {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  font-family: inherit;
+}
+
+@media (max-width: 720px) {
+  .env-vault__entry,
+  .env-vault__form {
+    grid-template-columns: 1fr;
+  }
+}

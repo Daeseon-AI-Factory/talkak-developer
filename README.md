@@ -31,6 +31,10 @@ This repository contains the interactive product shell and its first native runt
   stale mouse-mode release, a runtime log viewer, sessions with program and last activity
 - command palette dispatch into the active session, project reorder, delete and reveal-in-folder,
   direct project jump chords, and a phone composer that sends
+- an environment vault: keys and values entered once, app-wide or per project, delivered to every
+  session as environment variables (secrets kept in the OS keychain, `TALKAK_ENV_KEYS` naming what
+  arrived) so an agent reads them instead of asking
+- self-update from GitHub releases, checked at launch and from Settings, installed on a click
 
 The Tauri desktop app can start the operating system's default shell in an explicit absolute working
 directory. Executables and arguments remain runtime configuration; no agent is hardcoded as the

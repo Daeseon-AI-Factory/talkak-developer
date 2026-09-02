@@ -24,6 +24,11 @@ pub struct SpawnSessionRequest {
     pub command: Option<String>,
     #[serde(default)]
     pub args: Vec<String>,
+    /// Extra environment for the child, applied over the inherited environment. The app fills
+    /// this from its environment vault so an agent finds its keys in `env` instead of asking.
+    /// Absent from older clients; an older broker ignores it.
+    #[serde(default)]
+    pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
 }

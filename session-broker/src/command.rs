@@ -14,6 +14,14 @@ pub fn command_for_request(request: &SpawnSessionRequest) -> CommandBuilder {
     if let Some(cwd) = request.cwd.as_deref() {
         command.cwd(cwd);
     }
+    // The vault's values go on last so they win over whatever the broker inherited; an empty name
+    // or one carrying '=' or NUL cannot be an environment variable and is skipped, never panicked.
+    for (name, value) in &request.env {
+        if name.is_empty() || name.contains('=') || name.contains('\0') || value.contains('\0') {
+            continue;
+        }
+        command.env(name, value);
+    }
     // portable-pty inherits this process's environment, and a Windows GUI process carries neither
     // variable, so every colour-capable CLI fell back to monochrome. The renderer is xterm.js on
     // both platforms, so tell the child exactly what it is talking to.
