@@ -26,6 +26,11 @@ The Tauri desktop app can start the operating system's default shell in an expli
 directory. Executables and arguments remain runtime configuration; no agent is hardcoded as the
 product default. Live output replay is memory-bounded. A detached native broker keeps live processes
 across an app restart, and the workspace reconnects to sessions that broker still owns.
+Terminal output is pushed, not polled: a pane holds one dedicated broker connection per session,
+the broker writes a frame the moment the PTY produces output, and the frame reaches the renderer as
+raw bytes over a Tauri channel. A pane that returns from another page resumes at the byte it last
+painted; nothing is replayed or duplicated. The renderer paints with xterm's DOM renderer on purpose:
+the WebGL renderer breaks Korean IME composition in WKWebView.
 After a PTY has fully exited, an explicit restart discards its old replay buffer before reusing the
 session ID. A running session cannot be discarded. The Terminal Log inspector follows each runtime
 run separately and reads the backend's most recent 1 MiB replay. The broker keeps bounded on-disk
@@ -88,7 +93,11 @@ clean-installs it, and confirms the installed release process stays running. It 
 separate CI-instrumented NSIS installer. WebdriverIO drives that installed executable through
 project creation in a fresh empty directory outside the checkout, one-click session start, PTY
 input/output, split, page creation, natural process exit, runtime Attention, and retained terminal
-log output. The scripts stop their remaining sessions, run the NSIS uninstaller, and remove only
+log output. The macOS job additionally drives a streaming journey: a 40 000-line burst, a page switch
+and return without duplicated output, the inspector's terminal log, and a restart from a clean screen.
+Both gates read terminal text through xterm's buffer via CI-only hooks (`window.__talkakTest`,
+compiled only in the `webdriver-ci` Vite mode) and paste commands rather than typing them, because
+WebDriver's synthesised keystrokes reach xterm twice on WebKit. The scripts stop their remaining sessions, run the NSIS uninstaller, and remove only
 profiles and test directories created by that run. They never delete a pre-existing installation or
 user profile.
 
