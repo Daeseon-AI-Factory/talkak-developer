@@ -418,8 +418,17 @@ fn wait_read_returns_on_output_and_on_exit_without_polling() {
             data: setup,
         })
         .expect("setup input");
-    // Drain until the shell has been silent for a whole wait: a cold PowerShell on a CI runner
-    // prints its prompt seconds after spawn, so a fixed settling period is not silence.
+    // A cold PowerShell on a CI runner prints its prompt seconds after spawn, and a short silence
+    // BEFORE it has said anything is not idleness. Make the shell answer a probe first, then drain
+    // until one whole wait passes in silence.
+    runtime
+        .write(WriteSessionRequest {
+            session_id: "waiter".into(),
+            run_id: started.run_id,
+            data: b"echo talkak-ready\r\n".to_vec(),
+        })
+        .expect("ready probe");
+    wait_for_output(&runtime, "waiter", 0, b"talkak-ready");
     let mut cursor = 0;
     let quiet_deadline = Instant::now() + PTY_WAIT;
     loop {
