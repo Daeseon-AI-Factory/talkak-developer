@@ -28,6 +28,7 @@ export function createWorkspaceSession(input: CreateWorkspaceSessionInput): DevS
     state: "idle",
     runtime: { kind: "unconfigured", label: input.profile, shell: "—" },
     runtimeStatus: null,
+    agentActivity: null,
     branch: input.branch,
     startedAt: input.createdAt,
     lastActivity: input.lastActivity,

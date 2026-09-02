@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { TerminalRuntimeObservation, TerminalRuntimePhase } from "./domain";
 import { createWorkspaceSession } from "./sessionModel";
 import {
+  applyAgentActivity,
+  applyAgentActivityToProjects,
   applyRuntimeObservation,
   applyRuntimeObservationToProjects,
   applyRuntimePhase,
+  sessionStateForAgentActivity,
   shouldApplyRuntimeObservation,
 } from "./sessionRuntimeState";
 
@@ -328,4 +331,90 @@ describe("session runtime state", () => {
       });
     },
   );
+});
+
+describe("agent activity folded into a session", () => {
+  const observedAt = "2026-09-01T01:00:00.000Z";
+  const live = applyRuntimeObservation(session, runtimeObservation("running", 7));
+
+  it("ignores the record while the PTY is not live, so a dead pane never reads Working", () => {
+    const working = { state: "working" as const, lastTool: "Edit", at: null };
+    expect(applyAgentActivity(session, working, observedAt)).toBe(session);
+    const exited = applyRuntimeObservation(live, runtimeObservation("exited", 7));
+    expect(applyAgentActivity(exited, working, observedAt)).toBe(exited);
+  });
+
+  it("maps the record's states onto the session vocabulary the UI already styles", () => {
+    expect(sessionStateForAgentActivity("thinking")).toBe("working");
+    expect(sessionStateForAgentActivity("working")).toBe("working");
+    expect(sessionStateForAgentActivity("needs-input")).toBe("needs-input");
+    expect(sessionStateForAgentActivity("done")).toBe("ready");
+    expect(sessionStateForAgentActivity("idle")).toBe("idle");
+
+    const done = applyAgentActivity(
+      live,
+      { state: "done", lastTool: null, at: "2026-09-01T00:59:00.000Z" },
+      observedAt,
+    );
+    expect(done.state).toBe("ready");
+    expect(done.agentActivity).toEqual({
+      state: "done",
+      lastTool: null,
+      at: "2026-09-01T00:59:00.000Z",
+    });
+  });
+
+  it("stamps the observation time only when the state moves, so a 1 s poll is not a new event each tick", () => {
+    const first = applyAgentActivity(
+      live,
+      { state: "working", lastTool: "Bash", at: null },
+      observedAt,
+    );
+    expect(first.agentActivity?.at).toBe(observedAt);
+
+    const polled = applyAgentActivity(
+      first,
+      { state: "working", lastTool: "Bash", at: null },
+      "2026-09-01T01:00:01.000Z",
+    );
+    expect(polled).toBe(first);
+
+    const moved = applyAgentActivity(
+      first,
+      { state: "done", lastTool: "Bash", at: null },
+      "2026-09-01T01:00:02.000Z",
+    );
+    expect(moved.agentActivity?.at).toBe("2026-09-01T01:00:02.000Z");
+    expect(moved.state).toBe("ready");
+  });
+
+  it("clears the record and the state once the PTY exits, and keeps the array stable otherwise", () => {
+    const done = applyAgentActivity(live, { state: "done", lastTool: null, at: null }, observedAt);
+    const exited = applyRuntimeObservation(done, runtimeObservation("exited", 7));
+    expect(exited.agentActivity).toBeNull();
+    expect(exited.state).toBe("idle");
+
+    const projects = [
+      {
+        id: "project-1",
+        source: "local" as const,
+        name: "Project",
+        monogram: "P",
+        color: "#000",
+        path: "/project",
+        branch: "—",
+        description: "",
+        launchProfile: session.launchProfile,
+        sessions: [live],
+      },
+    ];
+    const thinking = { state: "thinking" as const, lastTool: null, at: null };
+    const updated = applyAgentActivityToProjects(projects, live.id, thinking, observedAt);
+    expect(updated).not.toBe(projects);
+    expect(updated[0].sessions[0].state).toBe("working");
+    expect(
+      applyAgentActivityToProjects(updated, live.id, thinking, "2026-09-01T01:00:05.000Z"),
+    ).toBe(updated);
+    expect(applyAgentActivityToProjects(updated, "missing", thinking, observedAt)).toBe(updated);
+  });
 });

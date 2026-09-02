@@ -55,6 +55,17 @@ export interface TerminalRuntimeObservation extends TerminalRuntimeStatus {
   readonly origin: TerminalRuntimeObservationOrigin;
 }
 
+/** What the agent's own record says it is doing, read by the native side from the record it tails. */
+export type AgentActivityState = "idle" | "thinking" | "working" | "needs-input" | "done";
+
+export interface AgentActivity {
+  readonly state: AgentActivityState;
+  /** The tool the agent last invoked, when the record names one. */
+  readonly lastTool: string | null;
+  /** When the record reached this state, or when Talkak first observed it if the record has no time. */
+  readonly at: string | null;
+}
+
 export type AttentionKind = "question" | "approval" | "result" | "error";
 
 export type AttentionRisk = "low" | "medium" | "high";
@@ -152,6 +163,8 @@ export interface DevSession {
   runtime: RuntimeTarget;
   /** Ephemeral host observation. Storage adapters must not persist it. */
   runtimeStatus?: TerminalRuntimeStatus | null;
+  /** Ephemeral projection of the agent record while the PTY is live. Never persisted. */
+  agentActivity?: AgentActivity | null;
   branch: string;
   startedAt: string;
   lastActivity: LocalizedText;

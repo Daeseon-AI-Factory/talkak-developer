@@ -12,9 +12,13 @@ import {
   updateSplitRatio,
 } from "./layoutModel";
 import { browserProjectStorage } from "./projectStore";
+import { type AgentActivityReport, useAgentActivityPolling } from "./runtime/agentActivity";
 import { createWorkspaceSession } from "./sessionModel";
 import { renamedSessionTitle } from "./sessionRename";
-import { applyRuntimeObservationToProjects } from "./sessionRuntimeState";
+import {
+  applyAgentActivityToProjects,
+  applyRuntimeObservationToProjects,
+} from "./sessionRuntimeState";
 import {
   createInitialWorkspace,
   initialFocusedSessionId,
@@ -476,6 +480,15 @@ export function useWorkspaceController({
     setProjects((current) => applyRuntimeObservationToProjects(current, sessionId, observation));
   }
 
+  function updateAgentActivity(sessionId: string, report: AgentActivityReport, observedAt: string) {
+    setProjects((current) =>
+      applyAgentActivityToProjects(current, sessionId, report.activity, observedAt),
+    );
+  }
+
+  // Every live session in a local project, whether or not its pane or the Inspector is on screen.
+  useAgentActivityPolling(projects, updateAgentActivity);
+
   return {
     activeProject,
     activeProjectId,
@@ -505,6 +518,7 @@ export function useWorkspaceController({
     markLaunchHandled,
     renameSession,
     updateRuntimeObservation,
+    updateAgentActivity,
   };
 }
 

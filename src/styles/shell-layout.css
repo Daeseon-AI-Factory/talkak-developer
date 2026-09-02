@@ -249,6 +249,12 @@
   background: transparent;
 }
 
+/* The agent finished its turn inside a live shell: a reply to read, not a busy pane. */
+.page-tab__activity[data-activity="ready"] {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(95, 226, 237, 0.18);
+}
+
 @keyframes page-tab-attention {
   50% {
     opacity: 0.45;

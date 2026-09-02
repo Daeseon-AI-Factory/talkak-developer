@@ -2,10 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import type { DevSession, TerminalRuntimeObservation } from "../domain";
 import { useI18n } from "../i18n";
 import type { SplitDirection } from "../layoutModel";
+import { agentRecordIdleMinutes, agentRecordLooksStale } from "../runtime/agentActivity";
+import { isLivePhase } from "../sessionRuntimeState";
 import { runtimeLabel } from "../workspaceModel";
 import { Icon } from "./Icon";
 import { writePaneDragData } from "./PageTabs";
 import { SessionTerminal } from "./SessionTerminal";
+
+/** How often a mid-turn pane re-checks whether its record has gone quiet. */
+const STALE_CHECK_MS = 30_000;
 
 interface TerminalPaneProps {
   paneId: string;
@@ -40,11 +45,22 @@ export function TerminalPane({
   onRename,
   onRuntimeObservation,
 }: TerminalPaneProps) {
-  const { runtimePhaseLabel, statusLabel, t, text } = useI18n();
+  const i18n = useI18n();
+  const { t, text } = i18n;
   const [runtimeAttached, setRuntimeAttached] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const paneRef = useRef<HTMLElement | null>(null);
   const sessionTitle = text(session.title);
+  const activity =
+    session.runtimeStatus && isLivePhase(session.runtimeStatus.phase)
+      ? (session.agentActivity ?? null)
+      : null;
+  const midTurn = activity?.state === "thinking" || activity?.state === "working";
+  const now = useClock(STALE_CHECK_MS, midTurn);
+  const staleHint = agentRecordLooksStale(activity, now)
+    ? t("activity.stale", { minutes: agentRecordIdleMinutes(activity, now) ?? 0 })
+    : null;
+  const statusText = paneStatusText(session, i18n);
   const runtime = runtimeAttached
     ? session.launchProfile.label || t("terminal.localShell")
     : session.runtime.kind === "unconfigured"
@@ -172,10 +188,14 @@ export function TerminalPane({
         <span>·</span>
         <span>{session.runtime.shell}</span>
         <span className="terminal-pane__meta-spacer" />
-        <span data-state={session.state} data-runtime-phase={session.runtimeStatus?.phase}>
-          {session.runtimeStatus
-            ? runtimePhaseLabel(session.runtimeStatus.phase, session.runtimeStatus.exitCode)
-            : statusLabel(session.state)}
+        <span
+          data-state={session.state}
+          data-runtime-phase={session.runtimeStatus?.phase}
+          data-agent-activity={activity?.state}
+          data-testid="pane-status"
+          title={activity && activity.state !== "idle" ? t("activity.source") : undefined}
+        >
+          {staleHint ? `${statusText} · ${staleHint}` : statusText}
         </span>
       </div>
 
@@ -190,4 +210,47 @@ export function TerminalPane({
       />
     </article>
   );
+}
+
+/**
+ * The one line under the title. The PTY phase is the base fact; while the process is live and the
+ * agent record says something, the record's word replaces "Running" — that is what the person
+ * actually wants to know about a pane they are not looking at.
+ */
+export function paneStatusText(
+  session: DevSession,
+  { runtimePhaseLabel, statusLabel, t }: ReturnType<typeof useI18n>,
+): string {
+  const status = session.runtimeStatus;
+  if (!status) return statusLabel(session.state);
+  const activity = session.agentActivity;
+  if (activity && isLivePhase(status.phase)) {
+    switch (activity.state) {
+      case "thinking":
+        return t("activity.thinking");
+      case "working":
+        return activity.lastTool
+          ? t("activity.workingTool", { tool: activity.lastTool })
+          : t("activity.working");
+      case "needs-input":
+        return t("activity.needsInput");
+      case "done":
+        return t("activity.done");
+      default:
+        break;
+    }
+  }
+  return runtimePhaseLabel(status.phase, status.exitCode);
+}
+
+/** Wall-clock time, re-read every `intervalMs` while `enabled` — otherwise frozen at mount. */
+function useClock(intervalMs: number, enabled: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(timer);
+  }, [enabled, intervalMs]);
+  return now;
 }

@@ -8,11 +8,23 @@ import { type WorkspacePage, listPanes } from "./layoutModel";
  * had failed, finished, or was still working was invisible until you switched to it. That is the
  * whole point of having pages.
  */
-export type PageActivity = "attention" | "running" | "exited" | "idle";
+export type PageActivity = "attention" | "ready" | "running" | "exited" | "idle";
 
-const RANK: Record<PageActivity, number> = { attention: 3, running: 2, exited: 1, idle: 0 };
+const RANK: Record<PageActivity, number> = {
+  attention: 4,
+  ready: 3,
+  running: 2,
+  exited: 1,
+  idle: 0,
+};
 
-/** The state of one session, from its observed runtime rather than its seeded label. */
+/**
+ * The state of one session, from its observed runtime rather than its seeded label.
+ *
+ * The PTY comes first: a dead or failing process is the fact, whatever the agent record last said.
+ * Only inside a live process does the record get a say — an agent waiting for an answer needs a
+ * look, and one that just finished its turn is a result to read, not just a busy shell.
+ */
 export function sessionActivity(session: DevSession): PageActivity {
   const status = session.runtimeStatus;
   if (!status) return "idle";
@@ -25,6 +37,11 @@ export function sessionActivity(session: DevSession): PageActivity {
     return failed ? "attention" : "exited";
   }
   if (status.phase === "running" || status.phase === "starting" || status.phase === "stopping") {
+    if (status.phase !== "starting") {
+      const agent = session.agentActivity?.state;
+      if (agent === "needs-input") return "attention";
+      if (agent === "done") return "ready";
+    }
     return "running";
   }
   return "idle";

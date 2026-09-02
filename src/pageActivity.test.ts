@@ -131,3 +131,61 @@ describe("the tab tooltip", () => {
     expect(pageSessionSummary(page(pane("p1", "missing")), index(), () => "x")).toEqual([]);
   });
 });
+
+describe("what the agent record adds", () => {
+  function withAgent(
+    id: string,
+    runtimeStatus: TerminalRuntimeStatus,
+    state: "idle" | "thinking" | "working" | "needs-input" | "done",
+  ): DevSession {
+    return { ...session(id, runtimeStatus), agentActivity: { state, lastTool: null, at: null } };
+  }
+
+  it("raises attention for an agent waiting on an answer inside a live shell", () => {
+    expect(sessionActivity(withAgent("s1", status({ phase: "running" }), "needs-input"))).toBe(
+      "attention",
+    );
+    expect(sessionActivity(withAgent("s1", status({ phase: "stopping" }), "needs-input"))).toBe(
+      "attention",
+    );
+  });
+
+  it("marks a finished turn as ready — a reply to read, not a busy shell", () => {
+    expect(sessionActivity(withAgent("s1", status({ phase: "running" }), "done"))).toBe("ready");
+  });
+
+  it("still reads a mid-turn agent as running", () => {
+    for (const state of ["thinking", "working", "idle"] as const) {
+      expect(sessionActivity(withAgent("s1", status({ phase: "running" }), state))).toBe("running");
+    }
+  });
+
+  it("lets the PTY win: a dead or failing process is the fact, whatever the record last said", () => {
+    const clean = status({ phase: "exited", exitCode: 0, termination: "observed-exit" });
+    expect(sessionActivity(withAgent("s1", clean, "done"))).toBe("exited");
+    expect(sessionActivity(withAgent("s1", status({ phase: "error" }), "done"))).toBe("attention");
+    // A record is not consulted for a process that is only starting.
+    expect(sessionActivity(withAgent("s1", status({ phase: "starting" }), "done"))).toBe("running");
+  });
+
+  it("ranks a finished turn above a busy sibling and below one that needs a look", () => {
+    const root: LayoutNode = {
+      kind: "split",
+      id: "split-1",
+      direction: "horizontal",
+      ratio: 0.5,
+      first: pane("p1", "s1"),
+      second: pane("p2", "s2"),
+    };
+    const done = withAgent("s1", status({ phase: "running" }), "done");
+    expect(pageActivity(page(root), index(done, session("s2", status({ phase: "running" }))))).toBe(
+      "ready",
+    );
+    expect(
+      pageActivity(
+        page(root),
+        index(done, withAgent("s2", status({ phase: "running" }), "needs-input")),
+      ),
+    ).toBe("attention");
+  });
+});
