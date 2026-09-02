@@ -20,6 +20,9 @@ importers:
       '@tauri-apps/plugin-opener':
         specifier: '2'
         version: 2.5.5
+      '@xterm/addon-clipboard':
+        specifier: 0.2.0
+        version: 0.2.0
       '@xterm/addon-fit':
         specifier: 0.11.0
         version: 0.11.0
@@ -1061,6 +1064,9 @@ packages:
     resolution: {integrity: sha512-v2vkweVbf1nI3lqRjVMbRyWFqHxPrDE95sLq0IZLjZ8fnXtWWIF61ZxfUhLdrMKB6s3gXnOyZuWgEJFD7iDBGQ==}
     engines: {node: '>=18.20.0'}
 
+  '@xterm/addon-clipboard@0.2.0':
+    resolution: {integrity: sha512-Dl31BCtBhLaUEECUbEiVcCLvLBbaeGYdT7NofB8OJkGTD3MWgBsaLjXvfGAD4tQNHhm6mbKyYkR7XD8kiZsdNg==}
+
   '@xterm/addon-fit@0.11.0':
     resolution: {integrity: sha512-jYcgT6xtVYhnhgxh3QgYDnnNMYTcf8ElbxxFzX0IZo+vabQqSPAjC3c1wJrKB5E19VwQei89QCiZZP86DCPF7g==}
 
@@ -1889,6 +1895,9 @@ packages:
   jiti@2.7.0:
     resolution: {integrity: sha512-AC/7JofJvZGrrneWNaEnJeOLUx+JlGt7tNa0wZiRPT4MY1wmfKjt2+6O2p2uz2+skll8OZZmJMNqeke7kKbNgQ==}
     hasBin: true
+
+  js-base64@3.9.3:
+    resolution: {integrity: sha512-uwYQp+VJ38FVvtim6qNbit6e9uT6dwWQ4Y1+H9TxhW5hcHjpHwoxlR0nMpqUmIFOmu4VqMxwdJA88gIVuZJQ/g==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -3948,6 +3957,10 @@ snapshots:
     dependencies:
       '@wdio/logger': 9.29.1
 
+  '@xterm/addon-clipboard@0.2.0':
+    dependencies:
+      js-base64: 3.9.3
+
   '@xterm/addon-fit@0.11.0': {}
 
   '@xterm/xterm@6.0.0': {}
@@ -4812,6 +4825,8 @@ snapshots:
       picomatch: 4.0.5
 
   jiti@2.7.0: {}
+
+  js-base64@3.9.3: {}
 
   js-tokens@4.0.0: {}
 

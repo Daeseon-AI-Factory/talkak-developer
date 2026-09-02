@@ -205,6 +205,123 @@
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* Scroll mode (G21): a chip in the corner of the live pane while the pane owns the wheel instead
+   of the program, or a jump-to-bottom prompt once the reader has scrolled away from the live line.
+   Never covers the input area — top-right, out of the way of anything being typed. */
+.terminal-scroll-chip {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  padding: 4px 10px;
+  border: 1px solid rgba(134, 243, 247, 0.3);
+  border-radius: 999px;
+  background: rgba(7, 18, 22, 0.88);
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: calc(0.02em * var(--tracking));
+}
+
+.terminal-scroll-chip:hover {
+  background: rgba(95, 226, 237, 0.14);
+}
+
+/* A moment of copy/paste/open-file feedback — see Toast.tsx. One shared look for both terminal
+   surfaces; each positions it in its own bottom-right corner (both are position:relative). */
+.toast {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: rgba(7, 18, 22, 0.92);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.toast[data-tone="ok"] span:first-child {
+  color: var(--success);
+}
+
+.toast[data-tone="error"] {
+  border-color: rgba(255, 157, 92, 0.35);
+}
+
+.toast[data-tone="error"] span:first-child {
+  color: var(--warning);
+}
+
+.toast__text {
+  overflow: hidden;
+  max-width: 46vw;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-release-mouse {
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.terminal-release-mouse:hover {
+  color: var(--text-secondary);
+  border-color: rgba(135, 211, 220, 0.28);
+}
+
+/* Settings panel: the terminal theme presets and the editor for path:line links. Reuses
+   .setting-card/.setting-control from attention-settings.css so it sits like every other row. */
+.terminal-settings__themes {
+  flex-wrap: wrap;
+}
+
+.terminal-settings__swatch {
+  border: 1px solid var(--border);
+}
+
+.terminal-settings__swatch[data-active="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.terminal-settings__editor {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+}
+
+.terminal-settings__field {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.terminal-settings__field input {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgba(5, 13, 16, 0.8);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
 .terminal-pane__rename {
   min-width: 0;
   max-width: 22ch;

@@ -1,5 +1,5 @@
 import type { FitAddon } from "@xterm/addon-fit";
-import type { Terminal } from "@xterm/xterm";
+import type { ITheme, Terminal } from "@xterm/xterm";
 import type { SessionLogCursor } from "./runtime/sessionLogModel";
 
 /**
@@ -72,4 +72,29 @@ export function releaseTerminalLog(sessionId: string): void {
   retained.delete(sessionId);
   pendingCommits.delete(sessionId);
   entry.terminal.dispose();
+}
+
+/**
+ * Release the log emulator when nothing is showing it. The pane calls this where it drops its own
+ * emulator — the session is gone from the broker, or started a new run — so a log opened once does
+ * not hold a 10k-line parser for the app's lifetime. A log view that IS mounted handles the new run
+ * itself (it resets the buffer) and must not have its terminal disposed under it.
+ */
+export function releaseDetachedTerminalLog(sessionId: string): boolean {
+  const entry = retained.get(sessionId);
+  if (!entry || entry.terminal.element?.isConnected) return false;
+  releaseTerminalLog(sessionId);
+  return true;
+}
+
+/** Repaint every retained log emulator with a new palette; returns how many were touched. */
+export function applyThemeToRetainedTerminalLogs(
+  theme: ITheme,
+  minimumContrastRatio: number,
+): number {
+  for (const entry of retained.values()) {
+    entry.terminal.options.theme = theme;
+    entry.terminal.options.minimumContrastRatio = minimumContrastRatio;
+  }
+  return retained.size;
 }

@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { preservedScrollLine } from "./terminalFit";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createResizeDebouncer, preservedScrollLine } from "./terminalFit";
 
 describe("scroll position across a reflow", () => {
   it("leaves a reader who is at the bottom at the bottom", () => {
@@ -25,5 +25,46 @@ describe("scroll position across a reflow", () => {
 
   it("treats an over-scrolled viewport as being at the bottom", () => {
     expect(preservedScrollLine(400, 401, 380)).toBeNull();
+  });
+});
+
+describe("resize debounce", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("sends only the size the drag settled on, once", () => {
+    const sent: Array<[number, number]> = [];
+    const debouncer = createResizeDebouncer((cols, rows) => sent.push([cols, rows]), 120);
+    debouncer.schedule(100, 30);
+    vi.advanceTimersByTime(60);
+    debouncer.schedule(96, 30);
+    vi.advanceTimersByTime(60);
+    debouncer.schedule(90, 28);
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(119);
+    expect(sent).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(sent).toEqual([[90, 28]]);
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual([[90, 28]]);
+  });
+
+  it("sends the pending size on flush and nothing after dispose", () => {
+    const sent: Array<[number, number]> = [];
+    const debouncer = createResizeDebouncer((cols, rows) => sent.push([cols, rows]));
+    debouncer.schedule(80, 24);
+    debouncer.flush();
+    expect(sent).toEqual([[80, 24]]);
+    debouncer.flush();
+    expect(sent).toEqual([[80, 24]]);
+
+    debouncer.schedule(70, 20);
+    debouncer.dispose();
+    vi.advanceTimersByTime(1000);
+    expect(sent).toEqual([[80, 24]]);
   });
 });

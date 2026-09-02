@@ -6,7 +6,7 @@ import { type SessionSubscription, errorMessage, sessionClient } from "../runtim
 import { sessionLogResumePoint } from "../runtime/sessionLogModel";
 import { createTerminalOutputWriter } from "../runtime/terminalOutputWriter";
 import { createTerminalStreamConsumer } from "../runtime/terminalStream";
-import { attachTerminalClipboard } from "../terminalClipboard";
+import { type TerminalClipboardNotice, attachTerminalClipboard } from "../terminalClipboard";
 import { createTerminalFitter } from "../terminalFit";
 import {
   commitRetainedTerminalLogFrame,
@@ -15,7 +15,8 @@ import {
   retainedTerminalLog,
   waitForRetainedTerminalLogCommit,
 } from "../terminalLogInstances";
-import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
+import { TERMINAL_FONT_FAMILY, activeTerminalTheme } from "../terminalTheme";
+import { Toast, useToast } from "./Toast";
 
 type TerminalLogPhase = "loading" | "running" | "exited" | "waiting" | "unavailable";
 
@@ -32,7 +33,11 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
   const [phase, setPhase] = useState<TerminalLogPhase>(available ? "loading" : "unavailable");
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { toast, show: showToast } = useToast();
 
+  // showToast is stable (useToast wraps it in useCallback) and t only changes with the locale,
+  // which a toast reads fresh at call time; neither should retrigger this mount effect.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: showToast/t read at call time only
   useEffect(() => {
     setTruncated(false);
     setError(null);
@@ -61,6 +66,7 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
           setTruncated(kept.truncated);
         } else {
           if (kept) releaseTerminalLog(sessionId);
+          const preset = activeTerminalTheme();
           terminal = new Terminal({
             convertEol: false,
             cursorBlink: false,
@@ -69,7 +75,8 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
             fontFamily: TERMINAL_FONT_FAMILY,
             fontSize: 12,
             scrollback: 10000,
-            theme: TERMINAL_THEME,
+            theme: preset.theme,
+            minimumContrastRatio: preset.minimumContrastRatio,
           });
           fitAddon = new FitAddon();
           terminal.loadAddon(fitAddon);
@@ -87,6 +94,9 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
           undefined,
           (message) => {
             if (!disposed) setError(message);
+          },
+          (notice) => {
+            if (!disposed) showToast(clipboardNoticeToast(notice, t));
           },
         );
 
@@ -197,8 +207,23 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
         <div className="terminal-log__empty">{t("inspector.terminalDesktopOnly")}</div>
       )}
       {error ? <output className="terminal-log__error">{error}</output> : null}
+      <Toast notice={toast} />
     </div>
   );
+}
+
+/** The read-only log shares the same clipboard feedback wording as the live pane. */
+function clipboardNoticeToast(
+  notice: TerminalClipboardNotice,
+  t: ReturnType<typeof useI18n>["t"],
+): { tone: "ok"; text: string } {
+  return {
+    tone: "ok",
+    text:
+      notice.kind === "copied"
+        ? t("terminal.copied", { text: notice.text })
+        : t("terminal.imagePathPasted", { path: notice.path }),
+  };
 }
 
 function terminalLogPhaseLabel(

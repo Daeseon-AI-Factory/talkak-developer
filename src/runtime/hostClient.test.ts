@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type HostInfo, windowsPtyOption } from "./hostClient";
+import { type HostInfo, normalizeOpenSourceLocationFailure, windowsPtyOption } from "./hostClient";
 
 const host = (patch: Partial<HostInfo>): HostInfo => ({
   os: "windows",
@@ -27,5 +27,33 @@ describe("telling xterm what pty it is driving", () => {
 
   it("says nothing in the browser preview, where there is no host to ask", () => {
     expect(windowsPtyOption(null)).toEqual({});
+  });
+});
+
+describe("opening a source location, what went wrong", () => {
+  it("passes through a typed failure the Rust command rejected with", () => {
+    expect(
+      normalizeOpenSourceLocationFailure({ kind: "outsideWorkspace", detail: "/etc/passwd" }),
+    ).toEqual({ kind: "outsideWorkspace", detail: "/etc/passwd" });
+  });
+
+  it("defaults a missing detail to an empty string rather than 'undefined'", () => {
+    expect(normalizeOpenSourceLocationFailure({ kind: "editorNotFound" })).toEqual({
+      kind: "editorNotFound",
+      detail: "",
+    });
+  });
+
+  it("falls back to openFailed for a kind the Rust side never sends", () => {
+    expect(normalizeOpenSourceLocationFailure({ kind: "somethingNew", detail: "x" }).kind).toBe(
+      "openFailed",
+    );
+  });
+
+  it("falls back to openFailed for a transport error with no kind at all", () => {
+    expect(normalizeOpenSourceLocationFailure(new Error("broker gone"))).toEqual({
+      kind: "openFailed",
+      detail: "broker gone",
+    });
   });
 });

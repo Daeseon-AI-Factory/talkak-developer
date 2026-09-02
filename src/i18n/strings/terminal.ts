@@ -1,4 +1,8 @@
-/** Fixed product copy for the terminal surfaces, ko and en side by side. Keys are `terminal.*` domains. */
+/**
+ * Fixed product copy for the terminal surfaces, ko and en side by side. Keys are `terminal.*`
+ * domains, plus the `shortcut.*` labels of the terminal's own chords so the shortcut guide can
+ * name them.
+ */
 export const terminal = {
   ko: {
     "terminal.openConversation": "{session} 대화 로그 열기",
@@ -41,6 +45,40 @@ export const terminal = {
     "terminal.restart": "다시 시작",
     "terminal.finishingOutput": "마지막 출력 정리 중…",
     "terminal.historyTruncated": "Talkak: 오래된 출력이 메모리 제한으로 생략되었습니다.",
+    "terminal.copied": "복사됨 · {text}",
+    "terminal.imagePathPasted": "이미지 경로를 붙여넣음 · {path}",
+    "terminal.sourceOpened": "{ref} 열림",
+    "terminal.sourceNotFound": "파일이 없습니다 · {ref}",
+    "terminal.sourceNotAFile": "파일이 아닙니다 · {ref}",
+    "terminal.sourceOutsideWorkspace": "작업 폴더와 프로젝트 밖의 파일은 열지 않습니다 · {ref}",
+    "terminal.sourceEditorNotFound":
+      "편집기 명령을 찾을 수 없습니다 — 설정에서 편집기를 확인하세요",
+    "terminal.sourceEditorFailed": "편집기 실행 실패 · {detail}",
+    "terminal.sourceOpenFailed": "열지 못했습니다 · {detail}",
+    "terminal.sourceDesktopOnly": "파일 열기는 Talkak 데스크톱 앱에서만 동작합니다",
+    "terminal.scrollMode": "스크롤 모드 · Esc로 종료",
+    "terminal.scrollModeHint":
+      "휠과 방향키, PgUp/PgDn, Home/End가 프로그램 대신 화면 기록을 움직입니다. {shortcut}로 켜고 끕니다.",
+    "terminal.jumpToBottom": "맨 아래로",
+    "terminal.releaseMouse": "마우스 모드 해제",
+    "terminal.releaseMouseHint":
+      "전체 화면 프로그램이 마우스를 잡고 있습니다. 프로그램이 죽은 뒤 클릭이 글자로 찍히면 누르세요 — 터미널 표시만 되돌리고 프로그램에는 아무것도 보내지 않습니다.",
+    "terminal.settings.eyebrow": "터미널",
+    "terminal.settings.theme": "터미널 테마",
+    "terminal.settings.themeHint":
+      "열려 있는 모든 터미널에 바로 적용됩니다. 이 기기의 브라우저 저장소에만 저장됩니다.",
+    "terminal.settings.themeDefault": "{name} (기본)",
+    "terminal.settings.editor": "파일 링크를 여는 편집기",
+    "terminal.settings.editorHint":
+      "터미널의 path:line 링크를 클릭하면 실행됩니다. 기본값은 운영체제 기본 앱이며, 편집기 명령은 이 기기의 설정일 뿐 제품에 내장되지 않습니다.",
+    "terminal.settings.editorOsDefault": "운영체제 기본 앱",
+    "terminal.settings.editorCustom": "직접 입력",
+    "terminal.settings.editorCommand": "명령",
+    "terminal.settings.editorCommandPlaceholder": "예: code",
+    "terminal.settings.editorArgs": "인수 템플릿 · {file} {line} {column} 사용 가능",
+    "terminal.settings.editorArgsPlaceholder": "예: -g {file}:{line}:{column}",
+    "shortcut.scrollMode": "터미널 스크롤 모드",
+    "shortcut.jumpToBottom": "터미널 맨 아래로",
   },
   en: {
     "terminal.openConversation": "Open {session} conversation log",
@@ -83,5 +121,39 @@ export const terminal = {
     "terminal.restart": "Restart",
     "terminal.finishingOutput": "Finishing output…",
     "terminal.historyTruncated": "Talkak: older output was omitted by the memory limit.",
+    "terminal.copied": "Copied · {text}",
+    "terminal.imagePathPasted": "Image path pasted · {path}",
+    "terminal.sourceOpened": "Opened {ref}",
+    "terminal.sourceNotFound": "File not found · {ref}",
+    "terminal.sourceNotAFile": "Not a file · {ref}",
+    "terminal.sourceOutsideWorkspace":
+      "Files outside the working directory and the project stay closed · {ref}",
+    "terminal.sourceEditorNotFound": "Editor command not found — check the editor in Settings",
+    "terminal.sourceEditorFailed": "The editor failed to start · {detail}",
+    "terminal.sourceOpenFailed": "Could not open · {detail}",
+    "terminal.sourceDesktopOnly": "Opening files works in the Talkak desktop app only",
+    "terminal.scrollMode": "Scroll mode · Esc to leave",
+    "terminal.scrollModeHint":
+      "The wheel, arrows, PgUp/PgDn and Home/End move the history instead of the program. {shortcut} toggles it.",
+    "terminal.jumpToBottom": "Jump to bottom",
+    "terminal.releaseMouse": "Release mouse",
+    "terminal.releaseMouseHint":
+      "A full-screen program owns the mouse. Press this if clicks print garbage after the program died — only the emulator is put back; nothing is sent to the program.",
+    "terminal.settings.eyebrow": "TERMINAL",
+    "terminal.settings.theme": "Terminal theme",
+    "terminal.settings.themeHint":
+      "Applies to every open terminal immediately. Stored in this device's browser storage only.",
+    "terminal.settings.themeDefault": "{name} (default)",
+    "terminal.settings.editor": "Editor for file links",
+    "terminal.settings.editorHint":
+      "Runs when a path:line link in a terminal is clicked. The default is the OS default app; an editor command is this device's setting, never built into the product.",
+    "terminal.settings.editorOsDefault": "OS default app",
+    "terminal.settings.editorCustom": "Custom",
+    "terminal.settings.editorCommand": "Command",
+    "terminal.settings.editorCommandPlaceholder": "e.g. code",
+    "terminal.settings.editorArgs": "Arguments template · {file} {line} {column} are available",
+    "terminal.settings.editorArgsPlaceholder": "e.g. -g {file}:{line}:{column}",
+    "shortcut.scrollMode": "Terminal scroll mode",
+    "shortcut.jumpToBottom": "Terminal jump to bottom",
   },
 };

@@ -46,6 +46,10 @@ import {
   setSettingOverride,
 } from "./settingsModel";
 import { shortcutDisplay } from "./shortcutRegistry";
+import { applyThemeToRetainedTerminals } from "./terminalInstances";
+import { applyThemeToRetainedTerminalLogs } from "./terminalLogInstances";
+import { jumpTerminalToBottom, toggleTerminalScrollMode } from "./terminalScrollMode";
+import { subscribeTerminalTheme } from "./terminalTheme";
 import { useProjectRegistry } from "./useProjectRegistry";
 import { useShortcutDispatcher } from "./useShortcutDispatcher";
 import { useWorkspaceController } from "./useWorkspaceController";
@@ -140,6 +144,18 @@ export default function App() {
     window.addEventListener("resize", updatePresentation);
     return () => window.removeEventListener("resize", updatePresentation);
   }, []);
+
+  // Every terminal — live panes and the read-only log — repaints the moment the theme preset
+  // changes, instead of waiting for the next mount. One subscription for the whole app: the
+  // retained emulators live outside any single component and outlive page switches.
+  useEffect(
+    () =>
+      subscribeTerminalTheme((preset) => {
+        applyThemeToRetainedTerminals(preset.theme, preset.minimumContrastRatio);
+        applyThemeToRetainedTerminalLogs(preset.theme, preset.minimumContrastRatio);
+      }),
+    [],
+  );
 
   useEffect(() => {
     try {
@@ -367,6 +383,12 @@ export default function App() {
       nextPage: () => workspace.cyclePage(1),
       previousPane: () => workspace.cyclePane(-1),
       nextPane: () => workspace.cyclePane(1),
+      scrollMode: () => {
+        if (activeSession) toggleTerminalScrollMode(activeSession.id);
+      },
+      jumpToBottom: () => {
+        if (activeSession) jumpTerminalToBottom(activeSession.id);
+      },
       ...Object.fromEntries(
         Array.from({ length: 9 }, (_, index) => [
           `focusPane${index + 1}`,

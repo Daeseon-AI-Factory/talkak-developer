@@ -1,4 +1,3 @@
-import type { FitAddon } from "@xterm/addon-fit";
 import type { Terminal as XTerm } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import type {
@@ -11,16 +10,10 @@ import type {
   TerminalRuntimeStatus,
 } from "../domain";
 import { useI18n } from "../i18n";
-import { platformFromUserAgent } from "../platform";
-import { hostInfo, windowsPtyOption } from "../runtime/hostClient";
 import { projectClient } from "../runtime/projectClient";
 import {
-  beginRuntimeOperation,
   createRuntimeOperationTracker,
-  enqueueRuntimeMutation,
   invalidateRuntimeOperations,
-  runtimeOperationBelongsToCurrentRuntime,
-  runtimeOperationIsCurrent,
 } from "../runtime/runtimeOperationGuard";
 import {
   type SessionSubscription,
@@ -28,41 +21,32 @@ import {
   errorMessage,
   sessionClient,
 } from "../runtime/sessionClient";
-import { runtimeMutationQueue, sendSessionInput } from "../runtime/sessionInput";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
-import {
-  type TerminalOutputWriter,
-  createTerminalOutputWriter,
-} from "../runtime/terminalOutputWriter";
+import type { TerminalOutputWriter } from "../runtime/terminalOutputWriter";
 import { terminalRuntimePhase, terminalStreamEnabled } from "../runtime/terminalReplay";
 import { createTerminalStreamConsumer } from "../runtime/terminalStream";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
-import { attachTerminalClipboard } from "../terminalClipboard";
-import { createTerminalFitter } from "../terminalFit";
 import {
   releaseTerminal,
   resetRetainedRun,
-  retainTerminal,
   retainedTerminal,
   updateRetainedCursor,
 } from "../terminalInstances";
-import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
+import { releaseDetachedTerminalLog } from "../terminalLogInstances";
+import {
+  type PendingTerminalOutput,
+  canMoveTerminalFocus,
+  useTerminalPaneRuntime,
+} from "../terminalPaneRuntime";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { Toast } from "./Toast";
 
 interface ObservedRuntimeCursor {
   runId: number;
   next: number;
 }
 
-interface PendingTerminalOutput {
-  bytes: Uint8Array;
-  suppressProtocolInput: boolean;
-  resolve: (written: boolean) => void;
-  reject: (cause: unknown) => void;
-}
-
 const observedRuntimeCursors = new Map<string, ObservedRuntimeCursor>();
-const protocolInputSuppressedSessions = new Set<string>();
 
 interface SessionTerminalProps {
   session: DevSession;
@@ -83,7 +67,7 @@ export function SessionTerminal({
   onLaunchHandled,
   onRuntimeObservation,
 }: SessionTerminalProps) {
-  const { runtimePhaseLabel, t, text } = useI18n();
+  const { locale, runtimePhaseLabel, t, text } = useI18n();
   const launchCommand = session.launchProfile.command?.trim() || null;
   const launchLabel = session.launchProfile.label || t("terminal.defaultShell");
   const [phase, setPhase] = useState<TerminalRuntimePhase>("checking");
@@ -111,11 +95,17 @@ export function SessionTerminal({
   const runtimeStatusRef = useRef<TerminalRuntimeStatus | null>(session.runtimeStatus ?? null);
   const runtimeOperationsRef = useRef(createRuntimeOperationTracker());
   const storedRuntimeStatusRef = useRef(session.runtimeStatus);
+  // Read by the pane runtime hook only when a `path:line` link is activated, so the working
+  // directory field can change on every keystroke without retriggering the terminal mount effect.
+  const cwdRef = useRef(cwd);
+  const projectRootRef = useRef(projectPath);
   focusedRef.current = focused;
   launchRequestedRef.current = session.launchRequested === true;
   launchHandledRef.current = onLaunchHandled;
   runtimeObservationRef.current = onRuntimeObservation;
   storedRuntimeStatusRef.current = session.runtimeStatus;
+  cwdRef.current = cwd;
+  projectRootRef.current = projectPath;
 
   useEffect(() => {
     if (!launchCommand || !projectClient.available()) {
@@ -182,6 +172,8 @@ export function SessionTerminal({
         if (!snapshot) {
           observedRuntimeCursors.delete(session.id);
           releaseTerminal(session.id);
+          // The session is gone from the broker; nothing should keep parsing its old log either.
+          releaseDetachedTerminalLog(session.id);
           reportRuntimeStatus("passive-probe", emptyRuntimeStatus("idle"));
           return;
         }
@@ -190,6 +182,7 @@ export function SessionTerminal({
         const kept = retainedTerminal(session.id);
         if (kept && kept.runId !== null && kept.runId !== snapshot.runId) {
           releaseTerminal(session.id);
+          releaseDetachedTerminalLog(session.id);
           cursorRef.current = 0;
         }
         prepareRuntimeReplay(session.id, snapshot.runId, snapshot.next);
@@ -233,176 +226,25 @@ export function SessionTerminal({
     };
   }, [projectPath, session.id, session.launchProfile]);
 
-  useEffect(() => {
-    if (!shouldAttachTerminal || !hostRef.current) return;
-    terminalAttachFailedRef.current = false;
-    let disposed = false;
-    let disposeTerminal: (() => void) | undefined;
-    void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit"), hostInfo()])
-      .then(([{ Terminal }, { FitAddon }, host]) => {
-        if (disposed || !hostRef.current) return;
-        // Reuse the retained emulator when its buffer belongs to the current run: the pane comes
-        // back exactly as it looked and reads only the bytes that arrived while it was away —
-        // no replay, no crawl. A different (or unknown-yet-different) run starts clean.
-        const kept = retainedTerminal(session.id);
-        const currentRunId = runtimeStatusRef.current?.runId ?? null;
-        let terminal: XTerm;
-        let fitAddon: FitAddon;
-        const reusable =
-          kept !== undefined &&
-          kept.terminal.element != null &&
-          (currentRunId === null || kept.runId === currentRunId);
-        if (kept && reusable && kept.terminal.element) {
-          terminal = kept.terminal;
-          fitAddon = kept.fitAddon;
-          hostRef.current.appendChild(kept.terminal.element);
-          // The cursor was already restored synchronously at mount; touching it here would race
-          // a stream that has since advanced past it and duplicate the delta.
-        } else {
-          if (kept) releaseTerminal(session.id);
-          terminal = new Terminal({
-            convertEol: false,
-            cursorBlink: true,
-            fontFamily: TERMINAL_FONT_FAMILY,
-            fontSize: 13,
-            // xterm's own default, and it belongs here: screen reader mode mirrors the viewport
-            // into live DOM and does per-line work as output arrives — it even ships a string for
-            // "line reading suppressed, too many lines printed". On top of the DOM renderer, with
-            // an agent streaming thousands of lines, that is what made scrolling stutter. It needs
-            // to come back as a setting for anyone who runs a screen reader, not as a default.
-            screenReaderMode: false,
-            // The DOM renderer, deliberately. xterm's WebGL addon is faster, but in this WKWebView
-            // it broke Korean IME composition the moment it attached (the full Talkak app parked it
-            // for exactly that, TerminalPane.tsx there); a terminal that cannot take Hangul is not
-            // faster. Output speed comes from the push transport instead.
-            // Tells xterm it is driving a ConPTY. Without it, growing a pane pulls lines back out
-            // of scrollback rather than appending blank rows, so content duplicates and the
-            // viewport moves under the reader — a Windows-only fault by construction.
-            ...windowsPtyOption(host),
-            scrollback: 5000,
-            theme: TERMINAL_THEME,
-          });
-          fitAddon = new FitAddon();
-          terminal.loadAddon(fitAddon);
-          terminal.open(hostRef.current);
-          retainTerminal(session.id, { terminal, fitAddon, runId: currentRunId, cursor: 0 });
-        }
-        // Disposed on teardown: the terminal is retained across page switches, so a DOM paste
-        // listener left behind would stack and paste once per past mount.
-        const detachClipboard = attachTerminalClipboard(
-          terminal,
-          platformFromUserAgent(navigator.userAgent),
-          undefined,
-          setError,
-        );
-        terminalRef.current = terminal;
-        const output = createTerminalOutputWriter(
-          (bytes, done) => terminal.write(bytes, done),
-          (suppressed) => {
-            if (suppressed) protocolInputSuppressedSessions.add(session.id);
-            else protocolInputSuppressedSessions.delete(session.id);
-          },
-        );
-        const enqueueOutput = output.write;
-        outputWriterRef.current = enqueueOutput;
-        const sendInput = terminal.onData((data) => {
-          if (protocolInputSuppressedSessions.has(session.id)) return;
-          const current = runtimeStatusRef.current;
-          if (!current || current.phase !== "running" || current.runId === null) return;
-          const token = beginRuntimeOperation(runtimeOperationsRef.current, "write", current);
-          void sendSessionInput(session.id, current, data, (cause) => {
-            if (
-              runtimeOperationBelongsToCurrentRuntime(
-                runtimeOperationsRef.current,
-                token,
-                runtimeStatusRef.current,
-              )
-            ) {
-              reportRuntimeFault("write", cause);
-            }
-          });
-        });
-        for (const pending of pendingOutputRef.current.splice(0)) {
-          void enqueueOutput(pending.bytes, pending.suppressProtocolInput).then(
-            pending.resolve,
-            pending.reject,
-          );
-        }
-        const sendResize = terminal.onResize(({ cols, rows }) => {
-          const current = runtimeStatusRef.current;
-          if (!current || current.phase !== "running" || current.runId === null) return;
-          const runId = current.runId;
-          const token = beginRuntimeOperation(runtimeOperationsRef.current, "resize", current);
-          void enqueueRuntimeMutation(
-            runtimeMutationQueue,
-            JSON.stringify([session.id, runId, "resize"]),
-            async () => {
-              await sessionClient.resize(session.id, runId, cols, rows);
-              if (
-                runtimeOperationIsCurrent(
-                  runtimeOperationsRef.current,
-                  token,
-                  runtimeStatusRef.current,
-                )
-              ) {
-                clearRuntimeFault("resize");
-              }
-            },
-            (cause) => {
-              if (
-                runtimeOperationBelongsToCurrentRuntime(
-                  runtimeOperationsRef.current,
-                  token,
-                  runtimeStatusRef.current,
-                )
-              ) {
-                reportRuntimeFault("resize", cause);
-              }
-            },
-          );
-        });
-        const fitter = createTerminalFitter(
-          terminal,
-          fitAddon,
-          () => hostRef.current,
-          (cause) => reportRuntimeFault("attach", cause),
-          () => clearRuntimeFault("attach"),
-        );
-        const frame = requestAnimationFrame(() => {
-          fitter.schedule();
-          if (focusedRef.current && canMoveTerminalFocus()) terminal.focus();
-        });
-        const observer = new ResizeObserver(fitter.schedule);
-        observer.observe(hostRef.current);
-        disposeTerminal = () => {
-          disposed = true;
-          if (outputWriterRef.current === enqueueOutput) outputWriterRef.current = null;
-          output.dispose();
-          cancelAnimationFrame(frame);
-          fitter.dispose();
-          observer.disconnect();
-          sendInput.dispose();
-          sendResize.dispose();
-          detachClipboard();
-          // Detach, never dispose: the emulator and its buffer stay retained for this session so
-          // the pane returns without replaying. releaseTerminal() is the only place that disposes.
-          terminal.element?.remove();
-          terminalRef.current = null;
-        };
-      })
-      .catch((cause: unknown) => {
-        if (disposed) return;
-        terminalAttachFailedRef.current = true;
-        resolvePendingOutput();
-        reportRuntimeFault("attach", cause);
-      });
-
-    return () => {
-      disposed = true;
-      resolvePendingOutput();
-      disposeTerminal?.();
-    };
-  }, [session.id, shouldAttachTerminal]);
+  const { toast, scrollActive, viewport, jumpToBottom, toggleScrollMode, releaseMouse } =
+    useTerminalPaneRuntime({
+      sessionId: session.id,
+      shouldAttachTerminal,
+      locale,
+      hostRef,
+      terminalRef,
+      pendingOutputRef,
+      outputWriterRef,
+      terminalAttachFailedRef,
+      focusedRef,
+      cwdRef,
+      projectRootRef,
+      runtimeStatusRef,
+      runtimeOperationsRef,
+      reportRuntimeFault,
+      clearRuntimeFault,
+      setError,
+    });
 
   useEffect(() => {
     if (!focused || !terminalAttached) return;
@@ -736,6 +578,16 @@ export function SessionTerminal({
         aria-label={t("terminal.liveAria", { session: text(session.title) })}
       >
         <div className="terminal-host" ref={hostRef} />
+        {scrollActive ? (
+          <button type="button" className="terminal-scroll-chip" onClick={toggleScrollMode}>
+            {t("terminal.scrollMode")}
+          </button>
+        ) : viewport.scrolledUp ? (
+          <button type="button" className="terminal-scroll-chip" onClick={jumpToBottom}>
+            {t("terminal.jumpToBottom")}
+          </button>
+        ) : null}
+        <Toast notice={toast} />
       </div>
       <footer className="terminal-pane__footer">
         <span className="live-label">{t("inspector.terminalLive")}</span>
@@ -748,6 +600,16 @@ export function SessionTerminal({
           </span>
         ) : null}
         <span className="terminal-pane__footer-spacer" />
+        {phase === "running" ? (
+          <button
+            type="button"
+            className="terminal-release-mouse"
+            title={t("terminal.releaseMouseHint")}
+            onClick={releaseMouse}
+          >
+            {t("terminal.releaseMouse")}
+          </button>
+        ) : null}
         {phase === "running" ? (
           <button
             className="terminal-stop"
@@ -816,11 +678,4 @@ function sameRuntimeStatus(
     left.fault?.operation === right.fault?.operation &&
     left.fault?.message === right.fault?.message
   );
-}
-
-function canMoveTerminalFocus(): boolean {
-  if (document.querySelector("dialog[open]")) return false;
-  const active = document.activeElement as HTMLElement | null;
-  if (!active || active.classList.contains("xterm-helper-textarea")) return true;
-  return !(active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
 }

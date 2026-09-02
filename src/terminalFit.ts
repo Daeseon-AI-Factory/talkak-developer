@@ -96,3 +96,53 @@ export function createTerminalFitter(
     },
   };
 }
+
+/** How long a drag has to be still before its size is sent to the PTY. */
+export const RESIZE_SETTLE_MS = 120;
+
+export interface ResizeDebouncer {
+  /** Note a new grid; only the size that is still current when the drag settles is sent. */
+  schedule: (cols: number, rows: number) => void;
+  /** Send the pending size now, if any. */
+  flush: () => void;
+  /** Drop the pending size without sending it. */
+  dispose: () => void;
+}
+
+/**
+ * The local fit tracks a divider drag frame by frame — xterm's grid must follow the box — but the
+ * PTY does not need to hear every intermediate grid. Each size sent is a SIGWINCH into the program,
+ * and a full-screen program redraws on each; tens of them in a second leave duplicated lines
+ * mid-drag. One size per settled drag is what the program wants.
+ */
+export function createResizeDebouncer(
+  send: (cols: number, rows: number) => void,
+  settleMs = RESIZE_SETTLE_MS,
+): ResizeDebouncer {
+  let pending: { cols: number; rows: number } | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const clear = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  const flush = () => {
+    clear();
+    const size = pending;
+    pending = null;
+    if (size) send(size.cols, size.rows);
+  };
+
+  return {
+    schedule: (cols, rows) => {
+      pending = { cols, rows };
+      clear();
+      timer = setTimeout(flush, settleMs);
+    },
+    flush,
+    dispose: () => {
+      clear();
+      pending = null;
+    },
+  };
+}

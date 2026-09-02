@@ -20,7 +20,9 @@ export type ShortcutCommandId =
   | "previousPane"
   | "nextPane"
   | `focusPane${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`
-  | "conversation";
+  | "conversation"
+  | "scrollMode"
+  | "jumpToBottom";
 
 export interface ShortcutChord {
   code: string;
@@ -198,6 +200,23 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     scope: "workspace",
     macos: mac("KeyL", "L", { shift: true }),
     windows: windows("KeyL", "L", { alt: true, shift: false }),
+    repeat: false,
+  },
+  // Reading history while a full-screen program owns the mouse (terminalScrollMode.ts). macOS ⌘↑
+  // is free — projects are ⌘⌥↑ there; on Windows Ctrl+Shift+↑ is the project chord, so the page
+  // keys carry it instead.
+  {
+    id: "scrollMode",
+    scope: "workspace",
+    macos: mac("ArrowUp", "↑"),
+    windows: windows("PageUp", "PgUp"),
+    repeat: false,
+  },
+  {
+    id: "jumpToBottom",
+    scope: "workspace",
+    macos: mac("ArrowDown", "↓"),
+    windows: windows("PageDown", "PgDn"),
     repeat: false,
   },
 ] as const;

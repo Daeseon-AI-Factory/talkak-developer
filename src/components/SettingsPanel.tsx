@@ -11,6 +11,7 @@ import {
   effectiveSetting,
   featureSettingIds,
 } from "../settingsModel";
+import { TerminalSettingsSection } from "./TerminalSettingsSection";
 
 interface SettingsPanelProps {
   state: SettingsState;
@@ -123,6 +124,8 @@ export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: Se
           );
         })}
       </div>
+
+      <TerminalSettingsSection />
     </section>
   );
 }

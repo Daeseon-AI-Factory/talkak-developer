@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import { type LiveSession, errorMessage, sessionClient } from "../runtime/sessionClient";
+import { releaseTerminal } from "../terminalInstances";
+import { releaseDetachedTerminalLog } from "../terminalLogInstances";
 
 /**
  * Sessions the broker still holds that no pane in this workspace refers to.
@@ -54,6 +56,10 @@ export function OrphanSessions({ knownSessionIds }: { knownSessionIds: ReadonlyS
       await sessionClient.discard(session.sessionId).catch(() => {
         // A session still draining refuses discard; the kill is what mattered.
       });
+      // An orphan has no pane by definition, but its emulator can still be retained from before
+      // the pane closed; the session is gone from the broker, so nothing should hold it open.
+      releaseTerminal(session.sessionId);
+      releaseDetachedTerminalLog(session.sessionId);
       setError(null);
     } catch (cause: unknown) {
       setError(errorMessage(cause));
