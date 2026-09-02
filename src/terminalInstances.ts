@@ -27,13 +27,24 @@ export function retainedTerminal(sessionId: string): RetainedTerminal | undefine
   return retained.get(sessionId);
 }
 
+/** Every retained emulator, for the CI test hooks that read terminal text through xterm's buffer. */
+export function retainedTerminals(): ReadonlyMap<string, RetainedTerminal> {
+  return retained;
+}
+
 export function retainTerminal(sessionId: string, entry: RetainedTerminal): void {
   retained.set(sessionId, entry);
 }
 
+/**
+ * Record how far into `runId`'s output the retained emulator has been painted. A cursor from
+ * another run is ignored: a write that was already in flight when the session restarted lands in
+ * an emulator that has since been reset for the new run, and must not move the new run's cursor.
+ */
 export function updateRetainedCursor(sessionId: string, runId: number, cursor: number): void {
   const entry = retained.get(sessionId);
   if (!entry) return;
+  if (entry.runId !== null && entry.runId !== runId) return;
   entry.runId = runId;
   entry.cursor = cursor;
 }

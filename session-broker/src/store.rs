@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use crate::runtime::RuntimeError;
 
@@ -66,6 +67,17 @@ pub struct RestorableSession {
 #[derive(Debug, Default)]
 pub struct SessionStore {
     root: Option<PathBuf>,
+    /// Open output logs, one per session. `append_output` runs on the PTY reader thread for every
+    /// chunk the shell produces, AHEAD of the in-memory append the live terminal reads from; when
+    /// it opened, appended, stat-ed and closed the file each time, that was three or four syscalls
+    /// of latency on every burst of output. The handle and its size are kept here instead.
+    open_logs: Mutex<HashMap<String, OpenLog>>,
+}
+
+#[derive(Debug)]
+struct OpenLog {
+    file: fs::File,
+    bytes: u64,
 }
 
 impl SessionStore {
@@ -74,8 +86,11 @@ impl SessionStore {
     pub fn at(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         match fs::create_dir_all(&root) {
-            Ok(()) => Self { root: Some(root) },
-            Err(_) => Self { root: None },
+            Ok(()) => Self {
+                root: Some(root),
+                open_logs: Mutex::default(),
+            },
+            Err(_) => Self::default(),
         }
     }
 
@@ -93,9 +108,16 @@ impl SessionStore {
         let path = entry_path(root, &session.session_id, DEFINITION_EXTENSION);
         write_atomically(&path, &encoded)
             .map_err(|error| RuntimeError::Internal(format!("write session record: {error}")))?;
-        // A fresh run must not inherit the previous run's output.
+        // A fresh run must not inherit the previous run's output — nor its open handle.
+        self.close_log(&session.session_id);
         let _ = fs::remove_file(entry_path(root, &session.session_id, OUTPUT_EXTENSION));
         Ok(())
+    }
+
+    fn close_log(&self, session_id: &str) {
+        if let Ok(mut logs) = self.open_logs.lock() {
+            logs.remove(session_id);
+        }
     }
 
     /// Append output for a session. Errors are swallowed: losing a log line must never break the
@@ -108,14 +130,28 @@ impl SessionStore {
             return;
         }
         let path = entry_path(root, session_id, OUTPUT_EXTENSION);
-        let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        let Ok(mut logs) = self.open_logs.lock() else {
             return;
         };
-        if file.write_all(bytes).is_err() {
+        if !logs.contains_key(session_id) {
+            let Ok(file) = fs::OpenOptions::new().create(true).append(true).open(&path) else {
+                return;
+            };
+            let bytes = file.metadata().map(|meta| meta.len()).unwrap_or(0);
+            logs.insert(session_id.to_owned(), OpenLog { file, bytes });
+        }
+        let Some(log) = logs.get_mut(session_id) else {
+            return;
+        };
+        if log.file.write_all(bytes).is_err() {
+            // The handle is no longer trustworthy; the next chunk reopens the file.
+            logs.remove(session_id);
             return;
         }
-        if file.metadata().map(|meta| meta.len()).unwrap_or(0) > MAX_LOG_BYTES {
-            drop(file);
+        log.bytes += bytes.len() as u64;
+        if log.bytes > MAX_LOG_BYTES {
+            // Rotation rewrites the file under a new inode, so the open handle must go with it.
+            logs.remove(session_id);
             rotate(&path);
         }
     }
@@ -196,6 +232,8 @@ impl SessionStore {
         let Some(root) = self.root.as_deref() else {
             return;
         };
+        // Windows refuses to delete a file something still has open.
+        self.close_log(session_id);
         let _ = fs::remove_file(entry_path(root, session_id, DEFINITION_EXTENSION));
         let _ = fs::remove_file(entry_path(root, session_id, OUTPUT_EXTENSION));
     }

@@ -23,6 +23,8 @@ declare const __TALKAK_WEBDRIVER_CI__: boolean;
 async function renderApplication() {
   if (__TALKAK_WEBDRIVER_CI__) {
     await import("@wdio/tauri-plugin");
+    const { installWebdriverTestHooks } = await import("./webdriverTestHooks");
+    installWebdriverTestHooks();
   }
 
   const root = document.getElementById("root");

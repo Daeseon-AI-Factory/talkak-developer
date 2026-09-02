@@ -13,7 +13,7 @@ const appBinaryPath = resolve(appBinary);
 
 export const config = {
   runner: "local",
-  specs: ["./e2e/macos-product.e2e.mjs"],
+  specs: ["./e2e/macos-product.e2e.mjs", "./e2e/macos-stream.e2e.mjs"],
   maxInstances: 1,
   services: [
     [

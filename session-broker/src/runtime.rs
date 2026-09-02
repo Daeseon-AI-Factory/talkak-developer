@@ -5,8 +5,9 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
+use std::time::{Duration, Instant};
 
 // Exact internal safety limits, not product promises.
 pub const MAX_OUTPUT_BYTES: usize = 1024 * 1024;
@@ -47,11 +48,21 @@ pub struct ReadSessionRequest {
     pub after: u64,
 }
 
+/// Subscribe to a session's output from byte `after` onwards. See `Request::Attach`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachSessionRequest {
+    pub session_id: String,
+    pub after: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WriteSessionRequest {
     pub session_id: String,
     pub run_id: u64,
+    /// A paste can be kilobytes; it crosses as base64 for the same reason output does.
+    #[serde(with = "crate::base64")]
     pub data: Vec<u8>,
 }
 
@@ -87,6 +98,9 @@ pub struct SessionRead {
     pub run_id: u64,
     pub start: u64,
     pub next: u64,
+    /// Raw PTY bytes, base64 on the wire. A JSON number array cost three to four characters per
+    /// byte and a per-number parse, on the one path where every millisecond is felt as typing lag.
+    #[serde(with = "crate::base64")]
     pub bytes: Vec<u8>,
     pub truncated: bool,
     pub running: bool,
@@ -212,7 +226,15 @@ struct SessionProcess {
     child: Mutex<Box<dyn Child + Send + Sync>>,
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
+    /// Paired with `output`. The reader thread signals it after every append and once more when
+    /// the PTY closes, so a streaming client sleeps on it instead of polling on a timer.
+    changed: Arc<Condvar>,
 }
+
+/// How long `wait_read` sleeps between status checks while no output arrives. The child's exit is
+/// observed by `try_wait`, not by the reader thread — on ConPTY the reader can outlive the process
+/// — so an idle wait re-checks on this cadence rather than trusting the condvar alone.
+const WAIT_READ_SLICE: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Default)]
 struct ProcessStatus {
@@ -325,6 +347,7 @@ impl SessionRuntime {
         drop(pair.slave);
 
         let output = Arc::new(Mutex::new(OutputBuffer::default()));
+        let changed = Arc::new(Condvar::new());
         let status = Arc::new(Mutex::new(ProcessStatus {
             running: true,
             ..ProcessStatus::default()
@@ -347,6 +370,7 @@ impl SessionRuntime {
             reader,
             Arc::clone(&output),
             Arc::clone(&status),
+            Arc::clone(&changed),
             Arc::clone(&writer),
             Arc::clone(&self.store),
         ) {
@@ -363,6 +387,7 @@ impl SessionRuntime {
             child: Mutex::new(child),
             output,
             status,
+            changed,
         });
 
         let mut sessions = lock(&self.sessions, "session registry")?;
@@ -388,20 +413,42 @@ impl SessionRuntime {
     pub fn read(&self, request: ReadSessionRequest) -> Result<SessionRead, RuntimeError> {
         let process = self.session(&request.session_id)?;
         process.refresh_status()?;
-        let status = lock(&process.status, "process status")?;
-        let read = lock(&process.output, "output buffer")?.read(request.after);
-        Ok(SessionRead {
-            session_id: process.id.clone(),
-            run_id: process.run_id,
-            start: read.start,
-            next: read.next,
-            bytes: read.bytes,
-            truncated: read.truncated,
-            running: status.running,
-            exit_code: status.exit_code,
-            read_closed: status.read_closed,
-            read_error: status.read_error.clone(),
-        })
+        // Lock order everywhere: output, then status. `wait_read` sleeps holding neither, but
+        // wakes with `output` and then takes `status`; anything taking them the other way would
+        // deadlock against it.
+        let output = lock(&process.output, "output buffer")?;
+        process.assemble_read(&output, request.after)
+    }
+
+    /// `read`, but patient: when nothing is buffered past `after` and the session is still alive,
+    /// block until the reader thread appends more or `timeout` passes, whichever is first. This is
+    /// the primitive behind `Attach` — a streaming connection sits in it instead of a client
+    /// polling on a timer — and it is what makes a keystroke's echo arrive at PTY pace. An
+    /// exited-and-drained session returns at once so a stream can finish; a timeout returns the
+    /// empty read with current status, which the stream forwards as its keepalive.
+    pub fn wait_read(
+        &self,
+        request: ReadSessionRequest,
+        timeout: Duration,
+    ) -> Result<SessionRead, RuntimeError> {
+        let process = self.session(&request.session_id)?;
+        let deadline = Instant::now() + timeout;
+        let mut output = lock(&process.output, "output buffer")?;
+        loop {
+            // The child's exit is seen by try_wait, so look before deciding to sleep.
+            process.refresh_status()?;
+            let read = process.assemble_read(&output, request.after)?;
+            let finished = !read.running && read.read_closed;
+            let now = Instant::now();
+            if !read.bytes.is_empty() || finished || now >= deadline {
+                return Ok(read);
+            }
+            let slice = (deadline - now).min(WAIT_READ_SLICE);
+            output = match process.changed.wait_timeout(output, slice) {
+                Ok((guard, _)) => guard,
+                Err(poisoned) => poisoned.into_inner().0,
+            };
+        }
     }
 
     pub fn write(&self, request: WriteSessionRequest) -> Result<(), RuntimeError> {
@@ -497,6 +544,29 @@ impl SessionRuntime {
 }
 
 impl SessionProcess {
+    /// The bytes past `after` plus the status at that moment. Callers hold the output lock so the
+    /// cursor they are handed is the one the bytes were read at.
+    fn assemble_read(
+        &self,
+        output: &OutputBuffer,
+        after: u64,
+    ) -> Result<SessionRead, RuntimeError> {
+        let read = output.read(after);
+        let status = lock(&self.status, "process status")?;
+        Ok(SessionRead {
+            session_id: self.id.clone(),
+            run_id: self.run_id,
+            start: read.start,
+            next: read.next,
+            bytes: read.bytes,
+            truncated: read.truncated,
+            running: status.running,
+            exit_code: status.exit_code,
+            read_closed: status.read_closed,
+            read_error: status.read_error.clone(),
+        })
+    }
+
     fn close_pty(&self) -> Result<(), RuntimeError> {
         drop(lock(&self.writer, "PTY writer")?.take());
         let Some(master) = lock(&self.master, "PTY master")?.take() else {
@@ -516,6 +586,8 @@ impl SessionProcess {
                 status.exit_code = Some(exit.exit_code());
             }
             self.close_pty()?;
+            // A stream waiting for output must learn about the exit now, not at its next slice.
+            self.changed.notify_all();
         }
         Ok(())
     }
@@ -601,13 +673,10 @@ impl OutputBuffer {
     fn read(&self, after: u64) -> OutputRead {
         let cursor = after.max(self.start).min(self.next);
         let offset = (cursor - self.start) as usize;
-        let bytes = self
-            .bytes
-            .iter()
-            .skip(offset)
-            .take(MAX_READ_BYTES)
-            .copied()
-            .collect::<Vec<_>>();
+        let end = offset.saturating_add(MAX_READ_BYTES).min(self.bytes.len());
+        // `range` walks the deque's two slices directly; `iter().skip(offset)` stepped through
+        // every byte before the cursor on every read of a full buffer.
+        let bytes = self.bytes.range(offset..end).copied().collect::<Vec<_>>();
         OutputRead {
             start: cursor,
             next: cursor.saturating_add(bytes.len() as u64),
@@ -637,6 +706,7 @@ fn spawn_reader_thread(
     mut reader: Box<dyn Read + Send>,
     output: Arc<Mutex<OutputBuffer>>,
     status: Arc<Mutex<ProcessStatus>>,
+    changed: Arc<Condvar>,
     writer: Arc<Mutex<Option<Box<dyn Write + Send>>>>,
     store: Arc<SessionStore>,
 ) -> Result<(), RuntimeError> {
@@ -669,6 +739,7 @@ fn spawn_reader_thread(
                         } else {
                             break;
                         }
+                        changed.notify_all();
                     }
                     Err(error) => {
                         if let Ok(mut current) = status.lock() {
@@ -690,6 +761,8 @@ fn spawn_reader_thread(
             if let Ok(mut current) = status.lock() {
                 current.read_closed = true;
             }
+            // The last wake: whoever is streaming this session gets to send its final frame.
+            changed.notify_all();
         })
         .map(|_| ())
         .map_err(|error| RuntimeError::Internal(format!("failed to start PTY reader: {error}")))

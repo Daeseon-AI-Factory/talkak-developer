@@ -4,7 +4,12 @@ use crate::session_runtime::{
 };
 use tauri::State;
 
-#[tauri::command]
+// Every command here is `async`: with a non-async body that attribute puts the call on the
+// runtime's blocking pool instead of the webview's IPC thread. Each one is a round trip to the
+// broker — a connect, a lockstep exchange, sometimes a wait for a pool slot — and inline on the
+// IPC thread one slow answer held every other pane's keystrokes and resizes behind it.
+
+#[tauri::command(async)]
 pub(crate) fn session_spawn(
     runtime: State<'_, SessionRuntime>,
     request: SpawnSessionRequest,
@@ -12,7 +17,7 @@ pub(crate) fn session_spawn(
     runtime.spawn(request).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_snapshot(
     runtime: State<'_, SessionRuntime>,
     request: SessionIdRequest,
@@ -20,7 +25,7 @@ pub(crate) fn session_snapshot(
     runtime.snapshot(request).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_read(
     runtime: State<'_, SessionRuntime>,
     request: ReadSessionRequest,
@@ -28,7 +33,7 @@ pub(crate) fn session_read(
     runtime.read(request).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_write(
     runtime: State<'_, SessionRuntime>,
     request: WriteSessionRequest,
@@ -36,7 +41,7 @@ pub(crate) fn session_write(
     runtime.write(request).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_resize(
     runtime: State<'_, SessionRuntime>,
     request: ResizeSessionRequest,
@@ -44,7 +49,7 @@ pub(crate) fn session_resize(
     runtime.resize(request).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_kill(
     runtime: State<'_, SessionRuntime>,
     request: RunSessionRequest,
@@ -52,7 +57,7 @@ pub(crate) fn session_kill(
     runtime.kill(request).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_discard(
     runtime: State<'_, SessionRuntime>,
     request: SessionIdRequest,
@@ -62,7 +67,7 @@ pub(crate) fn session_discard(
 
 /// Every session the broker is holding, alive or finished. Sessions outlive the panes that opened
 /// them by design, so without this list a shell could run for days with nothing able to find it.
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn session_live(runtime: State<'_, SessionRuntime>) -> Result<Vec<LiveSession>, String> {
     runtime.live_sessions().map_err(|error| error.to_string())
 }

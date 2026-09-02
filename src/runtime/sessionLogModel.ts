@@ -1,43 +1,20 @@
-import type { SessionClient, SessionRead } from "./sessionClient";
-
 export interface SessionLogCursor {
   runId: number | null;
   after: number;
 }
 
-export interface SessionLogFrame {
-  cursor: SessionLogCursor;
-  bytes: number[];
-  reset: boolean;
-  truncated: boolean;
-  running: boolean;
-  readClosed: boolean;
-  readError: string | null;
-}
-
 export const initialSessionLogCursor: SessionLogCursor = { runId: null, after: 0 };
 
-export async function readSessionLogFrame(
-  client: Pick<SessionClient, "read">,
-  sessionId: string,
-  cursor: SessionLogCursor,
-): Promise<SessionLogFrame> {
-  const first = await client.read(sessionId, cursor.after);
-  if (cursor.runId !== null && first.runId !== cursor.runId) {
-    const replay = await client.read(sessionId, 0);
-    return frameFromRead(replay, true);
+/**
+ * Where a log view should resume for the run the engine currently holds: the retained cursor when
+ * it belongs to that run, byte zero (and a cleared emulator) when the session has started a new one.
+ */
+export function sessionLogResumePoint(
+  retained: SessionLogCursor,
+  currentRunId: number | null,
+): { after: number; reset: boolean } {
+  if (currentRunId === null || retained.runId === null || retained.runId === currentRunId) {
+    return { after: retained.after, reset: false };
   }
-  return frameFromRead(first, false);
-}
-
-function frameFromRead(read: SessionRead, reset: boolean): SessionLogFrame {
-  return {
-    cursor: { runId: read.runId, after: read.next },
-    bytes: read.bytes,
-    reset,
-    truncated: read.truncated,
-    running: read.running,
-    readClosed: read.readClosed,
-    readError: read.readError,
-  };
+  return { after: 0, reset: true };
 }

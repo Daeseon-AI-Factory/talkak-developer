@@ -1,20 +1,27 @@
-//! Transport server: newline-delimited JSON in strict request→response lockstep.
+//! Transport server: newline-delimited JSON in strict request→response lockstep, until a client
+//! sends `Attach` — from then on that connection is a one-way stream of `Output` frames.
 //!
-//! The renderer POLLS `read(after)` — there is no push stream — so every connection is a plain
-//! request/response loop and the named-pipe hazard the original broker had to design around
-//! (a blocking reader starving a concurrent writer on one pipe object) cannot occur: the client
-//! never reads and writes at the same time.
+//! Lockstep connections never read and write at the same time, and a streaming connection is only
+//! ever written to by the broker after the one `Attach` line, so the named-pipe hazard the original
+//! broker had to design around (a blocking reader starving a concurrent writer on one pipe object)
+//! cannot occur on either kind.
 //!
 //! Exit policy: when a connection closes and no child is running, the broker exits. The app
 //! reconnects (or respawns the broker) on its next command, so an empty broker never outlives
 //! its usefulness; one with live sessions survives any number of app restarts.
 
 use crate::protocol::{Request, Response, PROTOCOL_VERSION};
-use crate::runtime::SessionRuntime;
+use crate::runtime::{AttachSessionRequest, ReadSessionRequest, SessionRuntime};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+
+/// How long a stream waits for output before sending a status-only frame. The keepalive is what
+/// lets both sides notice a dead peer: the broker's write fails, and the app's blocking read — with
+/// no timeout at all on a Windows pipe — returns so it can check whether it was cancelled.
+const STREAM_KEEPALIVE: Duration = Duration::from_secs(1);
 
 pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&str>) -> Response {
     fn reply<T>(
@@ -42,6 +49,10 @@ pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&s
         Request::Spawn(spawn) => reply(runtime.spawn(spawn), Response::Snapshot),
         Request::Snapshot(id) => reply(runtime.snapshot(id), Response::MaybeSnapshot),
         Request::Read(read) => reply(runtime.read(read), Response::Read),
+        // Handled by the connection loop, which owns the write half the stream needs.
+        Request::Attach(_) => Response::Error {
+            message: "attach is a connection-level request".into(),
+        },
         Request::Write(write) => reply(runtime.write(write), |()| Response::Unit),
         Request::Resize(resize) => reply(runtime.resize(resize), |()| Response::Unit),
         Request::Kill(run) => reply(runtime.kill(run), Response::Snapshot),
@@ -69,6 +80,15 @@ async fn serve_connection<S>(
             continue;
         }
         let response = match serde_json::from_str::<Request>(&line) {
+            Ok(Request::Attach(attach)) => {
+                crate::logging::log(&format!(
+                    "attach: {} after {}",
+                    attach.session_id, attach.after
+                ));
+                stream_output(&mut write_half, Arc::clone(&runtime), attach).await;
+                // The connection was dedicated to that stream; it ends with it.
+                break;
+            }
             Ok(request) => {
                 if matches!(&request, Request::Shutdown) {
                     shutdown_requested.store(true, Ordering::SeqCst);
@@ -107,17 +127,67 @@ async fn serve_connection<S>(
                 message: format!("bad request: {error}"),
             },
         };
-        let mut encoded = serde_json::to_vec(&response).unwrap_or_else(|error| {
-            // An unencodable reply must surface as an error the client can read, never as a
-            // silently dropped connection.
-            format!(r#"{{"type":"error","body":{{"message":"unencodable response: {error}"}}}}"#)
-                .into_bytes()
-        });
-        encoded.push(b'\n');
-        if write_half.write_all(&encoded).await.is_err() {
+        if write_frame(&mut write_half, &response).await.is_err() {
             break;
         }
-        let _ = write_half.flush().await;
+    }
+}
+
+async fn write_frame<W: AsyncWrite + Unpin>(
+    write_half: &mut W,
+    response: &Response,
+) -> std::io::Result<()> {
+    let mut encoded = serde_json::to_vec(response).unwrap_or_else(|error| {
+        // An unencodable reply must surface as an error the client can read, never as a
+        // silently dropped connection.
+        format!(r#"{{"type":"error","body":{{"message":"unencodable response: {error}"}}}}"#)
+            .into_bytes()
+    });
+    encoded.push(b'\n');
+    write_half.write_all(&encoded).await?;
+    write_half.flush().await
+}
+
+/// Push `Output` frames until the session is exited and drained, it disappears, or the client goes
+/// away. Each turn is one `wait_read` on the blocking pool: it returns the moment the PTY produces
+/// output, or after the keepalive interval with an empty status frame. Frames are written straight
+/// to the connection, so a client that stops reading applies backpressure through the socket, and
+/// a client that closed it fails the next write — which is how this loop ends when a pane detaches.
+async fn stream_output<W: AsyncWrite + Unpin>(
+    write_half: &mut W,
+    runtime: Arc<SessionRuntime>,
+    request: AttachSessionRequest,
+) {
+    let mut after = request.after;
+    loop {
+        let runtime = Arc::clone(&runtime);
+        let session_id = request.session_id.clone();
+        let outcome = tokio::task::spawn_blocking(move || {
+            runtime.wait_read(ReadSessionRequest { session_id, after }, STREAM_KEEPALIVE)
+        })
+        .await;
+        let (response, finished) = match outcome {
+            Ok(Ok(read)) => {
+                after = read.next;
+                let finished = !read.running && read.read_closed && read.bytes.is_empty();
+                (Response::Output(read), finished)
+            }
+            Ok(Err(error)) => (
+                Response::Error {
+                    message: error.to_string(),
+                },
+                true,
+            ),
+            Err(error) => (
+                Response::Error {
+                    message: format!("request failed: {error}"),
+                },
+                true,
+            ),
+        };
+        if write_frame(write_half, &response).await.is_err() || finished {
+            break;
+        }
     }
 }
 

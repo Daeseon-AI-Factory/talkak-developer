@@ -5,6 +5,7 @@ mod clipboard_commands;
 mod project_commands;
 mod session_commands;
 mod session_runtime;
+mod session_stream;
 mod transcript_discovery;
 mod transcript_line_filter;
 mod transcript_selection;
@@ -22,6 +23,7 @@ use session_commands::{
     session_spawn, session_write,
 };
 use session_runtime::SessionRuntime;
+use session_stream::{session_attach, session_detach, SessionStreams};
 use tauri::Manager;
 use transcript_service::{agent_transcript, TranscriptService};
 
@@ -42,7 +44,7 @@ struct HostInfo {
 /// stop (each kill sweeps the session's whole process tree); an empty list is the keep-running
 /// choice — the broker holds the sessions and the next launch reattaches. Individual kill
 /// failures (a run that just exited on its own) must not block quitting.
-#[tauri::command]
+#[tauri::command(async)]
 fn app_quit(
     app: tauri::AppHandle,
     runtime: tauri::State<'_, SessionRuntime>,
@@ -89,11 +91,14 @@ fn windows_build() -> Option<u32> {
 pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // The client of the detached session broker. It outlives the app, so an app restart
             // reattaches still-running sessions exactly as they were left.
             let app_data_dir = app.path().app_data_dir().ok();
             app.manage(SessionRuntime::attach(app_data_dir.clone()));
+            app.manage(SessionStreams::default());
             app.manage(TranscriptService::new(
                 app_data_dir.map(|directory| directory.join("sessions")),
             ));
@@ -119,6 +124,8 @@ pub fn run() {
             session_spawn,
             session_snapshot,
             session_read,
+            session_attach,
+            session_detach,
             session_write,
             session_resize,
             session_kill,

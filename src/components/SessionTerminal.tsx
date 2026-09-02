@@ -23,21 +23,19 @@ import {
   runtimeOperationBelongsToCurrentRuntime,
   runtimeOperationIsCurrent,
 } from "../runtime/runtimeOperationGuard";
-import { ensureSessionStarted, errorMessage, sessionClient } from "../runtime/sessionClient";
+import {
+  type SessionSubscription,
+  ensureSessionStarted,
+  errorMessage,
+  sessionClient,
+} from "../runtime/sessionClient";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
 import {
   type TerminalOutputWriter,
   createTerminalOutputWriter,
 } from "../runtime/terminalOutputWriter";
-import {
-  nextReadDelayMs,
-  partitionTerminalOutput,
-  terminalOutputDrained,
-  terminalPollingEnabled,
-  terminalReadShouldContinue,
-  terminalRuntimePhase,
-} from "../runtime/terminalReplay";
-import { awaitWriteIdle, withWritePriority } from "../runtime/writePriority";
+import { terminalRuntimePhase, terminalStreamEnabled } from "../runtime/terminalReplay";
+import { createTerminalStreamConsumer } from "../runtime/terminalStream";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
 import { attachTerminalClipboard } from "../terminalClipboard";
 import { createTerminalFitter } from "../terminalFit";
@@ -50,8 +48,6 @@ import {
 } from "../terminalInstances";
 import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
 import { ConfirmDialog } from "./ConfirmDialog";
-
-const POLL_INTERVAL_MS = 75;
 
 interface ObservedRuntimeCursor {
   runId: number;
@@ -67,7 +63,6 @@ interface PendingTerminalOutput {
 
 const observedRuntimeCursors = new Map<string, ObservedRuntimeCursor>();
 const runtimeMutationQueue = createRuntimeMutationQueue();
-const terminalReadQueue = createRuntimeMutationQueue();
 const protocolInputSuppressedSessions = new Set<string>();
 
 interface SessionTerminalProps {
@@ -110,9 +105,6 @@ export function SessionTerminal({
   const pendingOutputRef = useRef<PendingTerminalOutput[]>([]);
   const outputWriterRef = useRef<TerminalOutputWriter | null>(null);
   const terminalAttachFailedRef = useRef(false);
-  // Wakes the poll loop right after a write lands, so a keystroke's echo pays one RPC round-trip
-  // instead of waiting out the poll interval — typing latency, not throughput.
-  const pollKickRef = useRef<(() => void) | null>(null);
   const focusedRef = useRef(focused);
   const launchRequestedRef = useRef(session.launchRequested === true);
   const launchHandledRef = useRef(onLaunchHandled);
@@ -164,9 +156,9 @@ export function SessionTerminal({
     setError(storedStatus?.fault?.message ?? null);
     setExitCode(storedStatus?.exitCode ?? null);
     setRestartReady(false);
-    // Restore the retained cursor HERE, synchronously: the poll loop's first read fires before
-    // any async attach work resolves, and a read sent with cursor 0 replays the whole buffer
-    // into an emulator that already shows it — the exact crawl retention exists to remove.
+    // Restore the retained cursor HERE, synchronously: the output stream opens before any async
+    // attach work resolves, and a stream opened at cursor 0 replays the whole buffer into an
+    // emulator that already shows it — the exact crawl retention exists to remove.
     cursorRef.current = retainedTerminal(session.id)?.cursor ?? 0;
     replayThroughRef.current = 0;
     if (!sessionClient.available()) {
@@ -266,7 +258,7 @@ export function SessionTerminal({
           fitAddon = kept.fitAddon;
           hostRef.current.appendChild(kept.terminal.element);
           // The cursor was already restored synchronously at mount; touching it here would race
-          // a poll that has since advanced past it and duplicate the delta.
+          // a stream that has since advanced past it and duplicate the delta.
         } else {
           if (kept) releaseTerminal(session.id);
           terminal = new Terminal({
@@ -280,6 +272,10 @@ export function SessionTerminal({
             // an agent streaming thousands of lines, that is what made scrolling stutter. It needs
             // to come back as a setting for anyone who runs a screen reader, not as a default.
             screenReaderMode: false,
+            // The DOM renderer, deliberately. xterm's WebGL addon is faster, but in this WKWebView
+            // it broke Korean IME composition the moment it attached (the full Talkak app parked it
+            // for exactly that, TerminalPane.tsx there); a terminal that cannot take Hangul is not
+            // faster. Output speed comes from the push transport instead.
             // Tells xterm it is driving a ConPTY. Without it, growing a pane pulls lines back out
             // of scrollback rather than appending blank rows, so content duplicates and the
             // viewport moves under the reader — a Windows-only fault by construction.
@@ -321,14 +317,9 @@ export function SessionTerminal({
             runtimeMutationQueue,
             JSON.stringify([session.id, runId, "write"]),
             async () => {
-              // Polls stand aside for the write: on a single-connection broker a keystroke
-              // otherwise waits behind every background read in flight.
-              await withWritePriority(
-                () => sessionClient.write(session.id, runId, bytes),
-                session.id,
-              );
-              // The echo is already in the engine buffer; read it now, not a poll tick later.
-              pollKickRef.current?.();
+              // The echo comes back on the output stream the moment the shell writes it; nothing
+              // here has to go and fetch it.
+              await sessionClient.write(session.id, runId, bytes);
             },
             (cause) => {
               if (
@@ -442,104 +433,77 @@ export function SessionTerminal({
   }, [focused, terminalAttached]);
 
   useEffect(() => {
-    if (!terminalPollingEnabled(phase, background)) return;
+    if (!terminalStreamEnabled(phase, background)) return;
     let cancelled = false;
-    let timer: number | undefined;
-    let inFlight = false;
-    let kicked = false;
-    const pollEpoch = runtimeOperationsRef.current.epoch;
+    let subscription: SessionSubscription | null = null;
+    const streamEpoch = runtimeOperationsRef.current.epoch;
+    const streamIsCurrent = () => !cancelled && runtimeOperationsRef.current.epoch === streamEpoch;
 
-    const pollIsCurrent = () => !cancelled && runtimeOperationsRef.current.epoch === pollEpoch;
+    const consumer = createTerminalStreamConsumer({
+      commit: async ({ runId, next, bytes, suppressProtocolInput }) => {
+        if (runtimeStatusRef.current?.runId !== runId) return false;
+        // Bytes the emulator already holds are skipped, not repainted. A stream is opened at the
+        // cursor known when the effect ran, and a write submitted by the previous mount can still
+        // land after that and move the cursor past the stream's start.
+        const alreadyIn = Math.max(0, cursorRef.current - (next - bytes.length));
+        const fresh = alreadyIn >= bytes.length ? new Uint8Array(0) : bytes.subarray(alreadyIn);
+        if (fresh.length > 0 && !(await writeOutput(fresh, suppressProtocolInput))) return false;
+        return recordReadCursor(runId, Math.max(next, cursorRef.current));
+      },
+      truncatedMarker: () => new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`),
+      replayThrough: (frame) =>
+        frame.running ? replayThroughRef.current : Number.POSITIVE_INFINITY,
+      status: (frame) => {
+        if (!streamIsCurrent()) return;
+        setRestartReady(!frame.running && frame.readClosed);
+        const previous = currentRuntimeStatus(phase);
+        const fault = frame.error
+          ? { operation: "read" as const, message: frame.error }
+          : previous.fault?.operation === "read"
+            ? null
+            : previous.fault;
+        const nextPhase = terminalRuntimePhase(previous.phase, frame.running, frame.error);
+        reportRuntimeStatus("runtime-event", {
+          phase: nextPhase,
+          runId: frame.runId,
+          exitCode: frame.exitCode,
+          termination: !frame.running
+            ? (previous.termination ?? "observed-exit")
+            : nextPhase === "stopping"
+              ? "requested-stop"
+              : null,
+          fault,
+        });
+      },
+    });
 
-    const poll = async () => {
-      if (!pollIsCurrent() || inFlight) return;
-      // A write is more urgent than this read, and on a single-connection broker they compete
-      // for the same wire.
-      await awaitWriteIdle(session.id);
-      if (!pollIsCurrent() || inFlight) return;
-      inFlight = true;
-      try {
-        await enqueueRuntimeMutation(
-          terminalReadQueue,
-          session.id,
-          async () => {
-            if (!pollIsCurrent()) return;
-            syncObservedReadCursor();
-            const read = await sessionClient.read(session.id, cursorRef.current);
-            if (!pollIsCurrent()) return;
-            if (read.truncated) {
-              const markerWritten = await writeOutput(
-                new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`),
-                true,
-              );
-              if (!markerWritten || !recordReadCursor(read.runId, read.start) || !pollIsCurrent()) {
-                return;
-              }
-            }
-            const output = Uint8Array.from(read.bytes);
-            const replayThrough = read.running
-              ? replayThroughRef.current
-              : Number.POSITIVE_INFINITY;
-            let writtenThrough = read.start;
-            for (const chunk of partitionTerminalOutput(output, read.start, replayThrough)) {
-              if (!pollIsCurrent()) return;
-              const written = await writeOutput(chunk.bytes, chunk.suppressProtocolInput);
-              if (!written) return;
-              writtenThrough += chunk.bytes.length;
-              if (!recordReadCursor(read.runId, writtenThrough) || !pollIsCurrent()) return;
-            }
-            if (!recordReadCursor(read.runId, read.next)) return;
-            setRestartReady(terminalOutputDrained(read.running, read.bytes.length));
-            const previous = currentRuntimeStatus(phase);
-            const fault = read.readError
-              ? { operation: "read" as const, message: read.readError }
-              : previous.fault?.operation === "read"
-                ? null
-                : previous.fault;
-            const nextPhase = terminalRuntimePhase(previous.phase, read.running, read.readError);
-            reportRuntimeStatus("runtime-event", {
-              phase: nextPhase,
-              runId: read.runId,
-              exitCode: read.exitCode,
-              termination: !read.running
-                ? (previous.termination ?? "observed-exit")
-                : nextPhase === "stopping"
-                  ? "requested-stop"
-                  : null,
-              fault,
-            });
-            if (terminalReadShouldContinue(read.running, read.readClosed, read.bytes.length)) {
-              const delay = kicked
-                ? 0
-                : nextReadDelayMs(read.running, read.bytes.length, POLL_INTERVAL_MS);
-              kicked = false;
-              timer = window.setTimeout(poll, delay);
-            }
-          },
-          (cause) => {
-            if (pollIsCurrent()) reportRuntimeFault("read", cause, "error");
-          },
-        );
-      } finally {
-        inFlight = false;
-      }
-    };
+    syncObservedReadCursor();
+    void sessionClient
+      .attach(session.id, cursorRef.current, (frame) => {
+        if (!streamIsCurrent()) return;
+        if (frame.runId === 0 && frame.ended) {
+          // The stream itself failed — broker gone, session vanished — so there is no run to
+          // commit against; the pane shows the transport's reason instead of going quiet.
+          reportRuntimeFault("read", new Error(frame.error ?? "session stream ended"), "error");
+          return;
+        }
+        void consumer.push(frame);
+      })
+      .then((opened) => {
+        if (streamIsCurrent()) {
+          subscription = opened;
+        } else {
+          void opened.detach();
+        }
+      })
+      .catch((cause: unknown) => {
+        if (streamIsCurrent()) reportRuntimeFault("read", cause, "error");
+      });
 
-    pollKickRef.current = () => {
-      if (!pollIsCurrent()) return;
-      if (inFlight) {
-        kicked = true;
-        return;
-      }
-      if (timer !== undefined) window.clearTimeout(timer);
-      void poll();
-    };
-
-    void poll();
     return () => {
       cancelled = true;
-      if (pollKickRef.current) pollKickRef.current = null;
-      if (timer !== undefined) window.clearTimeout(timer);
+      consumer.stop();
+      if (subscription) void subscription.detach();
     };
   }, [background, phase, session.id, t]);
 

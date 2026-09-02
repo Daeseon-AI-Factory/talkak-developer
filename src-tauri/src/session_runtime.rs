@@ -7,8 +7,8 @@
 //! named pipe) as newline-delimited JSON in strict request→response lockstep.
 
 pub(crate) use session_broker::runtime::{
-    LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
-    SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+    AttachSessionRequest, LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest,
+    SessionIdRequest, SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 use session_broker::{Request, Response, PROTOCOL_VERSION};
 use std::fmt;
@@ -167,6 +167,23 @@ impl SessionRuntime {
             Response::Sessions(sessions) => Ok(sessions),
             other => Err(unexpected(other)),
         }
+    }
+
+    /// Open a DEDICATED connection and turn it into an output stream for one session. It is not a
+    /// pool member: the pool speaks lockstep, and this connection is read-only from here on — on a
+    /// Windows named pipe a read blocked on one file object while another thread writes it is a
+    /// deadlock, which is exactly why the stream never shares a handle with a request.
+    pub(crate) fn subscribe(&self, request: AttachSessionRequest) -> BrokerResult<SessionStream> {
+        let mut connection = self.establish()?;
+        let mut line = serde_json::to_vec(&Request::Attach(request))
+            .map_err(|error| BrokerError(format!("encode attach: {error}")))?;
+        line.push(b'\n');
+        connection
+            .writer
+            .write_all(&line)
+            .and_then(|()| connection.writer.flush())
+            .map_err(|error| BrokerError(format!("broker connection failed: {error}")))?;
+        Ok(SessionStream { connection })
     }
 
     /// One lockstep exchange on a connection checked out of the pool. A broken connection is
@@ -391,6 +408,60 @@ impl SessionRuntime {
         }
         prune_superseded_brokers(&broker_dir, &destination);
         Some(destination)
+    }
+}
+
+/// A connection that has sent `Attach` and now only reads the broker's `Output` frames.
+pub(crate) struct SessionStream {
+    connection: Connection,
+}
+
+impl SessionStream {
+    /// The next frame, blocking. The broker sends a status frame at least once a second while
+    /// idle, so on unix the socket's five-second read timeout only trips when the broker is gone.
+    pub(crate) fn next(&mut self) -> std::io::Result<Response> {
+        let mut line = String::new();
+        let read = self.connection.reader.read_line(&mut line)?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "broker closed the stream",
+            ));
+        }
+        serde_json::from_str(&line).map_err(std::io::Error::other)
+    }
+
+    /// A handle that can end the stream from another thread.
+    pub(crate) fn canceller(&self) -> Option<StreamCanceller> {
+        #[cfg(unix)]
+        {
+            self.connection
+                .writer
+                .try_clone()
+                .ok()
+                .map(|stream| StreamCanceller { stream })
+        }
+        #[cfg(windows)]
+        {
+            Some(StreamCanceller {})
+        }
+    }
+}
+
+/// Ends a stream's blocking read. On unix, shutting the socket down returns the read at once. A
+/// Windows pipe handle has no such switch; the worker thread instead sees its cancel flag when
+/// the broker's next keepalive frame arrives, at most a second later.
+pub(crate) struct StreamCanceller {
+    #[cfg(unix)]
+    stream: Stream,
+}
+
+impl StreamCanceller {
+    pub(crate) fn cancel(self) {
+        #[cfg(unix)]
+        {
+            let _ = self.stream.shutdown(std::net::Shutdown::Both);
+        }
     }
 }
 

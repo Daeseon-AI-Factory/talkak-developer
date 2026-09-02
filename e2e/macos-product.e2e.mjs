@@ -100,9 +100,8 @@ async function stopRunningSession() {
 }
 
 async function terminalText() {
-  const rows = await $$('[data-testid="live-terminal"] .xterm-rows');
-  const text = await rows.map((row) => row.getText());
-  return text.join("\n");
+  const lines = await browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
+  return lines.join("\n");
 }
 
 async function invokeApp(command, args = {}) {

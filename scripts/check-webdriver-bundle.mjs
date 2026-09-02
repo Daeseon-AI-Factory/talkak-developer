@@ -13,7 +13,7 @@ const javascript = readdirSync(assetsDirectory)
   .filter((name) => name.endsWith(".js"))
   .map((name) => readFileSync(resolve(assetsDirectory, name), "utf8"))
   .join("\n");
-const markers = ["__wdio_original_core__", "WDIO Tauri Plugin"];
+const markers = ["__wdio_original_core__", "WDIO Tauri Plugin", "__talkakTest"];
 const included = markers.every((marker) => javascript.includes(marker));
 
 if ((expected === "present") !== included) {

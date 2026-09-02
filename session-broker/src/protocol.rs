@@ -5,8 +5,8 @@
 //! the process boundary without translation — the app client forwards, the broker executes.
 
 use crate::runtime::{
-    LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
-    SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
+    AttachSessionRequest, LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest,
+    SessionIdRequest, SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
 use crate::store::RestorableSession;
 use serde::{Deserialize, Serialize};
@@ -20,7 +20,9 @@ use serde::{Deserialize, Serialize};
 /// it believed was there.
 ///
 /// 2: added `Sessions` / `Response::Sessions`, and `concurrent` on the Hello response.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// 3: output bytes cross as base64 strings, not JSON number arrays; added `Attach`, which turns a
+///    connection into a push stream of `Output` frames so the renderer no longer polls.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 // Adjacent tagging: internal tagging cannot represent variants whose payload is not a map
 // (Option, Vec, bool) — serialization fails at runtime, which read as a dropped connection.
@@ -35,6 +37,13 @@ pub enum Request {
     Spawn(SpawnSessionRequest),
     Snapshot(SessionIdRequest),
     Read(ReadSessionRequest),
+    /// Turn THIS connection into an output stream: the broker replays from `after`, then pushes an
+    /// `Output` frame whenever the PTY produces more, a status-only frame at least once a second
+    /// while idle (so a dead client is noticed and the status stays fresh), and a final frame with
+    /// `running=false, read_closed=true` before closing. The client must not send anything else on
+    /// the connection afterwards — on a Windows named pipe a concurrent read and write on one file
+    /// object deadlock.
+    Attach(AttachSessionRequest),
     Write(WriteSessionRequest),
     Resize(ResizeSessionRequest),
     Kill(RunSessionRequest),
@@ -66,6 +75,9 @@ pub enum Response {
     Snapshot(SessionSnapshot),
     MaybeSnapshot(Option<SessionSnapshot>),
     Read(SessionRead),
+    /// One streamed frame after `Attach`. Same shape as a `Read` answer; `bytes` may be empty when
+    /// the frame only carries status.
+    Output(SessionRead),
     Restorable(Vec<RestorableSession>),
     Sessions(Vec<LiveSession>),
     Bytes(Vec<u8>),

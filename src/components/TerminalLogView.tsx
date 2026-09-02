@@ -2,10 +2,10 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../i18n";
 import { platformFromUserAgent } from "../platform";
-import { errorMessage, sessionClient } from "../runtime/sessionClient";
-import { readSessionLogFrame } from "../runtime/sessionLogModel";
+import { type SessionSubscription, errorMessage, sessionClient } from "../runtime/sessionClient";
+import { sessionLogResumePoint } from "../runtime/sessionLogModel";
 import { createTerminalOutputWriter } from "../runtime/terminalOutputWriter";
-import { nextReadDelayMs, terminalReadShouldContinue } from "../runtime/terminalReplay";
+import { createTerminalStreamConsumer } from "../runtime/terminalStream";
 import { attachTerminalClipboard } from "../terminalClipboard";
 import { createTerminalFitter } from "../terminalFit";
 import {
@@ -16,10 +16,6 @@ import {
   waitForRetainedTerminalLogCommit,
 } from "../terminalLogInstances";
 import { TERMINAL_FONT_FAMILY, TERMINAL_THEME } from "../terminalTheme";
-
-// Exact internal polling intervals, not product latency guarantees.
-const LOG_LIVE_POLL_MS = 200;
-const LOG_IDLE_POLL_MS = 750;
 
 type TerminalLogPhase = "loading" | "running" | "exited" | "waiting" | "unavailable";
 
@@ -46,14 +42,13 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
     }
 
     let disposed = false;
-    let timer: number | undefined;
     let disposeTerminal: (() => void) | undefined;
     setPhase("loading");
 
     void Promise.all([import("@xterm/xterm"), import("@xterm/addon-fit")])
       .then(async ([{ Terminal }, { FitAddon }]) => {
         // A previous mount may have detached while xterm was still parsing its final chunk. Its
-        // cursor is committed with that write; wait before reattaching or issuing another read.
+        // cursor is committed with that write; wait before reattaching or opening a new stream.
         await waitForRetainedTerminalLogCommit(sessionId);
         if (disposed || !hostRef.current) return;
         const kept = retainedTerminalLog(sessionId);
@@ -110,52 +105,59 @@ export function TerminalLogView({ sessionId, currentRunId = null }: TerminalLogV
         const observer = new ResizeObserver(fitter.schedule);
         observer.observe(hostRef.current);
 
-        const poll = async () => {
-          try {
-            await waitForRetainedTerminalLogCommit(sessionId);
+        const retained = retainedTerminalLog(sessionId);
+        if (!retained) return;
+        // A new run of the same session id starts a fresh log; the retained cursor belongs to
+        // the old one.
+        const resume = sessionLogResumePoint(retained.cursor, currentRunId);
+        if (resume.reset) {
+          terminal.reset();
+          retained.cursor = { runId: currentRunId, after: 0 };
+          retained.truncated = false;
+          setTruncated(false);
+        }
+        let truncatedSeen = retained.truncated;
+        let subscription: SessionSubscription | null = null;
+        const consumer = createTerminalStreamConsumer({
+          commit: ({ runId, next, bytes }) =>
+            commitRetainedTerminalLogFrame(sessionId, { runId, after: next }, truncatedSeen, () =>
+              bytes.length > 0 ? output.write(bytes, false) : Promise.resolve(true),
+            ),
+          // The gap is announced above the log, not painted into it.
+          truncatedMarker: () => new Uint8Array(0),
+          // Read-only: xterm never answers a query here, so nothing needs suppressing.
+          replayThrough: () => 0,
+          status: (frame) => {
             if (disposed) return;
-            const retained = retainedTerminalLog(sessionId);
-            if (!retained) return;
-            const next = await readSessionLogFrame(sessionClient, sessionId, retained.cursor);
+            setTruncated(truncatedSeen);
+            setError(frame.error);
+            setPhase(frame.running ? "running" : "exited");
+          },
+        });
+        void sessionClient
+          .attach(sessionId, resume.after, (frame) => {
             if (disposed) return;
-            if (next.reset) {
-              terminal.reset();
-            }
-            const retainedTruncated = next.reset
-              ? next.truncated
-              : retained.truncated || next.truncated;
-            const committed = await commitRetainedTerminalLogFrame(
-              sessionId,
-              next.cursor,
-              retainedTruncated,
-              () =>
-                next.bytes.length > 0
-                  ? output.write(Uint8Array.from(next.bytes), false)
-                  : Promise.resolve(true),
-            );
-            if (!committed) return;
-            if (disposed) return;
-            setTruncated(retainedTruncated);
-            setError(next.readError);
-            setPhase(next.running ? "running" : "exited");
-            if (!terminalReadShouldContinue(next.running, next.readClosed, next.bytes.length)) {
+            if (frame.runId === 0 && frame.ended) {
+              setError(frame.error);
+              setPhase("waiting");
               return;
             }
-            timer = window.setTimeout(
-              () => void poll(),
-              nextReadDelayMs(next.running, next.bytes.length, LOG_LIVE_POLL_MS),
-            );
-          } catch (cause: unknown) {
+            if (frame.truncated) truncatedSeen = true;
+            void consumer.push(frame);
+          })
+          .then((opened) => {
+            if (disposed) void opened.detach();
+            else subscription = opened;
+          })
+          .catch((cause: unknown) => {
             if (disposed) return;
             setError(errorMessage(cause));
             setPhase("waiting");
-            timer = window.setTimeout(() => void poll(), LOG_IDLE_POLL_MS);
-          }
-        };
-        void poll();
+          });
 
         disposeTerminal = () => {
-          if (timer !== undefined) window.clearTimeout(timer);
+          consumer.stop();
+          if (subscription) void subscription.detach();
           output.dispose();
           cancelAnimationFrame(frame);
           fitter.dispose();

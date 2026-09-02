@@ -2,9 +2,10 @@
 //! binary must exist in session-broker/target/{debug,release}; CI builds it before these tests.
 
 use crate::session_runtime::{
-    ReadSessionRequest, RunSessionRequest, SessionIdRequest, SessionRuntime, SpawnSessionRequest,
-    WriteSessionRequest,
+    AttachSessionRequest, ReadSessionRequest, RunSessionRequest, SessionIdRequest, SessionRuntime,
+    SpawnSessionRequest, WriteSessionRequest,
 };
+use session_broker::Response;
 use std::time::{Duration, Instant};
 
 fn unique_endpoint(tag: &str) -> String {
@@ -182,4 +183,77 @@ fn a_second_client_adopts_the_broker_and_finds_the_first_clients_session() {
         })
         .expect("cleanup kill");
     assert!(!stopped.running);
+}
+
+/// The push path through the app-side client: a dedicated stream connection delivers output the
+/// PTY produces after a write on a pooled connection, with no read request in between.
+#[test]
+fn a_subscribed_stream_delivers_live_output_and_ends_when_the_run_exits() {
+    let data = tempfile::tempdir().expect("data dir");
+    let runtime =
+        SessionRuntime::at_endpoint(unique_endpoint("stream"), Some(data.path().to_path_buf()));
+    let cwd = std::env::current_dir().expect("cwd");
+    let (command, args) = long_lived();
+    let spawned = runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "client-stream".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command,
+            args,
+            cols: 80,
+            rows: 24,
+        })
+        .expect("spawn through the broker");
+
+    let mut stream = runtime
+        .subscribe(AttachSessionRequest {
+            session_id: "client-stream".into(),
+            after: 0,
+        })
+        .expect("attach through the broker");
+    runtime
+        .write(WriteSessionRequest {
+            session_id: "client-stream".into(),
+            run_id: spawned.run_id,
+            data: b"echo talkak-stream-marker\r\n".to_vec(),
+        })
+        .expect("write through the broker");
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut collected = Vec::new();
+    let mut cursor = 0;
+    while !String::from_utf8_lossy(&collected).contains("talkak-stream-marker") {
+        assert!(
+            Instant::now() < deadline,
+            "the stream never carried the marker"
+        );
+        match stream.next().expect("a frame") {
+            Response::Output(read) => {
+                assert_eq!(read.run_id, spawned.run_id);
+                assert_eq!(read.start, cursor, "frames must be contiguous");
+                cursor = read.next;
+                collected.extend(read.bytes);
+            }
+            other => panic!("unexpected frame: {other:?}"),
+        }
+    }
+
+    runtime
+        .kill(RunSessionRequest {
+            session_id: "client-stream".into(),
+            run_id: spawned.run_id,
+        })
+        .expect("kill through the broker");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        assert!(Instant::now() < deadline, "the stream never finished");
+        match stream.next() {
+            Ok(Response::Output(read)) if !read.running && read.read_closed => break,
+            Ok(Response::Output(_)) => continue,
+            Ok(other) => panic!("unexpected frame after kill: {other:?}"),
+            Err(error) => panic!("the stream broke before its final frame: {error}"),
+        }
+    }
+    // The broker closes the connection after the final frame.
+    assert!(stream.next().is_err());
 }

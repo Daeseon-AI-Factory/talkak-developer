@@ -1,13 +1,9 @@
 import { Terminal } from "@xterm/xterm";
 import { describe, expect, it } from "vitest";
 import {
-  FULL_READ_CHUNK_BYTES,
-  nextReadDelayMs,
   partitionTerminalOutput,
-  terminalOutputDrained,
-  terminalPollingEnabled,
-  terminalReadShouldContinue,
   terminalRuntimePhase,
+  terminalStreamEnabled,
 } from "./terminalReplay";
 
 describe("xterm protocol handling", () => {
@@ -45,12 +41,29 @@ describe("xterm protocol handling", () => {
     terminal.dispose();
   });
 
-  it("replays exited foreground sessions without keeping exited background emulators alive", () => {
-    expect(terminalPollingEnabled("running", true)).toBe(true);
-    expect(terminalPollingEnabled("stopping", true)).toBe(true);
-    expect(terminalPollingEnabled("exited", false)).toBe(true);
-    expect(terminalPollingEnabled("exited", true)).toBe(false);
-    expect(terminalPollingEnabled("idle", false)).toBe(false);
+  it("partitions a frame that straddles the replay boundary without copying", () => {
+    const bytes = new TextEncoder().encode("abcdef");
+    const [history, fresh] = partitionTerminalOutput(bytes, 100, 103);
+    expect(new TextDecoder().decode(history?.bytes)).toBe("abc");
+    expect(history?.suppressProtocolInput).toBe(true);
+    expect(new TextDecoder().decode(fresh?.bytes)).toBe("def");
+    expect(fresh?.suppressProtocolInput).toBe(false);
+    expect(fresh?.bytes.buffer).toBe(bytes.buffer);
+    expect(partitionTerminalOutput(bytes, 100, 100)).toEqual([
+      { bytes, suppressProtocolInput: false },
+    ]);
+    expect(partitionTerminalOutput(bytes, 100, 900)).toEqual([
+      { bytes, suppressProtocolInput: true },
+    ]);
+    expect(partitionTerminalOutput(new Uint8Array(0), 0, 0)).toEqual([]);
+  });
+
+  it("streams exited foreground sessions without keeping exited background emulators alive", () => {
+    expect(terminalStreamEnabled("running", true)).toBe(true);
+    expect(terminalStreamEnabled("stopping", true)).toBe(true);
+    expect(terminalStreamEnabled("exited", false)).toBe(true);
+    expect(terminalStreamEnabled("exited", true)).toBe(false);
+    expect(terminalStreamEnabled("idle", false)).toBe(false);
   });
 
   it("separates process exit from output-reader drain completion", () => {
@@ -58,43 +71,5 @@ describe("xterm protocol handling", () => {
     expect(terminalRuntimePhase("stopping", false, null)).toBe("exited");
     expect(terminalRuntimePhase("stopping", true, null)).toBe("stopping");
     expect(terminalRuntimePhase("running", true, "reader failed")).toBe("error");
-
-    expect(terminalReadShouldContinue(false, false, 0)).toBe(true);
-    expect(terminalReadShouldContinue(false, true, 1)).toBe(true);
-    expect(terminalReadShouldContinue(false, true, 0)).toBe(false);
-    expect(terminalReadShouldContinue(true, false, 0)).toBe(true);
-    expect(terminalOutputDrained(false, 0)).toBe(true);
-    expect(terminalOutputDrained(false, 1)).toBe(false);
-    expect(terminalOutputDrained(true, 0)).toBe(false);
-  });
-});
-
-describe("read pacing", () => {
-  it("drains a backlog at RPC pace: a full chunk means the buffer holds more", () => {
-    expect(nextReadDelayMs(true, FULL_READ_CHUNK_BYTES, 75)).toBe(0);
-    expect(nextReadDelayMs(true, FULL_READ_CHUNK_BYTES + 1, 75)).toBe(0);
-  });
-
-  it("adds no poll delay while draining a finished one-megabyte terminal log", () => {
-    let remaining = 1024 * 1024;
-    let accumulatedDelay = 0;
-    while (remaining > 0) {
-      const bytesLength = Math.min(remaining, FULL_READ_CHUNK_BYTES);
-      accumulatedDelay += nextReadDelayMs(false, bytesLength, 200);
-      remaining -= bytesLength;
-    }
-
-    expect(accumulatedDelay).toBe(0);
-    expect(terminalReadShouldContinue(false, true, 0)).toBe(false);
-  });
-
-  it("returns to poll pace once caught up on a live session", () => {
-    expect(nextReadDelayMs(true, 120, 75)).toBe(75);
-    expect(nextReadDelayMs(true, 0, 75)).toBe(75);
-  });
-
-  it("keeps draining a finished session immediately while bytes remain", () => {
-    expect(nextReadDelayMs(false, 120, 75)).toBe(0);
-    expect(nextReadDelayMs(false, 0, 75)).toBe(75);
   });
 });

@@ -86,13 +86,10 @@ describe("installed Windows product path", () => {
     const terminalLog = await $('[data-testid="terminal-log-view"]');
     await terminalLog.waitForExist();
     await (await terminalLog.$('[data-phase="exited"]')).waitForExist({ timeout: 20_000 });
-    await browser.waitUntil(
-      async () => (await terminalLogText(terminalLog)).includes(windowsIdentity),
-      {
-        timeout: 20_000,
-        timeoutMsg: "Terminal log did not retain the current Windows identity",
-      },
-    );
+    await browser.waitUntil(async () => (await terminalLogText()).includes(windowsIdentity), {
+      timeout: 20_000,
+      timeoutMsg: "Terminal log did not retain the current Windows identity",
+    });
 
     await (await $$('[data-testid="page-tab"]'))[0].click();
     await waitForRunningTerminalCount(2);
@@ -156,15 +153,13 @@ async function exitVisibleSession() {
 }
 
 async function terminalText() {
-  const rows = await $$('[data-testid="live-terminal"] .xterm-rows');
-  const text = await rows.map((row) => row.getText());
-  return text.join("\n");
+  const lines = await browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
+  return lines.join("\n");
 }
 
-async function terminalLogText(terminalLog) {
-  const rows = await terminalLog.$$(".terminal-log__host .xterm-rows");
-  const text = await rows.map((row) => row.getText());
-  return text.join("\n");
+async function terminalLogText() {
+  const lines = await browser.execute(() => window.__talkakTest?.terminalLogLines() ?? []);
+  return lines.join("\n");
 }
 
 async function typeTerminalCommand(command) {

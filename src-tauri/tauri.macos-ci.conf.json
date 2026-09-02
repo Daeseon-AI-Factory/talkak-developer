@@ -15,7 +15,9 @@
             "core:default",
             "dialog:allow-open",
             "wdio:default",
-            "wdio-webdriver:default"
+            "wdio-webdriver:default",
+            "notification:default",
+            "opener:default"
           ]
         }
       ]

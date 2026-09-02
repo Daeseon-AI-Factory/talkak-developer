@@ -20,6 +20,11 @@ export function retainedTerminalLog(sessionId: string): RetainedTerminalLog | un
   return retained.get(sessionId);
 }
 
+/** Every retained log emulator, for the CI test hooks. */
+export function retainedTerminalLogs(): ReadonlyMap<string, RetainedTerminalLog> {
+  return retained;
+}
+
 export function retainTerminalLog(sessionId: string, entry: RetainedTerminalLog): void {
   retained.set(sessionId, entry);
   pendingCommits.set(sessionId, Promise.resolve());

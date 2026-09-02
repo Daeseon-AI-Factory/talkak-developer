@@ -3,6 +3,15 @@ import { Key } from "webdriverio";
 
 const copiedLines = ["talkakcopylineone", "talkakcopylinetwo", "talkakcopylinethree"];
 
+/**
+ * Pastes a command that prints three known lines, drags the pointer across them, and checks the
+ * auto-copy put exactly those lines on the native clipboard.
+ *
+ * Reads the emulator through the CI test hooks (`window.__talkakTest`), never through `.xterm-rows`:
+ * those elements are the DOM renderer's private layout, one WebDriver round-trip per row to read,
+ * and gone the day the renderer changes. Row positions come from the terminal's cell geometry; the
+ * selection from xterm itself.
+ */
 export async function verifyMultilineDragAutoCopy({
   command,
   pasteChord,
@@ -33,21 +42,18 @@ export async function verifyMultilineDragAutoCopy({
     const drag = await dragAcrossVisibleTerminalLines();
     let selectionWaitError = null;
     try {
-      await browser.waitUntil(
-        async () => (await terminalDragSnapshot(drag)).selectionRects.length > 0,
-        {
-          timeout: 2_000,
-          interval: 50,
-          timeoutMsg: "The pointer drag did not create an xterm selection",
-        },
-      );
+      await browser.waitUntil(async () => (await terminalDragSnapshot(drag)).selection.length > 0, {
+        timeout: 2_000,
+        interval: 50,
+        timeoutMsg: "The pointer drag did not create an xterm selection",
+      });
     } catch (error) {
       selectionWaitError = String(error);
     }
 
     const selectionSnapshot = await terminalDragSnapshot(drag);
     assert.ok(
-      selectionSnapshot.selectionRects.length > 0,
+      selectionSnapshot.selection.length > 0,
       `The WebDriver pointer drag never reached xterm selection: ${JSON.stringify({
         drag,
         selectionSnapshot,
@@ -80,14 +86,14 @@ export async function verifyMultilineDragAutoCopy({
   }
 }
 
+async function terminalLines() {
+  return browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
+}
+
 async function waitForVisibleTerminalLines() {
   await browser.waitUntil(
     async () => {
-      const visible = await browser.execute(() =>
-        [...document.querySelectorAll('[data-testid="live-terminal"] .xterm-rows > div')].map(
-          (row) => row.textContent?.trimEnd() ?? "",
-        ),
-      );
+      const visible = (await terminalLines()).map((line) => line.trimEnd());
       return copiedLines.every((line) => visible.includes(line));
     },
     { timeout: 20_000, timeoutMsg: "The PTY did not render the multiline copy probe" },
@@ -96,29 +102,28 @@ async function waitForVisibleTerminalLines() {
 
 async function dragAcrossVisibleTerminalLines() {
   const drag = await browser.execute((expectedLines) => {
-    const terminal = document.querySelector('[data-testid="live-terminal"]');
-    const screen = terminal?.querySelector(".xterm-screen");
-    const measure = terminal?.querySelector(".xterm-char-measure-element");
-    const rows = [...(terminal?.querySelectorAll(".xterm-rows > div") ?? [])];
+    const hooks = window.__talkakTest;
+    const geometry = hooks?.liveTerminalGeometry();
+    const lines = hooks?.liveTerminalLines() ?? [];
+    if (!geometry) return null;
     const indexes = expectedLines.map((line) =>
-      rows.findIndex((row) => row.textContent?.trimEnd() === line),
+      lines.findIndex((candidate) => candidate.trimEnd() === line),
     );
-    if (!screen || !measure || indexes.some((index) => index < 0)) return null;
+    if (indexes.some((index) => index < 0)) return null;
     if (indexes.some((index, offset) => offset > 0 && index !== indexes[0] + offset)) return null;
+    // Absolute buffer lines → viewport rows; all three must be on screen to be dragged across.
+    const viewportRows = indexes.map((index) => index - geometry.viewportY);
+    if (viewportRows.some((row) => row < 0 || row >= geometry.rows)) return null;
+    const { cellWidth, cellHeight, screenLeft, screenTop } = geometry;
+    if (!(cellWidth > 0) || !(cellHeight > 0)) return null;
 
-    const measureTextLength = measure.textContent?.length ?? 0;
-    const cellWidth = measure.getBoundingClientRect().width / measureTextLength;
-    const screenRect = screen.getBoundingClientRect();
-    const screenStyle = getComputedStyle(screen);
-    const paddingLeft = Number.parseFloat(screenStyle.paddingLeft) || 0;
-    const firstRect = rows[indexes[0]].getBoundingClientRect();
-    const lastRect = rows[indexes.at(-1)].getBoundingClientRect();
-    if (!(cellWidth > 0) || !(firstRect.height > 0) || !(lastRect.height > 0)) return null;
-
-    const startX = screenRect.left + paddingLeft + cellWidth * 0.25;
-    const startY = firstRect.top + firstRect.height / 2;
-    const endX = screenRect.left + paddingLeft + cellWidth * expectedLines.at(-1).length;
-    const endY = lastRect.top + lastRect.height / 2;
+    const screen = document.querySelector('[data-testid="live-terminal"] .xterm-screen');
+    const screenRect = screen?.getBoundingClientRect();
+    if (!screenRect) return null;
+    const startX = screenLeft + cellWidth * 0.25;
+    const startY = screenTop + cellHeight * (viewportRows[0] + 0.5);
+    const endX = screenLeft + cellWidth * expectedLines.at(-1).length;
+    const endY = screenTop + cellHeight * (viewportRows.at(-1) + 0.5);
     const describeElement = (element) =>
       element
         ? {
@@ -139,31 +144,14 @@ async function dragAcrossVisibleTerminalLines() {
         endX: Math.round(endX),
         endY: Math.round(endY),
       },
-      cellWidth,
+      geometry,
       rowIndexes: indexes,
-      screenRect: {
-        left: screenRect.left,
-        top: screenRect.top,
-        width: screenRect.width,
-        height: screenRect.height,
-      },
-      firstRect: {
-        left: firstRect.left,
-        top: firstRect.top,
-        width: firstRect.width,
-        height: firstRect.height,
-      },
-      lastRect: {
-        left: lastRect.left,
-        top: lastRect.top,
-        width: lastRect.width,
-        height: lastRect.height,
-      },
+      viewportRows,
       startElement: describeElement(document.elementFromPoint(startX, startY)),
       endElement: describeElement(document.elementFromPoint(endX, endY)),
     };
   }, copiedLines);
-  assert.ok(drag, "Could not locate three consecutive rendered terminal rows for dragging");
+  assert.ok(drag, "Could not locate three consecutive on-screen terminal lines for dragging");
 
   await browser.execute(() => {
     window.__talkakPointerProbe = [];
@@ -185,6 +173,7 @@ async function dragAcrossVisibleTerminalLines() {
             y: Math.round(event.clientY),
             button: event.button,
             buttons: event.buttons,
+            detail: event.detail,
             target:
               event.target instanceof Element
                 ? `${event.target.tagName}.${event.target.className}`
@@ -209,7 +198,6 @@ async function dragAcrossVisibleTerminalLines() {
 
 async function terminalDragSnapshot(drag) {
   return browser.execute((absolutePoints) => {
-    const terminal = document.querySelector('[data-testid="live-terminal"]');
     const describeElement = (element) =>
       element
         ? {
@@ -220,17 +208,7 @@ async function terminalDragSnapshot(drag) {
         : null;
     return {
       events: window.__talkakPointerProbe ?? [],
-      selectionRects: [...(terminal?.querySelectorAll(".xterm-selection > div") ?? [])].map(
-        (element) => {
-          const rect = element.getBoundingClientRect();
-          return {
-            left: rect.left,
-            top: rect.top,
-            width: rect.width,
-            height: rect.height,
-          };
-        },
-      ),
+      selection: window.__talkakTest?.liveTerminalSelection() ?? "",
       startElement: describeElement(
         document.elementFromPoint(absolutePoints.startX, absolutePoints.startY),
       ),

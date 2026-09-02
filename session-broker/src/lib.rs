@@ -9,6 +9,7 @@
 //! validation, `read(after)` start/next/truncated replay, exit codes, on-disk session records.
 //! The app forwards its current session command boundary over a local transport.
 
+pub mod base64;
 pub mod detach;
 pub mod logging;
 pub mod protocol;

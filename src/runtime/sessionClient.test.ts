@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  type FrameChannel,
   type InvokeCommand,
   type SessionClient,
   type SessionSnapshot,
@@ -59,7 +60,7 @@ describe("session client", () => {
       },
       {
         command: "session_write",
-        args: { request: { sessionId: "session-1", runId: 1, data: [65, 13] } },
+        args: { request: { sessionId: "session-1", runId: 1, data: "QQ0=" } },
       },
       {
         command: "session_resize",
@@ -74,6 +75,68 @@ describe("session client", () => {
         args: { request: { sessionId: "session-1" } },
       },
     ]);
+  });
+
+  it("decodes a polled read's base64 payload into bytes", async () => {
+    const invokeCommand: InvokeCommand = async <T>() =>
+      ({
+        sessionId: "session-1",
+        runId: 3,
+        start: 10,
+        next: 16,
+        bytes: "G1szMW1yZWQbWzBt".slice(0, 8),
+        truncated: false,
+        running: true,
+        exitCode: null,
+        readClosed: false,
+        readError: null,
+      }) as T;
+    const client = createSessionClient(invokeCommand, () => true);
+
+    const read = await client.read("session-1", 10);
+
+    expect(read.runId).toBe(3);
+    expect(read.bytes).toBeInstanceOf(Uint8Array);
+    expect(new TextDecoder().decode(read.bytes)).toBe("\u001b[31mr");
+  });
+
+  it("opens a stream over a channel and hands every frame, decoded, to the caller", async () => {
+    const calls: Array<{ command: string; args: Record<string, unknown> | undefined }> = [];
+    let channel: FrameChannel | undefined;
+    const invokeCommand: InvokeCommand = async <T>(
+      command: string,
+      args?: Record<string, unknown>,
+    ) => {
+      calls.push({ command, args });
+      return (command === "session_attach" ? 41 : undefined) as T;
+    };
+    const client = createSessionClient(
+      invokeCommand,
+      () => true,
+      () => {
+        channel = { onmessage: () => undefined };
+        return channel;
+      },
+    );
+    const frames: number[] = [];
+
+    const subscription = await client.attach("session-1", 1000, (frame) => frames.push(frame.next));
+    if (!channel) throw new Error("no channel was created");
+    // The fixture pinned by sessionFrame.test.ts: runId 7, start 1000, next 1006.
+    channel.onmessage(
+      Uint8Array.from([
+        1, 3, 7, 0, 0, 0, 0, 0, 0, 0, 232, 3, 0, 0, 0, 0, 0, 0, 238, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 104, 105, 27, 91, 48, 109,
+      ]).buffer,
+    );
+    await subscription.detach();
+
+    expect(frames).toEqual([1006]);
+    expect(calls[0]).toEqual({
+      command: "session_attach",
+      args: { request: { sessionId: "session-1", after: 1000 }, onFrame: channel },
+    });
+    expect(calls[1]).toEqual({ command: "session_detach", args: { subscription: 41 } });
   });
 
   it("has an honest browser counterpart without pretending native sessions exist", async () => {
@@ -118,6 +181,7 @@ describe("session client", () => {
         return running;
       },
       read: async () => uncalled("read"),
+      attach: async () => uncalled("attach"),
       write: async () => uncalled("write"),
       resize: async () => uncalled("resize"),
       kill: async () => uncalled("kill"),
@@ -161,6 +225,7 @@ describe("session client", () => {
         return existing;
       },
       read: async () => uncalled("read"),
+      attach: async () => uncalled("attach"),
       write: async () => uncalled("write"),
       resize: async () => uncalled("resize"),
       kill: async () => uncalled("kill"),
@@ -210,6 +275,7 @@ describe("session client", () => {
         return restarted;
       },
       read: async () => uncalled("read"),
+      attach: async () => uncalled("attach"),
       write: async () => uncalled("write"),
       resize: async () => uncalled("resize"),
       kill: async () => uncalled("kill"),
@@ -251,6 +317,7 @@ describe("session client", () => {
       snapshot: async () => draining,
       spawn: async () => uncalled("spawn"),
       read: async () => uncalled("read"),
+      attach: async () => uncalled("attach"),
       write: async () => uncalled("write"),
       resize: async () => uncalled("resize"),
       kill: async () => uncalled("kill"),
@@ -300,6 +367,7 @@ describe("session client", () => {
         return restarted;
       },
       read: async () => uncalled("read"),
+      attach: async () => uncalled("attach"),
       write: async () => uncalled("write"),
       resize: async () => uncalled("resize"),
       kill: async () => uncalled("kill"),

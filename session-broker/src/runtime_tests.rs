@@ -394,6 +394,172 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
     let _ = wait_for_read_closed(&runtime, "round-trip");
 }
 
+/// The push path's primitive. A waiting read must return the moment output lands — not on a timer
+/// — and must return at once, with the exit, when the session finishes.
+#[test]
+fn wait_read_returns_on_output_and_on_exit_without_polling() {
+    let runtime = SessionRuntime::default();
+    let (setup, input, expected) = default_shell_fixture();
+    let cwd = std::env::current_dir().expect("test working directory should resolve");
+    let started = runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "waiter".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command: None,
+            args: vec![],
+            cols: 80,
+            rows: 24,
+        })
+        .expect("PTY should spawn");
+    runtime
+        .write(WriteSessionRequest {
+            session_id: "waiter".into(),
+            run_id: started.run_id,
+            data: setup,
+        })
+        .expect("setup input");
+    // Drain the prompt and setup echo so the wait below starts from silence.
+    let mut cursor = 0;
+    let settled_at = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < settled_at {
+        let read = runtime
+            .wait_read(
+                ReadSessionRequest {
+                    session_id: "waiter".into(),
+                    after: cursor,
+                },
+                Duration::from_millis(100),
+            )
+            .expect("drain");
+        cursor = read.next;
+    }
+
+    // Nothing pending: the wait must run its full timeout and come back empty, still running.
+    let idle_started = Instant::now();
+    let idle = runtime
+        .wait_read(
+            ReadSessionRequest {
+                session_id: "waiter".into(),
+                after: cursor,
+            },
+            Duration::from_millis(300),
+        )
+        .expect("idle wait");
+    assert!(idle.bytes.is_empty(), "unexpected output {:?}", idle.bytes);
+    assert!(idle.running);
+    assert!(
+        idle_started.elapsed() >= Duration::from_millis(280),
+        "an idle wait returned early after {:?}",
+        idle_started.elapsed()
+    );
+
+    // Output while a wait is parked: it must wake without waiting out the timeout.
+    let waiter_runtime = &runtime;
+    let (tx, rx) = mpsc::channel();
+    thread::scope(|scope| {
+        scope.spawn(move || {
+            let woke_at = Instant::now();
+            let mut collected = Vec::new();
+            let mut after = cursor;
+            let deadline = Instant::now() + PTY_WAIT;
+            while Instant::now() < deadline {
+                let read = waiter_runtime
+                    .wait_read(
+                        ReadSessionRequest {
+                            session_id: "waiter".into(),
+                            after,
+                        },
+                        Duration::from_secs(20),
+                    )
+                    .expect("wait for output");
+                after = read.next;
+                collected.extend(read.bytes);
+                if collected
+                    .windows(expected.len())
+                    .any(|window| window == expected)
+                {
+                    break;
+                }
+            }
+            tx.send((collected, woke_at.elapsed())).expect("report");
+        });
+        thread::sleep(Duration::from_millis(150));
+        runtime
+            .write(WriteSessionRequest {
+                session_id: "waiter".into(),
+                run_id: started.run_id,
+                data: input,
+            })
+            .expect("probe input");
+    });
+    let (collected, waited) = rx.recv().expect("waiter result");
+    assert!(
+        collected
+            .windows(expected.len())
+            .any(|window| window == expected),
+        "probe result never arrived: {:?}",
+        String::from_utf8_lossy(&collected)
+    );
+    assert!(
+        waited < Duration::from_secs(15),
+        "the wait ran to its timeout instead of waking on output: {waited:?}"
+    );
+
+    // Exit while waiting: the wait must return the finished status, not sleep out its timeout.
+    let cursor = {
+        let mut after = 0;
+        loop {
+            let read = runtime
+                .read(ReadSessionRequest {
+                    session_id: "waiter".into(),
+                    after,
+                })
+                .expect("read");
+            if read.bytes.is_empty() {
+                break after;
+            }
+            after = read.next;
+        }
+    };
+    let exit_started = Instant::now();
+    let runtime_ref = &runtime;
+    let stopped = thread::scope(|scope| {
+        let waiting = scope.spawn(move || {
+            let mut after = cursor;
+            loop {
+                let read = runtime_ref
+                    .wait_read(
+                        ReadSessionRequest {
+                            session_id: "waiter".into(),
+                            after,
+                        },
+                        Duration::from_secs(20),
+                    )
+                    .expect("wait through exit");
+                after = read.next;
+                if !read.running && read.read_closed && read.bytes.is_empty() {
+                    return read;
+                }
+            }
+        });
+        thread::sleep(Duration::from_millis(100));
+        runtime
+            .kill(RunSessionRequest {
+                session_id: "waiter".into(),
+                run_id: started.run_id,
+            })
+            .expect("kill");
+        waiting.join().expect("waiter thread")
+    });
+    assert!(!stopped.running);
+    assert!(stopped.read_closed);
+    assert!(
+        exit_started.elapsed() < Duration::from_secs(15),
+        "the wait did not notice the exit promptly: {:?}",
+        exit_started.elapsed()
+    );
+}
+
 #[test]
 fn native_pty_closes_after_command_exits_without_kill() {
     let runtime = SessionRuntime::default();

@@ -1,4 +1,6 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
+import { decodeBase64, encodeBase64 } from "./base64";
+import { type SessionStreamFrame, decodeSessionFrame } from "./sessionFrame";
 
 export interface SpawnSessionInput {
   sessionId: string;
@@ -26,12 +28,17 @@ export interface SessionRead {
   runId: number;
   start: number;
   next: number;
-  bytes: number[];
+  bytes: Uint8Array;
   truncated: boolean;
   running: boolean;
   exitCode: number | null;
   readClosed: boolean;
   readError: string | null;
+}
+
+/** The native answer to `session_read`: bytes travel as one base64 string. */
+interface SessionReadWire extends Omit<SessionRead, "bytes"> {
+  bytes: string;
 }
 
 /**
@@ -45,12 +52,26 @@ export interface LiveSession {
   running: boolean;
 }
 
+/** An open output stream; `detach` ends it. Frames stop arriving once detach is called. */
+export interface SessionSubscription {
+  detach: () => Promise<void>;
+}
+
 export interface SessionClient {
   available: () => boolean;
   liveSessions: () => Promise<LiveSession[]>;
   spawn: (request: SpawnSessionInput) => Promise<SessionSnapshot>;
   snapshot: (sessionId: string) => Promise<SessionSnapshot | null>;
   read: (sessionId: string, after: number) => Promise<SessionRead>;
+  /**
+   * Stream output from byte `after` onwards. The native side pushes a frame the moment the PTY
+   * produces output — nothing polls — and the last frame carries `ended`. Frames arrive in order.
+   */
+  attach: (
+    sessionId: string,
+    after: number,
+    onFrame: (frame: SessionStreamFrame) => void,
+  ) => Promise<SessionSubscription>;
   write: (sessionId: string, runId: number, data: Uint8Array) => Promise<void>;
   resize: (sessionId: string, runId: number, cols: number, rows: number) => Promise<void>;
   kill: (sessionId: string, runId: number) => Promise<SessionSnapshot>;
@@ -59,9 +80,15 @@ export interface SessionClient {
 
 export type InvokeCommand = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
 
+/** The part of a Tauri channel this client needs; a test hands in a plain object. */
+export interface FrameChannel {
+  onmessage: (message: ArrayBuffer) => void;
+}
+
 export function createSessionClient(
   invokeCommand: InvokeCommand,
   available: () => boolean,
+  createChannel: () => FrameChannel = () => new Channel<ArrayBuffer>(),
 ): SessionClient {
   return {
     available,
@@ -71,13 +98,26 @@ export function createSessionClient(
       invokeCommand<SessionSnapshot | null>("session_snapshot", {
         request: { sessionId },
       }),
-    read: (sessionId, after) =>
-      invokeCommand<SessionRead>("session_read", {
+    read: async (sessionId, after) => {
+      const wire = await invokeCommand<SessionReadWire>("session_read", {
         request: { sessionId, after },
-      }),
+      });
+      return { ...wire, bytes: decodeBase64(wire.bytes) };
+    },
+    attach: async (sessionId, after, onFrame) => {
+      const channel = createChannel();
+      channel.onmessage = (message) => onFrame(decodeSessionFrame(message));
+      const subscription = await invokeCommand<number>("session_attach", {
+        request: { sessionId, after },
+        onFrame: channel,
+      });
+      return {
+        detach: () => invokeCommand<void>("session_detach", { subscription }),
+      };
+    },
     write: (sessionId, runId, data) =>
       invokeCommand<void>("session_write", {
-        request: { sessionId, runId, data: Array.from(data) },
+        request: { sessionId, runId, data: encodeBase64(data) },
       }),
     resize: (sessionId, runId, cols, rows) =>
       invokeCommand<void>("session_resize", {
@@ -102,6 +142,7 @@ export function createBrowserSessionClient(): SessionClient {
     spawn: () => nativeSessionUnavailable(),
     snapshot: () => nativeSessionUnavailable(),
     read: () => nativeSessionUnavailable(),
+    attach: () => nativeSessionUnavailable(),
     write: () => nativeSessionUnavailable(),
     resize: () => nativeSessionUnavailable(),
     kill: () => nativeSessionUnavailable(),
