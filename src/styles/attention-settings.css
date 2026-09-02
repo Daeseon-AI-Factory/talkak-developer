@@ -620,3 +620,42 @@
 .diagnostics-panel__lines li[data-level="problem"] {
   color: var(--warning);
 }
+
+/* Self-update: the Settings card and the one-line strip above the workspace. */
+.update-card__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.update-card__notes {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  font: inherit;
+  font-size: 12px;
+  white-space: pre-wrap;
+}
+
+.update-card__progress {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+}
+
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  font-size: 13px;
+}
+
+.update-banner > span {
+  flex: 1;
+  min-width: 0;
+}

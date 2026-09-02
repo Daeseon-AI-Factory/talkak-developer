@@ -13,6 +13,7 @@ import {
 } from "../settingsModel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { TerminalSettingsSection } from "./TerminalSettingsSection";
+import { UpdateSettingsSection } from "./UpdateSettingsSection";
 
 interface SettingsPanelProps {
   state: SettingsState;
@@ -126,6 +127,7 @@ export function SettingsPanel({ state, projectId, sessionId, onSetOverride }: Se
         })}
       </div>
 
+      <UpdateSettingsSection />
       <TerminalSettingsSection />
       <DiagnosticsPanel />
     </section>

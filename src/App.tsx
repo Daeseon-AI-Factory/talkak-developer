@@ -15,6 +15,7 @@ import { ProjectDialog } from "./components/ProjectDialog";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { ShortcutGuide } from "./components/ShortcutGuide";
 import { Sidebar } from "./components/Sidebar";
+import { UpdateBanner } from "./components/UpdateBanner";
 import { Workspace } from "./components/Workspace";
 import { attentionRequests as demoAttentionRequests, projects as demoProjects } from "./demo";
 import type { AppSection, AttentionRequest, InspectorMode, SidebarMode } from "./domain";
@@ -463,6 +464,8 @@ export default function App() {
             <span className="preview-mode">{t("utility.foundation")}</span>
           </div>
         </div>
+
+        <UpdateBanner />
 
         {activeSection === "attention" ? (
           <AttentionCenter

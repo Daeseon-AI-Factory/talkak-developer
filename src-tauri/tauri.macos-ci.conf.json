@@ -17,7 +17,9 @@
             "wdio:default",
             "wdio-webdriver:default",
             "notification:default",
-            "opener:default"
+            "opener:default",
+            "updater:default",
+            "process:default"
           ]
         }
       ]
