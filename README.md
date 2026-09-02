@@ -120,6 +120,20 @@ incorrect branch targets, retained stale runs, non-blocking checks, and accident
 WebDriver in default product features. This does not yet claim WSL discovery and launch; WSL
 remains a per-session target of the Windows app, never a separate Talkak build.
 
+### Releases and self-update
+
+A pushed tag `vX.Y.Z` runs `.github/workflows/release.yml`: it refuses a tag whose version differs
+from `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, builds the macOS
+`.app`/`.dmg` (signed and notarized when the Apple secrets exist) and the Windows NSIS installer,
+signs the updater artifacts with the Talkak updater key, and publishes them as a GitHub Release
+together with `latest.json`. Installed apps check that feed once at launch and from Settings, and
+install only on a click. The secrets the workflow needs live in the repository settings; on the
+owner's Mac, `bash scripts/release-secrets.sh <APPLE_API_ISSUER>` stores all of them from the
+files already on disk (updater key, App Store Connect key, Developer ID certificate) — the only
+value it cannot find on its own is the App Store Connect issuer ID.
+
+To ship: bump the three version fields together, commit, `git tag vX.Y.Z && git push --tags`.
+
 ### GitHub merge enforcement
 
 After adding the remote and pushing the first branch:
