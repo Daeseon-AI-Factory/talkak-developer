@@ -16,7 +16,6 @@ import { hostInfo, windowsPtyOption } from "../runtime/hostClient";
 import { projectClient } from "../runtime/projectClient";
 import {
   beginRuntimeOperation,
-  createRuntimeMutationQueue,
   createRuntimeOperationTracker,
   enqueueRuntimeMutation,
   invalidateRuntimeOperations,
@@ -29,6 +28,7 @@ import {
   errorMessage,
   sessionClient,
 } from "../runtime/sessionClient";
+import { runtimeMutationQueue, sendSessionInput } from "../runtime/sessionInput";
 import { createSessionSpawnInput } from "../runtime/sessionLaunch";
 import {
   type TerminalOutputWriter,
@@ -62,7 +62,6 @@ interface PendingTerminalOutput {
 }
 
 const observedRuntimeCursors = new Map<string, ObservedRuntimeCursor>();
-const runtimeMutationQueue = createRuntimeMutationQueue();
 const protocolInputSuppressedSessions = new Set<string>();
 
 interface SessionTerminalProps {
@@ -310,29 +309,18 @@ export function SessionTerminal({
           if (protocolInputSuppressedSessions.has(session.id)) return;
           const current = runtimeStatusRef.current;
           if (!current || current.phase !== "running" || current.runId === null) return;
-          const runId = current.runId;
           const token = beginRuntimeOperation(runtimeOperationsRef.current, "write", current);
-          const bytes = new TextEncoder().encode(data);
-          void enqueueRuntimeMutation(
-            runtimeMutationQueue,
-            JSON.stringify([session.id, runId, "write"]),
-            async () => {
-              // The echo comes back on the output stream the moment the shell writes it; nothing
-              // here has to go and fetch it.
-              await sessionClient.write(session.id, runId, bytes);
-            },
-            (cause) => {
-              if (
-                runtimeOperationBelongsToCurrentRuntime(
-                  runtimeOperationsRef.current,
-                  token,
-                  runtimeStatusRef.current,
-                )
-              ) {
-                reportRuntimeFault("write", cause);
-              }
-            },
-          );
+          void sendSessionInput(session.id, current, data, (cause) => {
+            if (
+              runtimeOperationBelongsToCurrentRuntime(
+                runtimeOperationsRef.current,
+                token,
+                runtimeStatusRef.current,
+              )
+            ) {
+              reportRuntimeFault("write", cause);
+            }
+          });
         });
         for (const pending of pendingOutputRef.current.splice(0)) {
           void enqueueOutput(pending.bytes, pending.suppressProtocolInput).then(
