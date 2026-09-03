@@ -323,3 +323,14 @@ green at `5c7f0a5` (run 33624684521); later pushes are on the CI at the time of 
   700-line guideline; split when next touched.
 - On this Mac an old broker (CI test build, protocol 2) held three idle zsh sessions on the shared
   socket; the first launch of the new app retires it and ends them.
+
+### Release v0.1.1 (2026-09-03)
+
+First tagged release through `.github/workflows/release.yml` (run 33706989705): macOS
+`Talkak.Dev_0.1.1_aarch64.app.tar.gz` + `.sig` + `.dmg`, Windows `Talkak.Dev_0.1.1_x64-setup.exe`
++ `.sig`, `latest.json` covering `darwin-aarch64` and `windows-x86_64`. The macOS bundle verified
+locally: Developer ID Application (Z2BGA7G287), timestamped, stapled, Gatekeeper "Notarized
+Developer ID". Windows is unsigned (no code-signing certificate). The eight release secrets were
+stored with `scripts/release-secrets.sh`; the certificate is imported into a temporary keychain in
+CI because the exported .p12 carries both identities. The app checks
+`releases/latest/download/latest.json` at launch and from Settings.
