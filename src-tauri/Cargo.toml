@@ -1,6 +1,6 @@
 [package]
 name = "talkak-dev"
-version = "0.1.0"
+version = "0.1.1"
 description = "A lightweight developer workspace for local agent sessions"
 authors = ["Talkak"]
 edition = "2021"
