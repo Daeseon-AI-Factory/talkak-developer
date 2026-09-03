@@ -1,0 +1,155 @@
+name: Release desktop builds
+
+# A pushed tag `vX.Y.Z` builds the signed installers on both platforms, publishes them as a GitHub
+# Release with `latest.json`, and every installed app finds that release through the updater
+# endpoint in `src-tauri/tauri.conf.json`. The version in the tag must match package.json,
+# src-tauri/tauri.conf.json and src-tauri/Cargo.toml — the check job refuses to build otherwise,
+# so a release never claims a version the bundle does not carry.
+#
+# Secrets (repository settings → Secrets):
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — updater artifact signature
+#   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY — macOS code signing
+#   APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_CONTENT          — macOS notarization
+# Without the Apple secrets the macOS job still builds and publishes; the bundle is then unsigned,
+# and the job says so in its summary rather than pretending.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    name: Version matches the tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Read and compare versions
+        id: read
+        run: |
+          set -euo pipefail
+          package=$(node -p "require('./package.json').version")
+          tauri=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          cargo=$(grep -m1 '^version = ' src-tauri/Cargo.toml | sed -E 's/version = "(.*)"/\1/')
+          echo "package=$package tauri=$tauri cargo=$cargo ref=$GITHUB_REF_NAME"
+          if [ "$package" != "$tauri" ] || [ "$package" != "$cargo" ]; then
+            echo "::error::package.json, tauri.conf.json and Cargo.toml disagree on the version"; exit 1
+          fi
+          if [ "${GITHUB_REF_TYPE:-}" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$package" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match version $package"; exit 1
+          fi
+          echo "version=$package" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.label }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS
+            os: macos-latest
+            args: --bundles app,dmg
+          - label: Windows
+            os: windows-latest
+            args: --bundles nsis
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+        with:
+          version: 9.12.0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@a5f673d0ba8626c3977bb416a1612774bc82181b # 1.95.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build release session broker
+        run: pnpm broker:release
+
+      - name: Stage the Apple notarization key
+        if: runner.os == 'macOS' && env.APPLE_API_KEY_CONTENT != ''
+        env:
+          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+          echo "APPLE_API_KEY_PATH=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
+
+      # The exported .p12 carries every identity in the owner's keychain, and the bundler's own
+      # APPLE_CERTIFICATE path only reads the first certificate it finds. Importing the file into a
+      # throwaway keychain and naming the identity lets codesign pick the Developer ID one.
+      - name: Import the signing identities into a temporary keychain
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
+          printf '%s' "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security find-identity -v -p codesigning "$keychain" | sed -E 's/[0-9A-F]{40}/<hash>/'
+
+      - name: Say whether the macOS bundle will be signed
+        if: runner.os == 'macOS'
+        env:
+          HAS_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          HAS_NOTARY: ${{ secrets.APPLE_API_KEY_CONTENT != '' }}
+        run: |
+          echo "macOS signing certificate present: $HAS_CERT" >> "$GITHUB_STEP_SUMMARY"
+          echo "macOS notarization key present: $HAS_NOTARY" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build, sign and publish
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        with:
+          tagName: v${{ needs.version.outputs.version }}
+          releaseName: Talkak Dev v${{ needs.version.outputs.version }}
+          releaseBody: See the commit history for what changed in this release.
+          releaseDraft: false
+          prerelease: false
+          uploadUpdaterJson: true
+          args: ${{ matrix.args }}

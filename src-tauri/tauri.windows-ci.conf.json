@@ -1,0 +1,35 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm build:webdriver-ci"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "windows-ci",
+          "description": "CI-only capability for the embedded WebDriver test build",
+          "windows": ["main"],
+          "permissions": [
+            "core:default",
+            "dialog:allow-open",
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Talkak Dev",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 760,
+        "minHeight": 580,
+        "resizable": true,
+        "dataDirectory": "talkak-windows-ci"
+      }
+    ]
+  }
+}
