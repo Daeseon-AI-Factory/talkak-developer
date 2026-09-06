@@ -370,3 +370,11 @@ Still open after this pass: the activity/conversation/summary surfaces and Stop�
 were not yet green in the same run (the runs that reached them were invalid for harness reasons);
 딸깍's operating-memory graph (dk-node/dk-summary receipts, Session Flow) is not ported — an owner
 decision, see the session report.
+
+**Why the agent never replied on the owner's Mac (2026-09-06, verified):** `~/.zshrc:18` exports an
+`ANTHROPIC_API_KEY` the API rejects. From a login shell — exactly what a talkak-dev session is —
+`claude -p` prints the "connectors disabled … takes precedence over your claude.ai login" warning and
+then `Failed to authenticate. API Error: 401 API key is invalid` after a 3-minute retry window. The
+record therefore holds only the user turn, so the conversation tab and the activity state look
+broken while the app is doing exactly what the record says. Not fixable in the broker (the shell
+re-exports the key from .zshrc); the owner removes or replaces the export.
