@@ -78,6 +78,113 @@ export function attachSourceLinks(
   });
 }
 
+/** The cell slice the colored-run provider reads; xterm's IBufferCell satisfies it. */
+export interface CopyRunCell extends SourceLinkCell {
+  isFgDefault(): number | boolean;
+}
+
+export interface CopyRunLine {
+  getCell(x: number): CopyRunCell | undefined;
+}
+
+export interface CopyRunTerminal {
+  cols: number;
+  buffer: { active: { getLine(y: number): CopyRunLine | undefined } };
+  registerLinkProvider(provider: ILinkProvider): IDisposable;
+}
+
+export interface CopyRun {
+  text: string;
+  /** 0-based first and last cell columns. */
+  start: number;
+  end: number;
+}
+
+const BOX_GLYPH = /[\u2500-\u259F]/;
+
+/**
+ * Contiguous runs of non-default-foreground text on a row. Programs (and agents) color the thing
+ * you would want to copy — a command in a cheatsheet, a path, a hash — so each run becomes a
+ * click-to-copy link. Interior single spaces stay inside a run so `ps aux | grep node` is one
+ * link; runs shorter than two characters, without a letter or digit, or carrying box-drawing
+ * glyphs (TUI frames and separators) are not links. Heuristic, as in the original product.
+ */
+export function coloredRuns(line: CopyRunLine, cols: number): CopyRun[] {
+  const runs: CopyRun[] = [];
+  let start = -1;
+  let end = -1;
+  let text = "";
+  let gap = "";
+  const flush = () => {
+    const trimmed = text.trim();
+    if (
+      start >= 0 &&
+      trimmed.length >= 2 &&
+      /[A-Za-z0-9]/.test(trimmed) &&
+      !BOX_GLYPH.test(trimmed)
+    ) {
+      runs.push({ text: trimmed, start, end });
+    }
+    start = -1;
+    end = -1;
+    text = "";
+    gap = "";
+  };
+  for (let x = 0; x < cols; x += 1) {
+    const cell = line.getCell(x);
+    if (!cell) break;
+    if (cell.getWidth() === 0) continue;
+    const chars = cell.getChars();
+    const isSpace = chars === "" || chars === " ";
+    if (!isSpace && !cell.isFgDefault()) {
+      if (start < 0) start = x;
+      text += gap + chars;
+      gap = "";
+      end = x;
+    } else if (isSpace && start >= 0) {
+      gap += " ";
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return runs;
+}
+
+/**
+ * Registered ONCE per emulator like the source links. Rows that carry a `path:line` reference
+ * are left to that provider so one span never has two competing links.
+ */
+export function attachCopyRunLinks(
+  terminal: CopyRunTerminal,
+  onCopy: (text: string) => void,
+): IDisposable {
+  return terminal.registerLinkProvider({
+    provideLinks(bufferLineNumber, callback) {
+      const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
+      if (!line) {
+        callback(undefined);
+        return;
+      }
+      const { text } = lineTextWithColumns(line, terminal.cols);
+      if (extractSourceLocationMatches(text).length > 0) {
+        callback(undefined);
+        return;
+      }
+      const links = coloredRuns(line, terminal.cols).map<ILink>((run) => ({
+        text: run.text,
+        range: {
+          start: { x: run.start + 1, y: bufferLineNumber },
+          end: { x: run.end + 1, y: bufferLineNumber },
+        },
+        decorations: { pointerCursor: true, underline: true },
+        activate: () => onCopy(run.text),
+      }));
+      callback(links.length > 0 ? links : undefined);
+    },
+  });
+}
+
 /** The message to show when opening a reference failed, by the host's typed reason. */
 export function sourceOpenFailureKey(failure: OpenSourceLocationFailure): MessageKey {
   switch (failure.kind) {

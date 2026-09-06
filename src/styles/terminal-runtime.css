@@ -230,11 +230,23 @@
 
 /* A moment of copy/paste/open-file feedback — see Toast.tsx. One shared look for both terminal
    surfaces; each positions it in its own bottom-right corner (both are position:relative). */
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .toast {
   position: absolute;
   right: 16px;
   bottom: 16px;
   z-index: 2;
+  animation: toast-in 0.2s ease;
   display: flex;
   align-items: center;
   gap: 6px;

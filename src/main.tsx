@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { Profiler, type ProfilerOnRenderCallback, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "@xterm/xterm/css/xterm.css";
 import App from "./App";
@@ -21,10 +21,12 @@ import "./styles/shortcut-guide.css";
 declare const __TALKAK_WEBDRIVER_CI__: boolean;
 
 async function renderApplication() {
+  let onRender: ProfilerOnRenderCallback | null = null;
   if (__TALKAK_WEBDRIVER_CI__) {
     await import("@wdio/tauri-plugin");
-    const { installWebdriverTestHooks } = await import("./webdriverTestHooks");
+    const { installWebdriverTestHooks, recordRender } = await import("./webdriverTestHooks");
     installWebdriverTestHooks();
+    onRender = (id, _phase, actualDuration) => recordRender(id, actualDuration);
   }
 
   const root = document.getElementById("root");
@@ -33,11 +35,22 @@ async function renderApplication() {
     throw new Error("Missing #root element");
   }
 
+  const application = (
+    <I18nProvider>
+      <App />
+    </I18nProvider>
+  );
   createRoot(root).render(
     <StrictMode>
-      <I18nProvider>
-        <App />
-      </I18nProvider>
+      {onRender ? (
+        // The CI build measures how often and how long React commits; the product build has no
+        // profiler in the tree at all.
+        <Profiler id="app" onRender={onRender}>
+          {application}
+        </Profiler>
+      ) : (
+        application
+      )}
     </StrictMode>,
   );
 }

@@ -22,10 +22,12 @@ describe("shortcut registry", () => {
   it("renders platform-specific labels", () => {
     expect(shortcutDisplay("macos", "splitRight")).toBe("⌘D");
     expect(shortcutDisplay("macos", "splitDown")).toBe("⌘⇧D");
-    expect(shortcutDisplay("macos", "terminalLog")).toBe("⌘L");
+    expect(shortcutDisplay("macos", "terminalLog")).toBe("⌘⇧L");
+    expect(shortcutDisplay("macos", "conversation")).toBe("⌘L");
     expect(shortcutDisplay("windows", "splitRight")).toBe("Ctrl+Shift+D");
     expect(shortcutDisplay("windows", "splitDown")).toBe("Ctrl+Alt+D");
-    expect(shortcutDisplay("windows", "terminalLog")).toBe("Ctrl+Shift+L");
+    expect(shortcutDisplay("windows", "terminalLog")).toBe("Ctrl+Alt+L");
+    expect(shortcutDisplay("windows", "conversation")).toBe("Ctrl+Shift+L");
   });
 
   it("uses the same split key on both platforms without colliding on Windows", () => {
@@ -35,6 +37,18 @@ describe("shortcut registry", () => {
     expect(
       commandForShortcut(event({ code: "KeyS", ctrlKey: true, shiftKey: true }), "windows", true),
     ).toBeNull();
+  });
+
+  it("answers Ctrl+Tab and Ctrl+Shift+Tab as the project cycle on both platforms", () => {
+    expect(commandForShortcut(event({ code: "Tab", ctrlKey: true }), "macos", false)?.id).toBe(
+      "nextProject",
+    );
+    expect(
+      commandForShortcut(event({ code: "Tab", ctrlKey: true, shiftKey: true }), "windows", false)
+        ?.id,
+    ).toBe("previousProject");
+    // The labels stay on the arrow chords; the alternate is muscle memory only.
+    expect(shortcutDisplay("macos", "nextProject")).toBe("⌘⌥↓");
   });
 
   it("does not consume plain Windows terminal control chords", () => {
@@ -54,13 +68,12 @@ describe("shortcut registry", () => {
   });
 
   it("jumps to a project by number from any screen without taking the pane digits", () => {
-    expect(shortcutDisplay("macos", "focusProject4")).toBe("⌘⌥4");
+    expect(shortcutDisplay("macos", "focusProject4")).toBe("⌃4");
     expect(shortcutDisplay("windows", "focusProject4")).toBe("Ctrl+Alt+4");
     // Global: a project switch is how you leave any screen, so it works with the workspace off.
-    expect(
-      commandForShortcut(event({ code: "Digit4", metaKey: true, altKey: true }), "macos", false)
-        ?.id,
-    ).toBe("focusProject4");
+    expect(commandForShortcut(event({ code: "Digit4", ctrlKey: true }), "macos", false)?.id).toBe(
+      "focusProject4",
+    );
     expect(
       commandForShortcut(event({ code: "Digit9", ctrlKey: true, altKey: true }), "windows", false)
         ?.id,

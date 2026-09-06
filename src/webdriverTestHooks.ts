@@ -22,6 +22,15 @@ export interface TalkakTestHooks {
   terminalLogLines: () => string[];
   /** Start recording what the mounted live terminal emits as input; returns the log so far. */
   liveTerminalInputLog: () => string[];
+  /** React commit counts and durations since the hooks were installed (CI Profiler). */
+  renderStats: () => {
+    commits: number;
+    totalMs: number;
+    maxMs: number;
+    byId: Record<string, number>;
+  };
+  /** Reset the render counters, e.g. before an idle measurement. */
+  resetRenderStats: () => void;
   /** Every retained emulator: which session, whether its element is in the document, run, cursor. */
   retainedTerminalSummary: () => Array<{
     sessionId: string;
@@ -71,9 +80,26 @@ function bufferLines(terminal: Emulator | null): string[] {
   return lines;
 }
 
+const renderStats = { commits: 0, totalMs: 0, maxMs: 0, byId: {} as Record<string, number> };
+
+/** Fed by the React Profiler main.tsx mounts around the app in the CI build. */
+export function recordRender(id: string, actualDurationMs: number): void {
+  renderStats.commits += 1;
+  renderStats.totalMs += actualDurationMs;
+  renderStats.maxMs = Math.max(renderStats.maxMs, actualDurationMs);
+  renderStats.byId[id] = (renderStats.byId[id] ?? 0) + 1;
+}
+
 export function installWebdriverTestHooks(): void {
   let inputLog: { terminal: Emulator; entries: string[] } | null = null;
   window.__talkakTest = {
+    renderStats: () => ({ ...renderStats, byId: { ...renderStats.byId } }),
+    resetRenderStats: () => {
+      renderStats.commits = 0;
+      renderStats.totalMs = 0;
+      renderStats.maxMs = 0;
+      renderStats.byId = {};
+    },
     liveTerminalInputLog: () => {
       const terminal = mounted(retainedTerminals());
       if (!terminal) return [];

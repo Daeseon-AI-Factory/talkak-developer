@@ -138,7 +138,8 @@ export function CommandPalette({
               } else if (event.key === "Home" || event.key === "End") {
                 event.preventDefault();
                 setSelectedIndex(event.key === "Home" ? 0 : Math.max(0, entries.length - 1));
-              } else if (event.key === "Enter") {
+              } else if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                // Enter that commits a Korean/CJK composition is not a submit.
                 event.preventDefault();
                 activate(entries[selectedIndex]);
               }

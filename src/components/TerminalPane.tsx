@@ -114,7 +114,10 @@ export function TerminalPane({
                 setRenaming(false);
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter") event.currentTarget.blur();
+                // Enter that commits a Korean/CJK composition is not a submit.
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) {
+                  event.currentTarget.blur();
+                }
                 if (event.key === "Escape") {
                   // Escape abandons the edit; blur would otherwise commit it.
                   event.currentTarget.value =

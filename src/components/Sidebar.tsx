@@ -3,6 +3,7 @@ import type { AppSection, Project, SidebarMode } from "../domain";
 import { useI18n } from "../i18n";
 import type { DesktopPlatform } from "../platform";
 import { errorMessage } from "../runtime/sessionClient";
+import { type ShortcutCommandId, shortcutDisplay } from "../shortcutRegistry";
 import { Icon, type IconName } from "./Icon";
 
 interface SidebarProps {
@@ -156,6 +157,11 @@ export function Sidebar({
                     : t("sidebar.sessionCount", { count: project.sessions.length })}
                 </small>
               </span>
+              {index < 9 ? (
+                <kbd className="project-item__key">
+                  {shortcutDisplay(platform, `focusProject${index + 1}` as ShortcutCommandId)}
+                </kbd>
+              ) : null}
               <Icon name="chevron" size={14} />
             </button>
             {project.source === "local" ? (

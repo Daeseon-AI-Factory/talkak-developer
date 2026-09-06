@@ -7,6 +7,7 @@ import type { TerminalRuntimeOperation, TerminalRuntimeStatus } from "./domain";
 import { type Locale, translate } from "./i18n";
 import type { MessageKey } from "./i18n/strings";
 import { platformFromUserAgent } from "./platform";
+import { clipboardClient } from "./runtime/clipboardClient";
 import {
   type OpenSourceLocationRequest,
   hostInfo,
@@ -43,7 +44,7 @@ import {
   retainedTerminal,
   unbindRetainedPane,
 } from "./terminalInstances";
-import { attachSourceLinks, sourceOpenFailureKey } from "./terminalLinks";
+import { attachCopyRunLinks, attachSourceLinks, sourceOpenFailureKey } from "./terminalLinks";
 import {
   type ScrollModeHost,
   type TerminalViewportState,
@@ -237,6 +238,19 @@ export function useTerminalPaneRuntime(
           const providers: IDisposable[] = [
             attachSourceLinks(terminal, (location, text) => {
               retainedTerminal(sessionId)?.pane?.onSourceLocation(location, text);
+            }),
+            // A colored span is a click-to-copy link, as in the original product.
+            attachCopyRunLinks(terminal, (text) => {
+              void clipboardClient
+                .writeText(text)
+                .then(() =>
+                  retainedTerminal(sessionId)?.pane?.onClipboardNotice({ kind: "copied", text }),
+                )
+                .catch((cause) =>
+                  retainedTerminal(sessionId)?.pane?.onClipboardError(
+                    `copy failed: ${String(cause)}`,
+                  ),
+                );
             }),
           ];
           const clipboardAddon = new ClipboardAddon(

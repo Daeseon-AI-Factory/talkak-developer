@@ -52,11 +52,16 @@ export function Inspector({
 
   useEffect(() => {
     if (pinned) return;
+    // Capture phase: the terminal's textarea usually has focus, and xterm stops the propagation
+    // of every key it handles — a bubble-phase listener never saw Escape while a pane was focused.
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => window.removeEventListener("keydown", closeOnEscape, true);
   }, [pinned, onClose]);
 
   const panel = (

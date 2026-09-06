@@ -39,6 +39,8 @@ export interface ShortcutDefinition {
   scope: ShortcutScope;
   macos: ShortcutChord;
   windows: ShortcutChord;
+  /** A second chord that fires the same command, kept off the labels (the original's Ctrl+Tab). */
+  alternates?: Partial<Record<DesktopPlatform, ShortcutChord>>;
   repeat: boolean;
 }
 
@@ -63,6 +65,14 @@ const windows = (code: string, keyLabel: string, options: Partial<ShortcutChord>
   ctrl: true,
   shift: true,
   ...options,
+});
+
+// Ctrl+Tab / Ctrl+Shift+Tab cycle projects on both platforms, as the original product did.
+const ctrlTab = (shift: boolean): ShortcutChord => ({
+  code: "Tab",
+  keyLabel: "Tab",
+  ctrl: true,
+  shift,
 });
 
 export const SHORTCUTS: readonly ShortcutDefinition[] = [
@@ -132,8 +142,9 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
   {
     id: "terminalLog",
     scope: "workspace",
-    macos: mac("KeyL", "L"),
-    windows: windows("KeyL", "L"),
+    // ⌘L is the conversation, as in the original product; the raw PTY log takes the shifted chord.
+    macos: mac("KeyL", "L", { shift: true }),
+    windows: windows("KeyL", "L", { alt: true, shift: false }),
     repeat: false,
   },
   // One spatial scheme on both platforms: pages are a horizontal row (←/→), projects a vertical
@@ -159,6 +170,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     scope: "global",
     macos: mac("ArrowUp", "↑", { alt: true }),
     windows: windows("ArrowUp", "↑"),
+    alternates: { macos: ctrlTab(true), windows: ctrlTab(true) },
     repeat: true,
   },
   {
@@ -166,6 +178,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     scope: "global",
     macos: mac("ArrowDown", "↓", { alt: true }),
     windows: windows("ArrowDown", "↓"),
+    alternates: { macos: ctrlTab(false), windows: ctrlTab(false) },
     repeat: true,
   },
   {
@@ -199,8 +212,8 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
   {
     id: "conversation",
     scope: "workspace",
-    macos: mac("KeyL", "L", { shift: true }),
-    windows: windows("KeyL", "L", { alt: true, shift: false }),
+    macos: mac("KeyL", "L"),
+    windows: windows("KeyL", "L"),
     repeat: false,
   },
   // Reading history while a full-screen program owns the mouse (terminalScrollMode.ts). macOS ⌘↑
@@ -230,7 +243,7 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     return {
       id: `focusProject${digit}` as ShortcutCommandId,
       scope: "global" as ShortcutScope,
-      macos: mac(`Digit${digit}`, String(digit), { alt: true }),
+      macos: mac(`Digit${digit}`, String(digit), { meta: false, ctrl: true }),
       windows: windows(`Digit${digit}`, String(digit), { alt: true, shift: false }),
       repeat: false,
     };
@@ -305,7 +318,9 @@ export function commandForShortcut(
     SHORTCUTS.find(
       (definition) =>
         (definition.scope === "global" || workspaceEnabled) &&
-        matchesShortcut(event, platform === "macos" ? definition.macos : definition.windows),
+        (matchesShortcut(event, platform === "macos" ? definition.macos : definition.windows) ||
+          (definition.alternates?.[platform] !== undefined &&
+            matchesShortcut(event, definition.alternates[platform]))),
     ) ?? null
   );
 }

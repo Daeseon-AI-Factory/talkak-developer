@@ -165,6 +165,16 @@ fn candidate_key(candidate: &Candidate, target: Option<i64>) -> (u8, u64, std::c
 pub(crate) fn claude_project_dir(home: &Path, project_path: &str) -> PathBuf {
     let root = home.join(".claude/projects");
     let wanted = claude_project_dir_name(project_path);
+    // The agent names the directory after its process's working directory, which the OS has
+    // already resolved through symlinks: a project at /tmp/x on macOS records under
+    // -private-tmp-x. The physical spelling is accepted after the literal one.
+    let physical = std::fs::canonicalize(project_path)
+        .ok()
+        .and_then(|path| {
+            path.to_str()
+                .map(|text| claude_project_dir_name(text.strip_prefix(r"\\?\").unwrap_or(text)))
+        })
+        .filter(|name| *name != wanted);
     let mut fallback = None;
     if let Ok(entries) = std::fs::read_dir(&root) {
         for entry in entries.flatten() {
@@ -173,7 +183,8 @@ pub(crate) fn claude_project_dir(home: &Path, project_path: &str) -> PathBuf {
             if name == wanted {
                 return entry.path();
             }
-            if fallback.is_none() && name.eq_ignore_ascii_case(&wanted) {
+            let physical_match = physical.as_deref().is_some_and(|spelling| name == spelling);
+            if fallback.is_none() && (physical_match || name.eq_ignore_ascii_case(&wanted)) {
                 fallback = Some(entry.path());
             }
         }
@@ -432,4 +443,35 @@ pub(crate) fn parse_rfc3339_ms(value: &str) -> Option<i64> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|timestamp| timestamp.timestamp_millis())
+}
+
+#[cfg(all(test, unix))]
+mod project_dir_tests {
+    use super::claude_project_dir;
+    use crate::transcript_paths::claude_project_dir_name;
+
+    #[test]
+    fn a_symlinked_project_path_finds_the_record_dir_named_after_the_physical_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let physical = temp.path().join("real-project");
+        let link = temp.path().join("link-project");
+        std::fs::create_dir_all(&physical).unwrap();
+        std::os::unix::fs::symlink(&physical, &link).unwrap();
+        let physical_name =
+            claude_project_dir_name(std::fs::canonicalize(&physical).unwrap().to_str().unwrap());
+        let record_dir = home.join(".claude/projects").join(&physical_name);
+        std::fs::create_dir_all(&record_dir).unwrap();
+
+        assert_eq!(
+            claude_project_dir(&home, link.to_str().unwrap()),
+            record_dir
+        );
+        // The literal spelling still wins when it exists.
+        let literal = home
+            .join(".claude/projects")
+            .join(claude_project_dir_name(link.to_str().unwrap()));
+        std::fs::create_dir_all(&literal).unwrap();
+        assert_eq!(claude_project_dir(&home, link.to_str().unwrap()), literal);
+    }
 }

@@ -5,6 +5,7 @@ import {
   type SourceLinkLine,
   type SourceLinkTerminal,
   attachSourceLinks,
+  coloredRuns,
   lineTextWithColumns,
   sourceOpenFailureKey,
 } from "./terminalLinks";
@@ -119,5 +120,59 @@ describe("failure messages", () => {
     expect(sourceOpenFailureKey({ kind: "openFailed", detail: "" })).toBe(
       "terminal.sourceOpenFailed",
     );
+  });
+});
+
+describe("coloredRuns", () => {
+  const row = (cells: { chars: string; colored: boolean; width?: number }[]) => ({
+    getCell: (x: number) => {
+      const cell = cells[x];
+      return cell
+        ? {
+            getChars: () => cell.chars,
+            getWidth: () => cell.width ?? 1,
+            isFgDefault: () => !cell.colored,
+          }
+        : undefined;
+    },
+  });
+  const chars = (text: string, colored: boolean) => [...text].map((c) => ({ chars: c, colored }));
+
+  it("keeps interior single spaces inside one colored run and splits on default text", () => {
+    const line = row([
+      ...chars("ps aux", true),
+      ...chars(" ", true),
+      ...chars("| grep node", true),
+      ...chars("  ", false),
+      ...chars("plain", false),
+      ...chars(" ", false),
+      ...chars("abc123", true),
+    ]);
+    expect(coloredRuns(line, 40)).toEqual([
+      { text: "ps aux | grep node", start: 0, end: 17 },
+      { text: "abc123", start: 26, end: 31 },
+    ]);
+  });
+
+  it("skips one-character runs, runs without letters or digits, and box-drawing frames", () => {
+    const line = row([
+      ...chars("x", true),
+      ...chars(" ", false),
+      ...chars("──", true),
+      ...chars(" ", false),
+      ...chars("── ok ─", true),
+      ...chars(" ", false),
+      ...chars("!!", true),
+    ]);
+    expect(coloredRuns(line, 40)).toEqual([]);
+  });
+
+  it("uses cell columns, so a wide glyph before a run does not shift it", () => {
+    const line = row([
+      { chars: "한", colored: false, width: 2 },
+      { chars: "", colored: false, width: 0 },
+      ...chars("ls", true),
+    ]);
+    expect(coloredRuns(line, 10)).toEqual([{ text: "ls", start: 2, end: 3 }]);
   });
 });

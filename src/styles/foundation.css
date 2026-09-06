@@ -339,6 +339,18 @@ textarea:focus-visible {
   font-weight: 800;
 }
 
+.project-item__key {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-muted);
+  font-family: var(--sans);
+  font-size: 10px;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
 .project-item__copy {
   min-width: 0;
 }

@@ -31,11 +31,15 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   useEffect(() => {
     if (!open) return;
+    // Capture phase, like the palette and guide: a focused terminal pane stops key propagation.
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCancel();
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", closeOnEscape, true);
+    return () => window.removeEventListener("keydown", closeOnEscape, true);
   }, [open, onCancel]);
 
   if (!open) return null;

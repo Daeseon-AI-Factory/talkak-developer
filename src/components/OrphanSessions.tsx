@@ -36,8 +36,9 @@ export function OrphanSessions({
   async function stop(session: LiveSession) {
     setBusy(session.sessionId);
     try {
-      // kill sweeps the whole process tree, so an agent inside the shell goes with it.
-      await sessionClient.kill(session.sessionId, session.runId);
+      // kill sweeps the whole process tree, so an agent inside the shell goes with it. A session
+      // that already ended has nothing to kill; only its record is left to discard.
+      if (session.running) await sessionClient.kill(session.sessionId, session.runId);
       await sessionClient.discard(session.sessionId).catch(() => {
         // A session still draining refuses discard; the kill is what mattered.
       });
@@ -121,7 +122,9 @@ export function OrphanSessions({
                 disabled={busy === session.sessionId}
                 onClick={() => void stop(session)}
               >
-                {busy === session.sessionId ? t("orphans.stopping") : t("orphans.stop")}
+                {busy === session.sessionId
+                  ? t(session.running ? "orphans.stopping" : "orphans.discarding")
+                  : t(session.running ? "orphans.stop" : "orphans.discard")}
               </button>
             </li>
           ))}

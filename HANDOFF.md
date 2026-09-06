@@ -334,3 +334,39 @@ Developer ID". Windows is unsigned (no code-signing certificate). The eight rele
 stored with `scripts/release-secrets.sh`; the certificate is imported into a temporary keychain in
 CI because the exported .p12 carries both identities. The app checks
 `releases/latest/download/latest.json` at launch and from Settings.
+
+### 2026-09-06 — interaction parity against 딸깍, checked with a real agent session
+
+A Sonnet inventory of 딸깍's fine-grained interactions (mouse, clipboard, chords, panes, sidebar,
+notifications) found the two products already equal on selection/copy details (triple-click,
+120 ms auto-copy, box-glyph cleaning, path links). What differed, and what changed here:
+
+- **Escape never closed the inspector while a pane had focus** — xterm stops key propagation and
+  `Inspector.tsx`/`ConfirmDialog.tsx` listened in the bubble phase. Both now listen in the capture
+  phase (as the palette and guide already did). Confirmed by the local real-agent spec: before the
+  fix "Escape closes the inspector" failed (`open=1`), after it passed, and a ⌘L reopen stayed open.
+- **Chord layout follows 딸깍**: ⌘L / Ctrl+Shift+L opens the conversation, ⌘⇧L / Ctrl+Alt+L the raw
+  terminal log; Ctrl+Tab / Ctrl+Shift+Tab also cycle projects (label-less alternates); ⌃1–9 jump to
+  a project on macOS (⌘1–9 stay the pane jumps; Windows keeps Ctrl+Alt+N). Windows split-down stays
+  Ctrl+Alt+D per the parity rule above (same key, distinct modifier).
+- **Colored runs are click-to-copy links** (`attachCopyRunLinks`, ported from 딸깍's
+  terminalRegistry): a contiguous non-default-foreground span underlines on hover and copies on
+  click; rows with a `path:line` reference are left to the source-link provider.
+- Korean IME: Enter that commits a composition no longer submits the pane rename or the palette.
+- Sidebar rows show their project chord; the copied-toast fades in; the orphan panel's button reads
+  "지우기/Discard" for sessions that already ended (it no longer sends `kill` to an ended session).
+- Claude record directory: `claude_project_dir` also accepts the physical-path spelling
+  (`/tmp/x` → `-private-tmp-x` on macOS; `\\?\` stripped on Windows). Unit-tested with a symlink.
+
+**Local real-agent spec** (`e2e/macos-agent.local.e2e.mjs`, untracked, run with the owner's HOME):
+strip `CLAUDE*` env vars first (a nested `claude -p` writes no record), use a project under `$HOME`,
+and drive ⌘+arrow chords with a synthetic keydown (WebKit WebDriver drops the modifier; a bare ↑
+recalled `exit` from shell history and produced `exitclaude …`). **Build the test app with
+`--config src-tauri/tauri.macos-ci.conf.json`**: a build without it shares the installed app's
+identifier, and the spec's `localStorage.clear()` wiped the owner's project list on this Mac
+(recovered by the running app re-saving; see memory note).
+
+Still open after this pass: the activity/conversation/summary surfaces and Stop→confirm→Restart
+were not yet green in the same run (the runs that reached them were invalid for harness reasons);
+딸깍's operating-memory graph (dk-node/dk-summary receipts, Session Flow) is not ported — an owner
+decision, see the session report.
