@@ -14,3 +14,7 @@ session-broker/target/
 
 # Agent worktrees created by the Claude Code harness
 .claude/worktrees/
+
+# Local-only WebDriver probes that need the owner's HOME, credentials or a paid agent call
+e2e/*.local.e2e.mjs
+wdio.*.local.conf.mjs
