@@ -10,6 +10,7 @@ pub(crate) use session_broker::runtime::{
     AttachSessionRequest, LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest,
     SessionIdRequest, SessionRead, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
 };
+use session_broker::store::RestorableSession;
 use session_broker::{Request, Response, PROTOCOL_VERSION};
 use std::fmt;
 use std::io::{BufRead, BufReader, Write};
@@ -77,7 +78,15 @@ pub(crate) struct SessionRuntime {
     available: Condvar,
     /// Serialises broker startup so a burst of first requests spawns one broker, not eight.
     launch: Mutex<()>,
+    /// What the adopted broker announced in its Hello. A missing name means fall back, never
+    /// retire: retiring a broker ends every session it holds.
+    capabilities: Mutex<Vec<String>>,
+    broker_pid: Mutex<Option<u32>>,
 }
+
+/// The oldest broker protocol this app still speaks. A broker in this window is adopted with the
+/// sessions it holds; additive features are discovered from its Hello `capabilities` instead.
+const MIN_COMPATIBLE_PROTOCOL: u32 = 3;
 
 impl SessionRuntime {
     /// A client bound to this app's data directory: the broker writes session records to the same
@@ -100,6 +109,53 @@ impl SessionRuntime {
             }),
             available: Condvar::new(),
             launch: Mutex::new(()),
+            capabilities: Mutex::new(Vec::new()),
+            broker_pid: Mutex::new(None),
+        }
+    }
+
+    /// Whether the adopted broker announced `name` in its Hello.
+    pub(crate) fn has_capability(&self, name: &str) -> bool {
+        self.capabilities
+            .lock()
+            .map(|known| known.iter().any(|known| known == name))
+            .unwrap_or(false)
+    }
+
+    /// The broker's own store directory: session definitions, output logs, and the app's agent
+    /// bindings that live beside them.
+    pub(crate) fn sessions_dir(&self) -> Option<&Path> {
+        self.store_dir.as_deref()
+    }
+
+    /// The exact program and arguments a login-time launcher must run to start this broker: the
+    /// same installable copy and store the app itself launches, so both paths meet at one
+    /// endpoint. None when the app has no data directory (browser preview, tests).
+    pub(crate) fn autostart_command(&self) -> Option<(PathBuf, Vec<String>)> {
+        let source = broker_binary().ok()?;
+        let program = self.installable_copy(&source).unwrap_or(source);
+        let mut arguments = vec![self.endpoint.clone()];
+        if let Some(store) = self.store_dir.as_ref() {
+            arguments.push(store.to_string_lossy().into_owned());
+        }
+        Some((program, arguments))
+    }
+
+    /// Every definition the broker's store holds, newest first.
+    pub(crate) fn restorable(&self) -> BrokerResult<Vec<RestorableSession>> {
+        match self.request(&Request::Restorable)? {
+            Response::Restorable(entries) => Ok(entries),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// The output kept on disk for a session, oldest first — what a restored run showed before.
+    pub(crate) fn stored_output(&self, session_id: &str) -> BrokerResult<Vec<u8>> {
+        match self.request(&Request::StoredOutput(SessionIdRequest {
+            session_id: session_id.to_owned(),
+        }))? {
+            Response::Bytes(bytes) => Ok(bytes),
+            other => Err(unexpected(other)),
         }
     }
 
@@ -201,8 +257,14 @@ impl SessionRuntime {
                     self.release(connection);
                     return Ok(response);
                 }
-                // A failed exchange leaves the connection's framing unknown: drop it, never pool it.
+                // A failed exchange leaves the connection's framing unknown: drop it, never pool
+                // it. And a broker that closed one connection has usually died — every idle
+                // connection shares its fate, so they go too, and the retry establishes afresh:
+                // connect, or launch a new broker that brings the sessions back. Without this the
+                // retry drew the next dead connection from the pool, and a pane waited on eight
+                // of them in turn before anything relaunched.
                 Exchanged::Failed(error) => {
+                    self.forget_pooled_connections();
                     self.release_slot();
                     if attempt == 1 {
                         return Err(BrokerError(format!("broker connection failed: {error}")));
@@ -276,6 +338,21 @@ impl SessionRuntime {
         self.available.notify_one();
     }
 
+    /// Drop every idle connection and fall back to a single slot until the next Hello says the
+    /// broker on the other end serves concurrently.
+    fn forget_pooled_connections(&self) {
+        if let Ok(mut pool) = self.pool.lock() {
+            pool.idle.clear();
+            pool.limit = 1;
+        }
+    }
+
+    /// The process id the adopted broker reported in its Hello, for diagnostics and tests.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn broker_pid(&self) -> Option<u32> {
+        self.broker_pid.lock().ok().and_then(|pid| *pid)
+    }
+
     /// Give a slot back without pooling the connection — its framing is unknown after a failure.
     fn release_slot(&self) {
         if let Ok(mut pool) = self.pool.lock() {
@@ -332,10 +409,18 @@ impl SessionRuntime {
                 Response::Hello {
                     protocol_version,
                     concurrent,
+                    capabilities,
+                    pid,
                     ..
-                } if protocol_version == PROTOCOL_VERSION => {
+                } if (MIN_COMPATIBLE_PROTOCOL..=PROTOCOL_VERSION).contains(&protocol_version) => {
                     if concurrent {
                         self.allow_concurrent_connections();
+                    }
+                    if let Ok(mut known) = self.capabilities.lock() {
+                        *known = capabilities;
+                    }
+                    if let Ok(mut known) = self.broker_pid.lock() {
+                        *known = Some(pid);
                     }
                     return Ok(connection);
                 }

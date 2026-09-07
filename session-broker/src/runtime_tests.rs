@@ -43,6 +43,7 @@ fn an_inherited_no_color_never_reaches_a_pane() {
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     });
     std::env::remove_var("NO_COLOR");
 
@@ -78,6 +79,7 @@ fn vault_environment_reaches_the_child_and_wins_over_the_inherited_value() {
         ],
         cols: 80,
         rows: 24,
+        restore: false,
     });
     std::env::remove_var("TALKAK_VAULT_PROBE");
     assert_eq!(
@@ -102,6 +104,7 @@ fn a_disabling_clicolor_is_dropped_but_a_deliberate_one_survives() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
     }
 
@@ -145,6 +148,7 @@ fn the_default_windows_shell_is_a_powershell_when_one_is_installed() {
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     });
     let argv = command.get_argv();
     let program = argv[0].to_string_lossy().to_ascii_lowercase();
@@ -170,6 +174,7 @@ fn a_spawn_tells_the_child_it_is_talking_to_a_colour_terminal() {
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     });
     let environment = command.iter_full_env_as_str().collect::<Vec<_>>();
     assert!(
@@ -216,6 +221,7 @@ fn a_real_child_process_reads_the_colour_terminal_variables_back() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("the echo command should spawn");
     let _ = wait_for_read_closed(&runtime, "colour-echo");
@@ -258,6 +264,7 @@ fn eight_panes_run_at_once_without_reading_each_other() {
                 env: Vec::new(),
                 cols: 80,
                 rows: 24,
+                restore: false,
             })
             .unwrap_or_else(|error| panic!("{id} should spawn: {error}"));
         assert!(started.running, "{id} should be running");
@@ -368,6 +375,7 @@ fn spawn_rejects_relative_working_directories() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect_err("relative cwd must be rejected");
 
@@ -388,6 +396,7 @@ fn native_pty_supports_spawn_write_read_resize_and_kill() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
     assert!(started.running);
@@ -444,6 +453,7 @@ fn wait_read_returns_on_output_and_on_exit_without_polling() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
     runtime
@@ -626,6 +636,7 @@ fn native_pty_closes_after_command_exits_without_kill() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("short-lived PTY command should spawn");
 
@@ -653,6 +664,7 @@ fn native_interactive_shell_reports_exit_without_waiting_for_reader_close() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("interactive PTY should spawn");
 
@@ -680,6 +692,7 @@ fn stale_run_mutations_are_rejected() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
     let stale_run_id = started.run_id + 1;
@@ -731,6 +744,7 @@ fn dropping_a_runtime_with_a_live_session_returns() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
 
@@ -758,6 +772,7 @@ fn discard_rejects_a_running_session() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
 
@@ -788,6 +803,7 @@ fn discard_allows_an_exited_session_id_to_start_again() {
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     };
     let first = runtime.spawn(request.clone()).expect("PTY should spawn");
     runtime
@@ -918,6 +934,7 @@ fn a_recorded_session_and_its_output_survive_a_new_runtime_over_the_same_root() 
                 env: Vec::new(),
                 cols: 80,
                 rows: 24,
+                restore: false,
             })
             .expect("PTY should spawn");
         for chunk in [setup, probe] {

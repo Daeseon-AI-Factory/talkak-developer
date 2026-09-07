@@ -35,6 +35,11 @@ This repository contains the interactive product shell and its first native runt
   session as environment variables (secrets kept in the OS keychain, `TALKAK_ENV_KEYS` naming what
   arrived) so an agent reads them instead of asking
 - self-update from GitHub releases, checked at launch and from Settings, installed on a click
+- session recovery: the broker keeps every session's definition and output on disk, stamps runs
+  that end, and brings back the ones that were alive when it died — same id, same pane, old output
+  above a divider, a new run id — whether the broker crashed, was replaced by an update, or the
+  machine restarted; an agent session picks its conversation up with a per-agent resume command
+  typed once; the broker can start at login (macOS LaunchAgent, Windows Run entry)
 
 The Tauri desktop app can start the operating system's default shell in an explicit absolute working
 directory. Executables and arguments remain runtime configuration; no agent is hardcoded as the

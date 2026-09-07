@@ -22,6 +22,7 @@ fn pressing_tab_completes_a_path_in_the_default_shell() {
             env: Vec::new(),
             cols: 100,
             rows: 30,
+            restore: false,
         })
         .expect("default shell should spawn");
     assert!(spawned.running);

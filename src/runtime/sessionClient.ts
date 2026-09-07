@@ -21,6 +21,8 @@ export interface SessionSnapshot {
   readError: string | null;
   /** Output high-water mark; replay up to here is history, not fresh output. */
   next: number;
+  /** This run was brought back from the broker's store rather than started here. */
+  restored?: boolean;
 }
 
 export interface SessionRead {
@@ -84,6 +86,15 @@ export interface SessionClient {
   resize: (sessionId: string, runId: number, cols: number, rows: number) => Promise<void>;
   kill: (sessionId: string, runId: number) => Promise<SessionSnapshot>;
   discard: (sessionId: string) => Promise<void>;
+  /**
+   * Type the agent's own resume command into a restored run, once per run. Resolves to the line
+   * typed, or null when nothing was resumed (no record bound, recipe switched off, already done).
+   */
+  resumeAgent: (
+    sessionId: string,
+    runId: number,
+    recipes: readonly (readonly [string, string])[],
+  ) => Promise<string | null>;
 }
 
 export type InvokeCommand = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -139,6 +150,10 @@ export function createSessionClient(
       invokeCommand<void>("session_discard", {
         request: { sessionId },
       }),
+    resumeAgent: (sessionId, runId, recipes) =>
+      invokeCommand<string | null>("session_resume_agent", {
+        request: { sessionId, runId, recipes },
+      }),
   };
 }
 
@@ -155,6 +170,7 @@ export function createBrowserSessionClient(): SessionClient {
     resize: () => nativeSessionUnavailable(),
     kill: () => nativeSessionUnavailable(),
     discard: () => nativeSessionUnavailable(),
+    resumeAgent: () => nativeSessionUnavailable(),
   };
 }
 

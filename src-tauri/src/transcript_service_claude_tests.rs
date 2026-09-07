@@ -60,6 +60,7 @@ fn definition(
         cols: 100,
         rows: 30,
         started_at_ms,
+        ..StoredSession::default()
     }
 }
 

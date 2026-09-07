@@ -45,6 +45,10 @@ pub fn dispatch(request: Request, runtime: &SessionRuntime, store_dir: Option<&s
             pid: std::process::id(),
             store_dir: store_dir.map(str::to_string),
             concurrent: true,
+            capabilities: crate::protocol::CAPABILITIES
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect(),
         },
         Request::Spawn(spawn) => reply(runtime.spawn(spawn), Response::Snapshot),
         Request::Snapshot(id) => reply(runtime.snapshot(id), Response::MaybeSnapshot),

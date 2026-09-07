@@ -51,6 +51,7 @@ fn the_client_runs_a_full_session_lifecycle_through_a_detached_broker() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("spawn through the broker");
     assert!(spawned.running);
@@ -163,6 +164,7 @@ fn a_second_client_adopts_the_broker_and_finds_the_first_clients_session() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("spawn");
     drop(first); // ← the app closing.
@@ -205,6 +207,7 @@ fn a_subscribed_stream_delivers_live_output_and_ends_when_the_run_exits() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("spawn through the broker");
 
@@ -259,4 +262,82 @@ fn a_subscribed_stream_delivers_live_output_and_ends_when_the_run_exits() {
     }
     // The broker closes the connection after the final frame.
     assert!(stream.next().is_err());
+}
+
+/// The broker dies without a word (a crash, a SIGKILL, a reboot's worth of loss): the very next
+/// request must not stall on the pool's dead connections. It launches a fresh broker, which
+/// brings the session that was alive back under its id, marked restored, with a new run id.
+#[test]
+fn a_dead_broker_is_replaced_on_the_next_request_and_the_session_comes_back() {
+    let data = tempfile::tempdir().expect("data dir");
+    let runtime = SessionRuntime::at_endpoint(
+        unique_endpoint("dead-broker"),
+        Some(data.path().to_path_buf()),
+    );
+    let cwd = std::env::current_dir().expect("cwd");
+    let (command, args) = long_lived();
+    let spawned = runtime
+        .spawn(SpawnSessionRequest {
+            session_id: "phoenix".into(),
+            cwd: Some(cwd.to_string_lossy().into_owned()),
+            command,
+            args,
+            env: Vec::new(),
+            cols: 80,
+            rows: 24,
+            restore: false,
+        })
+        .expect("spawn");
+    // Fill the pool with idle connections the way a busy app does.
+    for _ in 0..4 {
+        runtime.live_sessions().expect("live");
+    }
+    let pid = runtime
+        .broker_pid()
+        .expect("the Hello carries the broker pid");
+    kill_process(pid);
+    let started = std::time::Instant::now();
+    let snapshot = runtime
+        .snapshot(SessionIdRequest {
+            session_id: "phoenix".into(),
+        })
+        .expect("the request after the broker's death must succeed")
+        .expect("the session must come back");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(15),
+        "reconnect took {:?}",
+        started.elapsed()
+    );
+    assert!(snapshot.running);
+    assert!(
+        snapshot.restored,
+        "the new broker restored it from the store"
+    );
+    assert!(snapshot.run_id > spawned.run_id);
+    assert_ne!(runtime.broker_pid(), Some(pid), "a new broker answered");
+    let _ = runtime.kill(RunSessionRequest {
+        session_id: "phoenix".into(),
+        run_id: snapshot.run_id,
+    });
+}
+
+fn kill_process(pid: u32) {
+    #[cfg(unix)]
+    {
+        let status = std::process::Command::new("kill")
+            .args(["-9", &pid.to_string()])
+            .status()
+            .expect("kill");
+        assert!(status.success());
+    }
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("taskkill")
+            .args(["/F", "/PID", &pid.to_string()])
+            .status()
+            .expect("taskkill");
+        assert!(status.success());
+    }
+    // Let the endpoint go: a connect that still succeeds would adopt a ghost.
+    std::thread::sleep(std::time::Duration::from_millis(500));
 }

@@ -123,6 +123,7 @@ fn a_cold_service_uses_the_brokers_current_run_start_not_the_sessions_first_star
             cols: 100,
             rows: 30,
             started_at_ms: parse_rfc3339_ms("2026-08-31T11:00:00Z").unwrap() as u64,
+            ..StoredSession::default()
         })
         .unwrap();
     let service = TranscriptService::at_home_with_store(temp.path().to_path_buf(), store);
@@ -166,6 +167,7 @@ fn delayed_null_and_old_requests_cannot_replace_the_brokers_current_run() {
         cols: 100,
         rows: 30,
         started_at_ms,
+        ..StoredSession::default()
     };
     store
         .record(&definition(

@@ -323,6 +323,12 @@ impl TranscriptService {
                     pending.previous
                 }
             };
+            crate::agent_binding::remember(
+                self.store.as_deref().and_then(|store| store.root()),
+                &scope.session_id,
+                bound.source,
+                &bound.path,
+            );
             *cached = Some(CachedSession::Bound(bound));
         }
 
@@ -375,6 +381,12 @@ impl TranscriptService {
                 effective_run_id,
                 candidate,
             )?);
+            crate::agent_binding::remember(
+                self.store.as_deref().and_then(|store| store.root()),
+                &scope.session_id,
+                bound.source,
+                &bound.path,
+            );
             *cached = Some(CachedSession::Bound(bound));
         }
 

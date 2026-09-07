@@ -22,7 +22,15 @@ use serde::{Deserialize, Serialize};
 /// 2: added `Sessions` / `Response::Sessions`, and `concurrent` on the Hello response.
 /// 3: output bytes cross as base64 strings, not JSON number arrays; added `Attach`, which turns a
 ///    connection into a push stream of `Output` frames so the renderer no longer polls.
+///
+/// Since 3, additive changes (a new optional field, a new capability) do NOT bump this: the Hello
+/// answer names them in `capabilities`, and a client that finds a name missing falls back rather
+/// than retiring a broker full of live sessions. Bump only for a change an old broker would
+/// misread.
 pub const PROTOCOL_VERSION: u32 = 3;
+
+/// Capability names a broker of this version announces.
+pub const CAPABILITIES: &[&str] = &["restore"];
 
 // Adjacent tagging: internal tagging cannot represent variants whose payload is not a map
 // (Option, Vec, bool) — serialization fails at runtime, which read as a dropped connection.
@@ -71,6 +79,12 @@ pub enum Response {
         /// second one waits forever — the default is deliberately the safe, old behaviour.
         #[serde(default)]
         concurrent: bool,
+        /// Additive features a client may use with this broker. Naming them beats bumping the
+        /// protocol: a bump retires the broker and every session in it, a missing name only
+        /// makes the client fall back. `restore`: `Spawn.restore` and the ended/restored fields
+        /// on stored definitions.
+        #[serde(default)]
+        capabilities: Vec<String>,
     },
     Snapshot(SessionSnapshot),
     MaybeSnapshot(Option<SessionSnapshot>),

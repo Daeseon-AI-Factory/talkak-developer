@@ -22,6 +22,8 @@ import type { AppSection, AttentionRequest, InspectorMode, SidebarMode } from ".
 import { useI18n } from "./i18n";
 import { platformFromUserAgent } from "./platform";
 import { type ProjectDraft, browserProjectStorage } from "./projectStore";
+import { browserResilienceStorage, readResilienceSettings } from "./resilienceSettings";
+import { brokerAutostartClient } from "./runtime/brokerAutostart";
 import type { RuntimeAttentionNotice } from "./runtime/runtimeAttentionModel";
 import { foregroundTerminalSessionIds } from "./runtime/sessionVisibility";
 import { useRuntimeNotices } from "./runtime/useRuntimeNotices";
@@ -156,6 +158,14 @@ export default function App() {
       // The layout remains usable when persistence is unavailable.
     }
   }, [sidebarMode]);
+
+  // Login start of the broker, re-registered at every launch: the broker copy the entry runs
+  // moves with each app version, and the entry must name the current one.
+  useEffect(() => {
+    if (!brokerAutostartClient.available()) return;
+    if (!readResilienceSettings(browserResilienceStorage()).brokerAutostart) return;
+    void brokerAutostartClient.set(true).catch(() => undefined);
+  }, []);
 
   function selectProject(projectId: string) {
     workspace.selectProject(projectId);

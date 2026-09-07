@@ -1,6 +1,8 @@
 use serde::Serialize;
 
+mod agent_binding;
 mod agent_transcript;
+mod broker_autostart;
 mod clipboard_commands;
 mod diagnostics_commands;
 mod editor_commands;
@@ -27,6 +29,7 @@ mod project_commands_tests;
 #[cfg(test)]
 mod session_client_tests;
 
+use broker_autostart::{broker_autostart_set, broker_autostart_status};
 use clipboard_commands::{clipboard_read_image_path, clipboard_read_text, clipboard_write_text};
 use diagnostics_commands::broker_log_tail;
 use editor_commands::open_source_location;
@@ -34,8 +37,8 @@ use env_vault::EnvVault;
 use env_vault_commands::{env_vault_delete, env_vault_import, env_vault_list, env_vault_set};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
-    session_discard, session_kill, session_live, session_read, session_resize, session_snapshot,
-    session_spawn, session_write,
+    session_discard, session_kill, session_live, session_read, session_resize,
+    session_resume_agent, session_snapshot, session_spawn, session_stored_output, session_write,
 };
 use session_runtime::SessionRuntime;
 use session_stream::{session_attach, session_detach, SessionStreams};
@@ -144,6 +147,10 @@ pub fn run() {
             session_live,
             session_spawn,
             session_snapshot,
+            session_stored_output,
+            session_resume_agent,
+            broker_autostart_status,
+            broker_autostart_set,
             session_read,
             env_vault_list,
             env_vault_set,

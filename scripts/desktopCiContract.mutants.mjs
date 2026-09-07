@@ -28,7 +28,7 @@ const macosWebdriverConfig = [
   'driverProvider: "embedded"',
   "appBinaryPath,",
   "application: appBinaryPath",
-  'specs: ["./e2e/macos-product.e2e.mjs", "./e2e/macos-stream.e2e.mjs"]',
+  '"./e2e/macos-restore.e2e.mjs"',
 ].join("\n");
 const windowsE2e = [
   'import { isAbsolute } from "node:path";',

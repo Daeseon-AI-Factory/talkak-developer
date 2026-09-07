@@ -35,6 +35,18 @@ fn main() {
         Some(dir) => SessionRuntime::with_store(SessionStore::at(std::path::PathBuf::from(dir))),
         None => SessionRuntime::default(),
     };
+    // A broker that starts over a store — after a reboot, a crash, or a replacement — brings back
+    // the sessions that were alive when the store was last written. Only those spawned without
+    // extra environment: the values never reach the store, so the app restores the rest with
+    // its vault once it connects.
+    for (session_id, result) in runtime.restore_pending(true) {
+        match result {
+            Ok(()) => session_broker::logging::log(&format!("restored {session_id}")),
+            Err(error) => {
+                session_broker::logging::log(&format!("restore {session_id} failed: {error}"))
+            }
+        }
+    }
 
     let tokio_runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,

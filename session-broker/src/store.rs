@@ -31,7 +31,7 @@ const DEFINITION_EXTENSION: &str = "json";
 const OUTPUT_EXTENSION: &str = "log";
 
 /// Stored session definition and start time; currently internal persistence evidence only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StoredSession {
     pub session_id: String,
@@ -48,6 +48,20 @@ pub struct StoredSession {
     /// Milliseconds since the Unix epoch. Numeric so ordering never depends on a date format, and
     /// so recording a session needs no date library in the backend.
     pub started_at_ms: u64,
+    /// When the run's process was seen to exit, if it has. A definition without it belonged to a
+    /// run that was still alive when its broker last wrote — the set worth bringing back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<u32>,
+    /// The run id a restore gave this session, so a client can tell a resurrected run from one
+    /// the user started, and act on it exactly once.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restored_run_id: Option<u64>,
+    /// NAMES of the extra environment the run was spawned with — never the values. A restore
+    /// that cannot supply them (the broker alone, at login) leaves such a session to the app.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub env_names: Vec<String>,
 }
 
 /// Wall-clock milliseconds, or 0 if the host clock is before the epoch.
@@ -197,6 +211,11 @@ impl SessionStore {
         self.root.is_some()
     }
 
+    /// Where this store keeps its files, for app-side records that live beside them.
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
+    }
+
     /// Record a session definition. A new run of the same id replaces its previous internal record.
     pub fn record(&self, session: &StoredSession) -> Result<(), RuntimeError> {
         let Some(root) = self.root.as_deref() else {
@@ -211,6 +230,58 @@ impl SessionStore {
         self.close_log(&session.session_id);
         let _ = fs::remove_file(entry_path(root, &session.session_id, OUTPUT_EXTENSION));
         Ok(())
+    }
+
+    /// Record a restored run of a session: the definition is replaced like `record`, but the
+    /// output log stays — what the session showed before it died is the point of restoring it.
+    /// The previous run's writer (if this broker had one) is closed so the next append reopens
+    /// the file in append mode.
+    pub fn record_restored(&self, session: &StoredSession) -> Result<(), RuntimeError> {
+        let Some(root) = self.root.as_deref() else {
+            return Ok(());
+        };
+        let encoded = serde_json::to_vec(session)
+            .map_err(|error| RuntimeError::Internal(format!("encode session record: {error}")))?;
+        let path = entry_path(root, &session.session_id, DEFINITION_EXTENSION);
+        write_atomically(&path, &encoded)
+            .map_err(|error| RuntimeError::Internal(format!("write session record: {error}")))?;
+        self.close_log(&session.session_id);
+        Ok(())
+    }
+
+    /// Stamp a definition with its run's exit. A session that ended — by `exit`, by Stop, by a
+    /// crash of the child — is not brought back by a restore; one that was alive when the broker
+    /// died is. Missing or unreadable definitions are left alone.
+    pub fn mark_ended(&self, session_id: &str, exit_code: Option<u32>) {
+        let Some(root) = self.root.as_deref() else {
+            return;
+        };
+        let path = entry_path(root, session_id, DEFINITION_EXTENSION);
+        let Some(mut session) = fs::read(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<StoredSession>(&raw).ok())
+        else {
+            return;
+        };
+        if session.ended_at_ms.is_some() {
+            return;
+        }
+        session.ended_at_ms = Some(now_ms());
+        session.exit_code = exit_code;
+        if let Ok(encoded) = serde_json::to_vec(&session) {
+            let _ = write_atomically(&path, &encoded);
+        }
+    }
+
+    /// The highest run id any stored definition carries, so a fresh broker continues the
+    /// sequence instead of restarting at 1 — a client compares run ids to tell a newer run from
+    /// a stale one, and a restart must never hand out a number an older run already used.
+    pub fn max_run_id(&self) -> u64 {
+        self.restorable()
+            .into_iter()
+            .filter_map(|entry| entry.session.run_id)
+            .max()
+            .unwrap_or(0)
     }
 
     /// Stop a session's writer and wait for it to let go of the file.
@@ -369,7 +440,7 @@ impl Drop for SessionStore {
 
 /// Hex so every byte of an id maps to `[0-9a-f]`. That is a legal file name on both platforms and
 /// cannot produce a separator, a `..`, or a Windows reserved device name.
-fn encode_name(session_id: &str) -> String {
+pub fn encode_name(session_id: &str) -> String {
     let mut encoded = String::with_capacity(session_id.len() * 2);
     for byte in session_id.as_bytes() {
         encoded.push(char::from_digit((byte >> 4) as u32, 16).unwrap_or('0'));
@@ -432,6 +503,7 @@ mod tests {
             cols: 80,
             rows: 24,
             started_at_ms,
+            ..StoredSession::default()
         }
     }
 
@@ -537,6 +609,64 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["newer".to_string(), "older".to_string()]);
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn marking_a_session_ended_keeps_everything_else_and_happens_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(temp.path());
+        store.record(&sample("s1", 10)).unwrap();
+        store.mark_ended("s1", Some(3));
+        let ended = store.definition("s1").unwrap();
+        assert_eq!(ended.exit_code, Some(3));
+        assert!(ended.ended_at_ms.is_some());
+        assert_eq!(ended.started_at_ms, 10);
+        let first = ended.ended_at_ms;
+        store.mark_ended("s1", Some(9));
+        assert_eq!(store.definition("s1").unwrap().exit_code, Some(3));
+        assert_eq!(store.definition("s1").unwrap().ended_at_ms, first);
+        // Unknown ids are ignored, not created.
+        store.mark_ended("nope", None);
+        assert!(store.definition("nope").is_none());
+    }
+
+    #[test]
+    fn a_restored_record_keeps_the_output_a_fresh_record_drops() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(temp.path());
+        store.record(&sample("s1", 10)).unwrap();
+        store.append_output("s1", b"before");
+        store.flush("s1");
+        let restored = StoredSession {
+            run_id: Some(7),
+            restored_run_id: Some(7),
+            ..sample("s1", 20)
+        };
+        store.record_restored(&restored).unwrap();
+        assert_eq!(store.output("s1"), b"before");
+        assert_eq!(store.definition("s1").unwrap().restored_run_id, Some(7));
+        store.record(&sample("s1", 30)).unwrap();
+        assert!(store.output("s1").is_empty());
+    }
+
+    #[test]
+    fn the_next_broker_continues_the_run_id_sequence() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SessionStore::at(temp.path());
+        assert_eq!(store.max_run_id(), 0);
+        store
+            .record(&StoredSession {
+                run_id: Some(41),
+                ..sample("a", 1)
+            })
+            .unwrap();
+        store
+            .record(&StoredSession {
+                run_id: Some(5),
+                ..sample("b", 2)
+            })
+            .unwrap();
+        assert_eq!(store.max_run_id(), 41);
     }
 
     #[test]

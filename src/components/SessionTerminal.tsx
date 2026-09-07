@@ -11,6 +11,11 @@ import type {
 } from "../domain";
 import { useI18n } from "../i18n";
 import { platformFromUserAgent } from "../platform";
+import {
+  browserResilienceStorage,
+  readResilienceSettings,
+  recipePairs,
+} from "../resilienceSettings";
 import { projectClient } from "../runtime/projectClient";
 import {
   createRuntimeOperationTracker,
@@ -188,6 +193,14 @@ export function SessionTerminal({
           cursorRef.current = 0;
         }
         prepareRuntimeReplay(session.id, snapshot.runId, snapshot.next);
+        if (snapshot.restored && snapshot.running) {
+          // A run the broker brought back: pick the agent's conversation up where it was. The
+          // native side types the recipe once per run and refuses a run it did not restore.
+          const recipes = recipePairs(readResilienceSettings(browserResilienceStorage()));
+          void sessionClient.resumeAgent(session.id, snapshot.runId, recipes).catch(() => {
+            // A failed resume leaves a plain shell, which the pane already shows honestly.
+          });
+        }
         setRestartReady(!snapshot.running && snapshot.readClosed);
         const previous = currentRuntimeStatus("checking");
         const sameRun = previous.runId === snapshot.runId;

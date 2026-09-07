@@ -43,6 +43,19 @@ export const settings = {
     "settings.riskConfirmationsHint": "위험도가 높은 응답에 추가 확인을 요구합니다.",
 
     "settings.update": "업데이트",
+    "settings.resilience.title": "세션 복원",
+    "settings.resilience.description":
+      "브로커가 죽거나 재부팅해도, 살아 있던 세션은 같은 폴더·같은 창에서 이전 출력과 함께 다시 살아납니다. 에이전트 세션은 아래 명령으로 대화를 이어갑니다.",
+    "settings.resilience.autostart": "로그인할 때 세션 브로커 먼저 시작",
+    "settings.resilience.autostartHint":
+      "macOS는 LaunchAgent, Windows는 시작 프로그램 등록. 끄면 등록만 지우고 실행 중인 브로커는 그대로 둡니다.",
+    "settings.resilience.autostartUnsupported": "이 플랫폼에서는 로그인 시작을 등록할 수 없습니다.",
+    "settings.resilience.autostartProgram": "실행 파일",
+    "settings.resilience.recipes": "에이전트 이어가기 명령",
+    "settings.resilience.recipesHint":
+      "복원된 셸에 한 번 입력되는 명령. {id}는 그 세션이 보던 기록의 id. 비우면 셸만 복원됩니다.",
+    "settings.resilience.recipeOff": "비움 = 이어가지 않음",
+    "settings.resilience.failed": "등록 실패: {message}",
     "settings.update.check": "업데이트 확인",
     "settings.update.install": "{version} 설치",
     "settings.update.later": "나중에",
@@ -121,6 +134,20 @@ export const settings = {
     "settings.riskConfirmations": "Risk confirmations",
     "settings.riskConfirmationsHint": "Require another confirmation for high-risk responses.",
     "settings.update": "Updates",
+    "settings.resilience.title": "Session recovery",
+    "settings.resilience.description":
+      "When the broker dies or the machine restarts, sessions that were alive come back in the same folder and pane with their previous output. Agent sessions pick their conversation up with the commands below.",
+    "settings.resilience.autostart": "Start the session broker at login",
+    "settings.resilience.autostartHint":
+      "A LaunchAgent on macOS, a Run entry on Windows. Turning it off removes the entry and leaves a running broker alone.",
+    "settings.resilience.autostartUnsupported":
+      "Login start cannot be registered on this platform.",
+    "settings.resilience.autostartProgram": "Program",
+    "settings.resilience.recipes": "Agent resume commands",
+    "settings.resilience.recipesHint":
+      "Typed once into a restored shell. {id} is the id of the record that session was showing. Leave empty to restore the shell only.",
+    "settings.resilience.recipeOff": "empty = do not resume",
+    "settings.resilience.failed": "Registration failed: {message}",
     "settings.update.check": "Check for updates",
     "settings.update.install": "Install {version}",
     "settings.update.later": "Later",

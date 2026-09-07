@@ -25,6 +25,7 @@ fn live_sessions_carry_launch_time_program_and_last_output_time() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
     let after = now_ms();
@@ -127,6 +128,7 @@ fn an_attached_stream_loses_nothing_from_a_burst_three_times_the_ring() {
             env: Vec::new(),
             cols: 80,
             rows: 24,
+            restore: false,
         })
         .expect("PTY should spawn");
     let reader = runtime.attach("burst").expect("attach");

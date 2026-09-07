@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
-import { execFileSync } from "node:child_process";
-import { isAbsolute } from "node:path";
+import { execFileSync, execSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import { Key } from "webdriverio";
 import { verifyMultilineDragAutoCopy } from "./terminal-drag-copy.e2e-helper.mjs";
 
@@ -117,6 +118,101 @@ describe("installed Windows product path", () => {
       timeoutMsg: "Attention focus did not return to the item list after review",
     });
   });
+
+  it("brings a live session back after the broker dies and leaves a stopped one alone", async () => {
+    await browser.execute(() => {
+      localStorage.clear();
+      localStorage.setItem(
+        "talkak.resilience.v1",
+        JSON.stringify({
+          brokerAutostart: false,
+          recipes: { claude: "write-output resumed-{id}", codex: "", antigravity: "" },
+        }),
+      );
+    });
+    await browser.refresh();
+    const addProject = await $('[data-testid="add-project-global"]');
+    await addProject.waitForClickable();
+    await addProject.click();
+    await (await $('[data-testid="project-name"]')).setValue("Windows restore");
+    await (await $('[data-testid="project-path"]')).setValue(projectPath);
+    await (await $('[data-testid="save-project"]')).click();
+    const startSession = await $('[data-testid="start-session-in-page"]');
+    await startSession.waitForClickable();
+    await startSession.click();
+    await waitForRunningTerminalCount(1);
+    await pasteCommand("write-output beforerestoremarker");
+    await browser.waitUntil(async () => (await terminalText()).includes("beforerestoremarker"), {
+      timeout: 20_000,
+      timeoutMsg: "the marker never echoed before the broker was killed",
+    });
+
+    const live = await invokeApp("session_live");
+    const session = live.find((entry) => entry.running);
+    const runBefore = session.runId;
+    const sessionsDir = join(process.env.APPDATA, "windows-ci", "sessions");
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, `${Buffer.from(session.sessionId, "utf8").toString("hex")}.bind`),
+      JSON.stringify({
+        source: "claude",
+        recordPath: "C:\\nowhere\\abc123.jsonl",
+        recordId: "abc123",
+        boundAtMs: 1,
+      }),
+    );
+
+    assert.ok(await killBroker(), "no broker process found to kill");
+    await browser.pause(2000);
+    await browser.refresh();
+    await (await $('[data-testid="runtime-phase"][data-phase="running"]')).waitForExist({
+      timeout: 40_000,
+      timeoutMsg: "the session did not come back after the broker died",
+    });
+    await browser.waitUntil(async () => (await terminalText()).includes("resumed-abc123"), {
+      timeout: 40_000,
+      timeoutMsg: "the resume line from the binding was never typed",
+    });
+    const text = await terminalText();
+    const marker = text.indexOf("beforerestoremarker");
+    const divider = text.indexOf("session restored");
+    assert.ok(
+      marker >= 0 && divider > marker,
+      `old output and divider out of order: ${text.slice(-300)}`,
+    );
+    const restored = (await invokeApp("session_live")).find(
+      (entry) => entry.sessionId === session.sessionId,
+    );
+    assert.ok(
+      restored?.running && restored.runId > runBefore,
+      "the session did not come back under its id",
+    );
+
+    await browser.refresh();
+    await (await $('[data-testid="runtime-phase"][data-phase="running"]')).waitForExist({
+      timeout: 20_000,
+    });
+    await browser.pause(2000);
+    const typed = ((await terminalText()).match(/write-output resumed-abc123/g) ?? []).length;
+    assert.equal(typed, 1, "the resume line must be typed exactly once");
+
+    await (await $('[data-testid="stop-session"]')).click();
+    const confirm = await $(".confirm-dialog__actions button:first-child");
+    await confirm.waitForClickable();
+    await confirm.click();
+    await (await $('[data-testid="runtime-phase"][data-phase="exited"]')).waitForExist({
+      timeout: 20_000,
+    });
+    await browser.pause(2000);
+    assert.ok(await killBroker(), "no broker process found to kill (second)");
+    await browser.pause(2000);
+    await browser.refresh();
+    await browser.pause(5000);
+    const back = (await invokeApp("session_live")).find(
+      (entry) => entry.sessionId === session.sessionId,
+    );
+    assert.ok(!back?.running, "a stopped session was resurrected");
+  });
 });
 
 async function waitForRunningTerminalCount(expected) {
@@ -141,6 +237,25 @@ async function stopVisibleSessions() {
       timeoutMsg: "A PTY session did not report an exited runtime",
     });
   }
+}
+
+async function killBroker() {
+  // SIGKILL's Windows cousin: no shutdown, no exit marks on the store, like a crash.
+  try {
+    execSync('taskkill /F /FI "IMAGENAME eq talkak-dev-broker*"', { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pasteCommand(command) {
+  await invokeApp("clipboard_write_text", { text: command });
+  const input = await $('[data-testid="live-terminal"] .xterm-helper-textarea');
+  await input.waitForExist();
+  await input.click();
+  await browser.keys([Key.Control, "v"]);
+  await browser.keys(Key.Enter);
 }
 
 async function exitVisibleSession() {

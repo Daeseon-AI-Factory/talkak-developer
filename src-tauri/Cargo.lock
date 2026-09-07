@@ -4070,6 +4070,7 @@ dependencies = [
  "tauri-plugin-wdio",
  "tauri-plugin-wdio-webdriver",
  "tempfile",
+ "winreg 0.55.0",
 ]
 
 [[package]]

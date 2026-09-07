@@ -741,3 +741,60 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Session recovery card */
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+}
+
+.setting-toggle input {
+  accent-color: var(--accent);
+}
+
+.setting-card__hint {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.setting-card__hint code {
+  font-family: var(--mono);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.setting-card__error {
+  display: block;
+  margin-top: 6px;
+  color: var(--danger, #ff6b6b);
+  font-size: 12px;
+}
+
+.resilience-recipes {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.resilience-recipe {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.resilience-recipe input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2, transparent);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+}

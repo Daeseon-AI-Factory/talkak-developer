@@ -353,7 +353,12 @@ pub(crate) fn spawn_reader_thread(
 
 /// One chunk from the PTY to everyone waiting on it. False when the ring's lock is gone, which
 /// ends the reader.
-fn publish(session_id: &str, sink: &OutputSink, store: &SessionStore, chunk: &[u8]) -> bool {
+pub(crate) fn publish(
+    session_id: &str,
+    sink: &OutputSink,
+    store: &SessionStore,
+    chunk: &[u8],
+) -> bool {
     if chunk.is_empty() {
         return true;
     }

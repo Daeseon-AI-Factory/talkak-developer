@@ -1,6 +1,6 @@
 use crate::command::pty_size;
 pub use crate::command::{command_for_request, default_shell_command};
-use crate::output::{spawn_reader_thread, OutputGate, OutputSink, ProcessStatus};
+use crate::output::{publish, spawn_reader_thread, OutputGate, OutputSink, ProcessStatus};
 pub use crate::output::{InitialCursorPositionQuery, OutputBuffer, MAX_OUTPUT_BYTES};
 use crate::store::{now_ms, RestorableSession, SessionStore, StoredSession};
 use portable_pty::{native_pty_system, Child, MasterPty};
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -31,7 +31,17 @@ pub struct SpawnSessionRequest {
     pub env: Vec<(String, String)>,
     pub cols: u16,
     pub rows: u16,
+    /// Bring a stored session back under its own id: the output it showed before stays, a
+    /// divider marks where the new run begins, and the definition remembers the restored run.
+    /// A broker without the `restore` capability ignores the flag and starts a plain run.
+    #[serde(default)]
+    pub restore: bool,
 }
+
+/// What a restore writes between the old output and the new run's, through the same path real
+/// output takes, so every reader — live stream, stored log, terminal log tab — sees it once.
+pub const RESTORE_DIVIDER: &[u8] =
+    b"\r\n\x1b[2m\xe2\x94\x80\xe2\x94\x80 session restored \xe2\x94\x80\xe2\x94\x80\x1b[0m\r\n";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +104,10 @@ pub struct SessionSnapshot {
     /// process re-attaching to a broker-owned session) must suppress terminal protocol responses
     /// for everything before this cursor, or xterm answers stale queries into the live shell.
     pub next: u64,
+    /// This run was brought back from the store rather than started by a client, so the client
+    /// can show the old output above the divider and resume an agent exactly once.
+    #[serde(default)]
+    pub restored: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,15 +195,55 @@ impl SessionRuntime {
     /// A runtime whose bounded internal session evidence is recorded under `root`.
     /// `SessionRuntime::default()` keeps nothing, which is what tests want.
     pub fn with_store(store: SessionStore) -> Self {
+        // Continue the run id sequence the previous broker left in the store.
+        let next_run_id = Mutex::new(store.max_run_id());
         Self {
             store: Arc::new(store),
+            next_run_id,
             ..Self::default()
         }
     }
 
-    /// Stored session records, newest first. The current product does not expose this as recovery.
+    /// Stored session records, newest first: live ones, ended ones, and the ones a dead broker
+    /// left behind — a client tells them apart by `sessions` and by `ended_at_ms`.
     pub fn restorable(&self) -> Vec<RestorableSession> {
         self.store.restorable()
+    }
+
+    /// Bring back every stored session that was alive when its broker last wrote and is not
+    /// live here. With `only_without_env`, sessions spawned with extra environment are skipped:
+    /// the broker cannot supply the values (it never stored them), so the app restores those
+    /// with its vault. Returns what was attempted, so a caller can log without guessing.
+    pub fn restore_pending(
+        &self,
+        only_without_env: bool,
+    ) -> Vec<(String, Result<(), RuntimeError>)> {
+        let mut attempted = Vec::new();
+        for entry in self.store.restorable() {
+            let stored = entry.session;
+            if stored.ended_at_ms.is_some() {
+                continue;
+            }
+            if only_without_env && !stored.env_names.is_empty() {
+                continue;
+            }
+            if self.contains(&stored.session_id).unwrap_or(true) {
+                continue;
+            }
+            let request = SpawnSessionRequest {
+                session_id: stored.session_id.clone(),
+                cwd: stored.cwd.clone(),
+                command: stored.command.clone(),
+                args: stored.args.clone(),
+                env: Vec::new(),
+                cols: stored.cols,
+                rows: stored.rows,
+                restore: true,
+            };
+            let result = self.spawn(request).map(|_| ());
+            attempted.push((stored.session_id, result));
+        }
+        attempted
     }
 
     /// The output kept on disk for a session id, oldest first.
@@ -265,6 +319,10 @@ struct SessionProcess {
     gate: Arc<OutputGate>,
     /// Stamped by the reader thread on every append; 0 until the PTY has produced anything.
     last_output_ms: Arc<AtomicU64>,
+    /// So the exit can be stamped on the stored definition the moment it is observed.
+    store: Arc<SessionStore>,
+    ended_recorded: AtomicBool,
+    restored: bool,
 }
 
 /// How long `wait_read` sleeps between status checks while no output arrives. The child's exit is
@@ -337,7 +395,7 @@ impl SessionRuntime {
         }));
         // Recorded before the reader starts so no output can be appended to a session that has no
         // definition on disk. A store failure must not stop a session the user asked for.
-        let _ = self.store.record(&StoredSession {
+        let definition = StoredSession {
             session_id: request.session_id.clone(),
             run_id: Some(run_id),
             cwd: request.cwd.clone(),
@@ -346,18 +404,40 @@ impl SessionRuntime {
             cols: request.cols,
             rows: request.rows,
             started_at_ms,
-        });
+            ended_at_ms: None,
+            exit_code: None,
+            restored_run_id: request.restore.then_some(run_id),
+            env_names: request.env.iter().map(|(name, _)| name.clone()).collect(),
+        };
+        let _ = if request.restore {
+            self.store.record_restored(&definition)
+        } else {
+            self.store.record(&definition)
+        };
 
+        let sink = OutputSink {
+            output: Arc::clone(&output),
+            status: Arc::clone(&status),
+            changed: Arc::clone(&changed),
+            gate: Arc::clone(&gate),
+            last_output_ms: Arc::clone(&last_output_ms),
+        };
+        if request.restore {
+            // What the session showed before it died, from the stored log, seeds the live buffer
+            // so a client attaching from byte zero sees it — the log is not appended to again.
+            let tail = restore_prelude(&self.store.output(&request.session_id));
+            if !tail.is_empty() {
+                if let Ok(mut buffer) = sink.output.lock() {
+                    buffer.append(&tail);
+                }
+            }
+            // Before the reader thread exists, so the divider precedes every byte of the new run.
+            publish(&request.session_id, &sink, &self.store, RESTORE_DIVIDER);
+        }
         if let Err(error) = spawn_reader_thread(
             request.session_id.clone(),
             reader,
-            OutputSink {
-                output: Arc::clone(&output),
-                status: Arc::clone(&status),
-                changed: Arc::clone(&changed),
-                gate: Arc::clone(&gate),
-                last_output_ms: Arc::clone(&last_output_ms),
-            },
+            sink,
             Arc::clone(&writer),
             Arc::clone(&self.store),
         ) {
@@ -380,6 +460,9 @@ impl SessionRuntime {
             changed,
             gate,
             last_output_ms,
+            store: Arc::clone(&self.store),
+            ended_recorded: AtomicBool::new(false),
+            restored: request.restore,
         });
 
         let mut sessions = lock(&self.sessions, "session registry")?;
@@ -596,6 +679,11 @@ impl SessionProcess {
                 status.running = false;
                 status.exit_code = Some(exit.exit_code());
             }
+            // Once: a definition stamped as ended is what keeps a restore from resurrecting a
+            // session the user stopped or that finished on its own.
+            if !self.ended_recorded.swap(true, Ordering::SeqCst) {
+                self.store.mark_ended(&self.id, Some(exit.exit_code()));
+            }
             self.close_pty()?;
             // A stream waiting for output must learn about the exit now, not at its next slice.
             self.changed.notify_all();
@@ -616,6 +704,7 @@ impl SessionProcess {
             read_closed: status.read_closed,
             read_error: status.read_error.clone(),
             next,
+            restored: self.restored,
         })
     }
 }
@@ -660,6 +749,22 @@ fn close_master_async(
             )))
         }
     }
+}
+
+/// The newest half of the live buffer's worth of stored output, cut at a line boundary so a
+/// multi-byte character or an escape sequence is never split at the seam.
+pub fn restore_prelude(stored: &[u8]) -> Vec<u8> {
+    let limit = crate::output::MAX_OUTPUT_BYTES / 2;
+    if stored.len() <= limit {
+        return stored.to_vec();
+    }
+    let cut = stored.len() - limit;
+    let start = stored[cut..]
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map(|offset| cut + offset + 1)
+        .unwrap_or(cut);
+    stored[start..].to_vec()
 }
 
 fn validate_spawn_request(request: &SpawnSessionRequest) -> Result<(), RuntimeError> {
@@ -745,5 +850,24 @@ pub(crate) fn lock<'a, T>(
             mutex.clear_poison();
             Ok(poisoned.into_inner())
         }
+    }
+}
+
+#[cfg(test)]
+mod restore_prelude_tests {
+    use super::restore_prelude;
+    use crate::output::MAX_OUTPUT_BYTES;
+
+    #[test]
+    fn a_short_log_is_kept_whole_and_a_long_one_is_cut_after_a_newline() {
+        assert_eq!(restore_prelude(b"abc\ndef"), b"abc\ndef");
+        let limit = MAX_OUTPUT_BYTES / 2;
+        let mut long = vec![b'x'; limit + 10];
+        long[limit + 4] = b'\n';
+        let prelude = restore_prelude(&long);
+        assert_eq!(prelude.len(), long.len() - (limit + 5));
+        assert!(!prelude.contains(&b'\n'));
+        let no_newline = vec![b'y'; limit + 10];
+        assert_eq!(restore_prelude(&no_newline).len(), limit);
     }
 }

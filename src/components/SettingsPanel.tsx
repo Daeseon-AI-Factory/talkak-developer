@@ -13,6 +13,7 @@ import {
 } from "../settingsModel";
 import { DiagnosticsPanel } from "./DiagnosticsPanel";
 import { EnvVaultSection } from "./EnvVaultSection";
+import { ResilienceSettingsSection } from "./ResilienceSettingsSection";
 import { TerminalSettingsSection } from "./TerminalSettingsSection";
 import { UpdateSettingsSection } from "./UpdateSettingsSection";
 
@@ -140,6 +141,7 @@ export function SettingsPanel({
 
       <EnvVaultSection projectPath={projectPath} projectName={projectName} />
       <UpdateSettingsSection />
+      <ResilienceSettingsSection />
       <TerminalSettingsSection />
       <DiagnosticsPanel />
     </section>

@@ -129,6 +129,7 @@ fn a_new_client_reattaches_to_the_run_the_old_client_left_behind() {
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     })) {
         Response::Snapshot(snapshot) => snapshot,
         other => panic!("spawn failed: {other:?}"),

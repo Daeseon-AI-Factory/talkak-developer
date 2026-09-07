@@ -389,3 +389,41 @@ the run, the single record that advanced since launch binds as probable (unit-te
 records stay unbound). Seven test shells left in the owner's broker by the probes were ended by
 writing `exit` through the socket — zsh does not word-split `$pair`, which is why the first cleanup
 loop sent malformed requests.
+
+
+### 2026-09-07 — resilience beyond tmux: restore, compatibility window, login start
+
+What the broker already kept on disk (definitions, output, a `restorable` list) is now a finished
+recovery path, verified end to end on macOS in an isolated HOME and by broker-level integration
+tests on both platforms' CI:
+
+- **Ended vs. alive** — the broker stamps `ended_at_ms`/`exit_code` on a definition the moment a
+  run's exit is observed (`SessionProcess::refresh_status`). A restore brings back only runs
+  without the stamp: the ones alive when the broker last wrote. `exit`, Stop, and a child crash
+  stay ended (`tests/restore.rs`).
+- **Restore spawn** — `Spawn.restore=true` (serde default, ignored by an older broker) keeps the
+  output log, seeds the live buffer with its tail cut at a line boundary (`restore_prelude`), writes
+  `RESTORE_DIVIDER` through the normal publish path, and records `restored_run_id`. Run ids stay
+  monotonic across brokers (`SessionStore::max_run_id`). `SessionSnapshot.restored` tells a client.
+- **Who restores** — the broker at start restores sessions spawned without extra environment
+  (`restore_pending(true)` in `main.rs`; only env NAMES are stored, never values); the app's
+  `session_snapshot` restores the rest lazily with the vault's environment when a pane probes a
+  dead-but-stored session. Bindings (`agent_binding.rs`, `<sessions>/<hex>.bind`) remember the
+  agent record; `session_resume_agent` types the recipe once per run (`claude -r {id}`,
+  `codex resume {id}`, Antigravity none) — settings in the Session recovery card.
+- **Compatibility window** — the app adopts brokers with protocol `MIN_COMPATIBLE_PROTOCOL..=3`
+  and reads additive features from Hello `capabilities` (`restore`). Additive changes no longer
+  bump the version; a bump still retires the broker, and the new one restores the sessions.
+- **Dead pool** — a failed exchange now discards every idle connection and re-establishes on the
+  retry; before, a dead broker cost a pane a full minute of dead pooled connections before anything
+  relaunched (`a_dead_broker_is_replaced_on_the_next_request_and_the_session_comes_back`).
+- **Login start** — `broker_autostart.rs`: `~/Library/LaunchAgents/dev.talkak.desktop.broker.plist`
+  (RunAtLoad, no KeepAlive so a retired broker is not resurrected) / HKCU Run `TalkakDevBroker`,
+  pointing at the installable broker copy; re-registered at every launch; off = entry removed, a
+  running broker untouched. Default on.
+
+Harness notes: the local journey (`e2e/macos-restore.local.e2e.mjs`) runs with `HOME=/tmp/tkh` so
+the shared broker socket of the owner's app is never touched; it registers a LaunchAgent into the
+real launchd session (the plist lives in the isolated HOME) — `launchctl bootout
+gui/$(id -u)/dev.talkak.desktop.broker` afterwards. CI runs `e2e/macos-restore.e2e.mjs` and a
+Windows scenario in `windows-product.e2e.mjs` (broker killed with `kill -9` / `taskkill /F`).

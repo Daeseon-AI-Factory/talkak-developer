@@ -145,6 +145,7 @@ fn an_attached_connection_receives_output_as_it_happens_and_a_final_frame_at_exi
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     })) {
         Response::Snapshot(snapshot) => snapshot,
         other => panic!("spawn failed: {other:?}"),
@@ -297,6 +298,7 @@ fn dropping_the_stream_connection_ends_the_stream_and_the_broker_still_retires()
         env: Vec::new(),
         cols: 80,
         rows: 24,
+        restore: false,
     })) {
         Response::Snapshot(snapshot) => snapshot,
         other => panic!("spawn failed: {other:?}"),
