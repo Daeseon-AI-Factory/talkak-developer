@@ -10,6 +10,7 @@ import type {
   TerminalRuntimeStatus,
 } from "../domain";
 import { useI18n } from "../i18n";
+import { platformFromUserAgent } from "../platform";
 import { projectClient } from "../runtime/projectClient";
 import {
   createRuntimeOperationTracker,
@@ -26,6 +27,7 @@ import type { TerminalOutputWriter } from "../runtime/terminalOutputWriter";
 import { terminalRuntimePhase, terminalStreamEnabled } from "../runtime/terminalReplay";
 import { createTerminalStreamConsumer } from "../runtime/terminalStream";
 import { shouldApplyRuntimeObservation } from "../sessionRuntimeState";
+import { shortcutDisplay } from "../shortcutRegistry";
 import {
   releaseTerminal,
   resetRetainedRun,
@@ -226,25 +228,32 @@ export function SessionTerminal({
     };
   }, [projectPath, session.id, session.launchProfile]);
 
-  const { toast, scrollActive, viewport, jumpToBottom, toggleScrollMode, releaseMouse } =
-    useTerminalPaneRuntime({
-      sessionId: session.id,
-      shouldAttachTerminal,
-      locale,
-      hostRef,
-      terminalRef,
-      pendingOutputRef,
-      outputWriterRef,
-      terminalAttachFailedRef,
-      focusedRef,
-      cwdRef,
-      projectRootRef,
-      runtimeStatusRef,
-      runtimeOperationsRef,
-      reportRuntimeFault,
-      clearRuntimeFault,
-      setError,
-    });
+  const {
+    toast,
+    scrollActive,
+    viewport,
+    jumpToBottom,
+    toggleScrollMode,
+    mouseOwner,
+    toggleMouseMode,
+  } = useTerminalPaneRuntime({
+    sessionId: session.id,
+    shouldAttachTerminal,
+    locale,
+    hostRef,
+    terminalRef,
+    pendingOutputRef,
+    outputWriterRef,
+    terminalAttachFailedRef,
+    focusedRef,
+    cwdRef,
+    projectRootRef,
+    runtimeStatusRef,
+    runtimeOperationsRef,
+    reportRuntimeFault,
+    clearRuntimeFault,
+    setError,
+  });
 
   useEffect(() => {
     if (!focused || !terminalAttached) return;
@@ -600,14 +609,15 @@ export function SessionTerminal({
           </span>
         ) : null}
         <span className="terminal-pane__footer-spacer" />
-        {phase === "running" ? (
+        {phase === "running" && mouseOwner !== "none" ? (
           <button
             type="button"
             className="terminal-release-mouse"
-            title={t("terminal.releaseMouseHint")}
-            onClick={releaseMouse}
+            data-owner={mouseOwner}
+            title={`${t(mouseOwner === "program" ? "terminal.mouseHeld" : "terminal.mouseReleased")} · ${shortcutDisplay(platformFromUserAgent(navigator.userAgent), "mouseMode")}`}
+            onClick={toggleMouseMode}
           >
-            {t("terminal.releaseMouse")}
+            {t(mouseOwner === "program" ? "terminal.releaseMouse" : "terminal.restoreMouse")}
           </button>
         ) : null}
         {phase === "running" ? (

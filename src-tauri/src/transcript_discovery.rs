@@ -91,6 +91,21 @@ pub(crate) fn discover_record(
         candidates.retain(|candidate| candidate.started_ms.is_some_and(|value| value >= earliest));
     }
 
+    // A `claude -c` / `--resume` typed into a plain shell carries no launch-time intent, and the
+    // record it reopens began before this run, so the start-time proof above can never admit it.
+    // The rule an intentless resume already uses applies: exactly one record in the project
+    // advanced since launch, bound as probable. Codex and Antigravity keep their own paths.
+    if candidates.is_empty()
+        && claude_intent.is_none()
+        && matches!(hint, None | Some(TranscriptSource::Claude))
+    {
+        return Ok(
+            probable_claude_record(home, project_path, session_started_ms).filter(|candidate| {
+                excluded_path.is_none_or(|excluded| candidate.path != excluded)
+            }),
+        );
+    }
+
     if matches!(claude_intent, Some(ClaudeRecordIntent::ForkNew)) {
         let Some(best) = candidates
             .iter()

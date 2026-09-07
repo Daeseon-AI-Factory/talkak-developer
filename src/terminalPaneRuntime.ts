@@ -39,12 +39,17 @@ import {
   type RetainedPaneCallbacks,
   bindRetainedPane,
   releaseTerminal,
-  resetInteractionModes,
   retainTerminal,
   retainedTerminal,
   unbindRetainedPane,
 } from "./terminalInstances";
 import { attachCopyRunLinks, attachSourceLinks, sourceOpenFailureKey } from "./terminalLinks";
+import {
+  type MouseOwner,
+  attachMouseMode,
+  registerMouseModeHandle,
+  toggleTerminalMouseMode,
+} from "./terminalMouseMode";
 import {
   type ScrollModeHost,
   type TerminalViewportState,
@@ -102,7 +107,8 @@ export interface TerminalPaneRuntimeHandle {
   viewport: TerminalViewportState;
   jumpToBottom: () => void;
   toggleScrollMode: () => void;
-  releaseMouse: () => void;
+  mouseOwner: MouseOwner;
+  toggleMouseMode: () => void;
 }
 
 const SOURCE_FAILURE_DETAIL_KEYS: readonly MessageKey[] = [
@@ -135,6 +141,7 @@ export function useTerminalPaneRuntime(
   localeRef.current = locale;
   const { toast, show: showToast } = useToast();
   const [scrollActive, setScrollActive] = useState(false);
+  const [mouseOwner, setMouseOwner] = useState<MouseOwner>("none");
   const [viewport, setViewport] = useState<TerminalViewportState>({
     scrolledUp: false,
     mouseOwned: false,
@@ -401,6 +408,11 @@ export function useTerminalPaneRuntime(
         );
         const unregisterScrollHandle = registerScrollModeHandle(sessionId, scrollHandle);
         const unwatchViewport = watchTerminalViewport(terminal, setViewport);
+        // Who holds the mouse, for the footer and the ⌘⇧M toggle; a retained emulator may already
+        // be inside a full-screen program when the pane remounts.
+        const mouseHandle = attachMouseMode(terminal, setMouseOwner);
+        const unregisterMouseHandle = registerMouseModeHandle(sessionId, mouseHandle);
+        setMouseOwner(mouseHandle.owner);
 
         disposeTerminal = () => {
           disposed = true;
@@ -415,6 +427,9 @@ export function useTerminalPaneRuntime(
           scrollHandle.dispose();
           unregisterScrollHandle();
           unwatchViewport();
+          mouseHandle.dispose();
+          unregisterMouseHandle();
+          setMouseOwner("none");
           setScrollActive(false);
           unbindRetainedPane(sessionId, pane);
           detachClipboard();
@@ -452,8 +467,9 @@ export function useTerminalPaneRuntime(
     toggleScrollMode: () => {
       toggleTerminalScrollMode(sessionId);
     },
-    releaseMouse: () => {
-      if (terminalRef.current) resetInteractionModes(terminalRef.current);
+    mouseOwner,
+    toggleMouseMode: () => {
+      toggleTerminalMouseMode(sessionId);
     },
   };
 }

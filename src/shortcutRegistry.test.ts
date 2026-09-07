@@ -24,6 +24,8 @@ describe("shortcut registry", () => {
     expect(shortcutDisplay("macos", "splitDown")).toBe("⌘⇧D");
     expect(shortcutDisplay("macos", "terminalLog")).toBe("⌘⇧L");
     expect(shortcutDisplay("macos", "conversation")).toBe("⌘L");
+    expect(shortcutDisplay("macos", "mouseMode")).toBe("⌘⇧M");
+    expect(shortcutDisplay("windows", "mouseMode")).toBe("Ctrl+Shift+M");
     expect(shortcutDisplay("windows", "splitRight")).toBe("Ctrl+Shift+D");
     expect(shortcutDisplay("windows", "splitDown")).toBe("Ctrl+Alt+D");
     expect(shortcutDisplay("windows", "terminalLog")).toBe("Ctrl+Alt+L");

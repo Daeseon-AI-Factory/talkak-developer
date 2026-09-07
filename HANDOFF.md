@@ -378,3 +378,14 @@ then `Failed to authenticate. API Error: 401 API key is invalid` after a 3-minut
 record therefore holds only the user turn, so the conversation tab and the activity state look
 broken while the app is doing exactly what the record says. Not fixable in the broker (the shell
 re-exports the key from .zshrc); the owner removes or replaces the export.
+
+**2026-09-07 — mouse ownership chord, typed-resume binding.** ⌘⇧M / Ctrl+Shift+M (`mouseMode`)
+takes the mouse back from a full-screen program and hands it back again; the footer control shows
+who holds it (hidden when nobody asked for it) and `terminalMouseMode.ts` watches the program's own
+DECSET/DECRST so the state is real, not guessed. Probe with `vim -u NONE -c 'set mouse=a'`:
+program → released → program with the matching labels. Record discovery now binds a `claude -c` /
+`--resume` typed into the pane's shell: with no launch-time intent and no record started after
+the run, the single record that advanced since launch binds as probable (unit-tested; two such
+records stay unbound). Seven test shells left in the owner's broker by the probes were ended by
+writing `exit` through the socket — zsh does not word-split `$pair`, which is why the first cleanup
+loop sent malformed requests.

@@ -61,6 +61,9 @@ export const terminal = {
       "휠과 방향키, PgUp/PgDn, Home/End가 프로그램 대신 화면 기록을 움직입니다. {shortcut}로 켜고 끕니다.",
     "terminal.jumpToBottom": "맨 아래로",
     "terminal.releaseMouse": "마우스 모드 해제",
+    "terminal.restoreMouse": "마우스 돌려주기",
+    "terminal.mouseHeld": "프로그램이 마우스를 잡고 있습니다",
+    "terminal.mouseReleased": "마우스를 풀어 두었습니다",
     "terminal.releaseMouseHint":
       "전체 화면 프로그램이 마우스를 잡고 있습니다. 프로그램이 죽은 뒤 클릭이 글자로 찍히면 누르세요 — 터미널 표시만 되돌리고 프로그램에는 아무것도 보내지 않습니다.",
     "terminal.settings.eyebrow": "터미널",
@@ -79,6 +82,7 @@ export const terminal = {
     "terminal.settings.editorArgsPlaceholder": "예: -g {file}:{line}:{column}",
     "shortcut.scrollMode": "터미널 스크롤 모드",
     "shortcut.jumpToBottom": "터미널 맨 아래로",
+    "shortcut.mouseMode": "터미널 마우스 해제/복원",
   },
   en: {
     "terminal.openConversation": "Open {session} conversation log",
@@ -137,6 +141,9 @@ export const terminal = {
       "The wheel, arrows, PgUp/PgDn and Home/End move the history instead of the program. {shortcut} toggles it.",
     "terminal.jumpToBottom": "Jump to bottom",
     "terminal.releaseMouse": "Release mouse",
+    "terminal.restoreMouse": "Give mouse back",
+    "terminal.mouseHeld": "A program holds the mouse",
+    "terminal.mouseReleased": "Mouse released for you",
     "terminal.releaseMouseHint":
       "A full-screen program owns the mouse. Press this if clicks print garbage after the program died — only the emulator is put back; nothing is sent to the program.",
     "terminal.settings.eyebrow": "TERMINAL",
@@ -155,5 +162,6 @@ export const terminal = {
     "terminal.settings.editorArgsPlaceholder": "e.g. -g {file}:{line}:{column}",
     "shortcut.scrollMode": "Terminal scroll mode",
     "shortcut.jumpToBottom": "Terminal jump to bottom",
+    "shortcut.mouseMode": "Terminal mouse release/restore",
   },
 };

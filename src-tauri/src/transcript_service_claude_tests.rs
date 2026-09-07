@@ -374,3 +374,51 @@ fn app_lifetime_fork_never_reuses_the_previously_bound_file() {
 
     assert!(read(&service, "talkak-fork-lifetime", project).is_none());
 }
+
+#[test]
+fn a_resume_typed_into_the_shell_binds_the_one_record_that_advanced_since_launch() {
+    let temp = TempDir::new().unwrap();
+    let project = "/work/app";
+    // Written just now, so its mtime is after a launch a minute ago; its first timestamp is not,
+    // which is exactly what `claude -c` typed into the pane's shell looks like.
+    let record = claude_record(
+        temp.path(),
+        project,
+        OLD_ID,
+        "2026-01-01T00:00:00Z",
+        "older conversation",
+    );
+    let started = system_time_ms(SystemTime::now()) - 60_000;
+
+    let selected = discover_record(temp.path(), project, Some(started), None, None, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(selected.path, record);
+    assert_eq!(selected.binding, Binding::Probable);
+
+    // The record bound before a restart is excluded from rebinding, so it stays unbound instead.
+    assert!(discover_record(
+        temp.path(),
+        project,
+        Some(started),
+        None,
+        None,
+        Some(&record)
+    )
+    .unwrap()
+    .is_none());
+
+    // Two records advanced since launch: which one the typed resume reopened is unknowable.
+    claude_record(
+        temp.path(),
+        project,
+        NEW_ID,
+        "2026-01-02T00:00:00Z",
+        "another",
+    );
+    assert!(
+        discover_record(temp.path(), project, Some(started), None, None, None)
+            .unwrap()
+            .is_none()
+    );
+}

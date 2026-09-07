@@ -23,6 +23,7 @@ export type ShortcutCommandId =
   | "conversation"
   | "scrollMode"
   | "jumpToBottom"
+  | "mouseMode"
   | `focusProject${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
 export interface ShortcutChord {
@@ -231,6 +232,14 @@ export const SHORTCUTS: readonly ShortcutDefinition[] = [
     scope: "workspace",
     macos: mac("ArrowDown", "↓"),
     windows: windows("PageDown", "PgDn"),
+    repeat: false,
+  },
+  // Take the mouse back from a full-screen program (selection, wheel) and hand it back again.
+  {
+    id: "mouseMode",
+    scope: "workspace",
+    macos: mac("KeyM", "M", { shift: true }),
+    windows: windows("KeyM", "M"),
     repeat: false,
   },
   // Jump straight to the Nth project in the sidebar, from any screen — reaching the fourth

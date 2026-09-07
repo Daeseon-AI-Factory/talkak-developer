@@ -36,6 +36,7 @@ import {
 import { shortcutDisplay } from "./shortcutRegistry";
 import { applyThemeToRetainedTerminals } from "./terminalInstances";
 import { applyThemeToRetainedTerminalLogs } from "./terminalLogInstances";
+import { toggleTerminalMouseMode } from "./terminalMouseMode";
 import { jumpTerminalToBottom, toggleTerminalScrollMode } from "./terminalScrollMode";
 import { subscribeTerminalTheme } from "./terminalTheme";
 import { useCloseConfirmations } from "./useCloseConfirmations";
@@ -328,6 +329,9 @@ export default function App() {
       },
       jumpToBottom: () => {
         if (activeSession) jumpTerminalToBottom(activeSession.id);
+      },
+      mouseMode: () => {
+        if (activeSession) toggleTerminalMouseMode(activeSession.id);
       },
       ...Object.fromEntries(
         Array.from({ length: 9 }, (_, index) => [
