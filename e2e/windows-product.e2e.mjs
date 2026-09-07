@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
 import { verifyMultilineDragAutoCopy } from "./terminal-drag-copy.e2e-helper.mjs";
 
@@ -150,10 +150,10 @@ describe("installed Windows product path", () => {
     const live = await invokeApp("session_live");
     const session = live.find((entry) => entry.running);
     const runBefore = session.runId;
-    const sessionsDir = join(process.env.APPDATA, "windows-ci", "sessions");
+    const sessionsDir = `${process.env.APPDATA}\\windows-ci\\sessions`;
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
-      join(sessionsDir, `${Buffer.from(session.sessionId, "utf8").toString("hex")}.bind`),
+      `${sessionsDir}\\${Buffer.from(session.sessionId, "utf8").toString("hex")}.bind`,
       JSON.stringify({
         source: "claude",
         recordPath: "C:\\nowhere\\abc123.jsonl",
