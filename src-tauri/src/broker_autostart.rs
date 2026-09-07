@@ -7,8 +7,10 @@
 //! meets at one endpoint. Turning it off removes the entry and leaves a running broker alone —
 //! unloading the job would end every session it holds.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
+// macOS-only at runtime; every platform renders it in the tests.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) const LABEL: &str = "dev.talkak.desktop.broker";
 // Used by the Windows registration and by its test on every platform.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -25,6 +27,7 @@ pub(crate) struct AutostartStatus {
 }
 
 /// The plist launchd reads. Every path is XML-escaped: a data directory can carry `&`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn render_launch_agent(label: &str, program: &Path, arguments: &[String]) -> String {
     let mut lines = vec![
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>".to_string(),
@@ -66,6 +69,7 @@ pub(crate) fn render_run_value(program: &Path, arguments: &[String]) -> String {
     parts.join(" ")
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn escape(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -78,10 +82,10 @@ fn quote_windows(text: &str) -> String {
 }
 
 #[cfg(target_os = "macos")]
-fn plist_path() -> Option<PathBuf> {
+fn plist_path() -> Option<std::path::PathBuf> {
     let home = std::env::var_os("HOME")?;
     Some(
-        PathBuf::from(home)
+        std::path::PathBuf::from(home)
             .join("Library/LaunchAgents")
             .join(format!("{LABEL}.plist")),
     )
