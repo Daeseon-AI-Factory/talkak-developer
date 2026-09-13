@@ -3,18 +3,13 @@
 // resume line typed once from a persisted binding — and a session the user stopped stays stopped.
 import { execSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute } from "node:path";
 import { Key } from "webdriverio";
 
 const projectPath = process.env.TALKAK_MACOS_PROJECT;
 if (!projectPath || !isAbsolute(projectPath)) {
   throw new Error("TALKAK_MACOS_PROJECT must be an absolute external test directory.");
 }
-const sessionsDir = join(
-  homedir(),
-  "Library/Application Support/dev.talkak.desktop.macosci/sessions",
-);
 
 async function invokeApp(command, args = {}) {
   return browser.execute(
@@ -24,9 +19,21 @@ async function invokeApp(command, args = {}) {
   );
 }
 
+async function terminalLines() {
+  return browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
+}
+
 async function terminalText() {
-  const lines = await browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
-  return lines.join("\n");
+  return (await terminalLines()).join("\n");
+}
+
+/**
+ * How many times the resume command actually RAN: its output, alone on a line. The typed line is
+ * echoed once by the terminal and redrawn once by the shell when it starts reading, so counting
+ * the command text counts a single resume twice.
+ */
+async function timesResumed(marker) {
+  return (await terminalLines()).filter((line) => line.trim() === marker).length;
 }
 
 async function paste(text) {
@@ -86,6 +93,10 @@ describe("session restore after broker loss", () => {
     // One broker holds every session of this gate's other specs as well, and the earlier ones
     // are still running. Ask the app which session the mounted pane is showing instead of taking
     // the first running one — writing the binding for a stranger's session resumes nothing.
+    // The store's path is the app's to know: the CI builds do not share one identifier, and a
+    // guessed per-platform path is what wrote an earlier binding where nothing would read it.
+    const sessionsDir = await invokeApp("session_store_dir");
+    if (!sessionsDir) throw new Error("the app reported no session store");
     const summary = await browser.execute(() => window.__talkakTest.retainedTerminalSummary());
     const shown = summary.find((entry) => entry.connected);
     if (!shown) throw new Error("no mounted terminal to restore");
@@ -98,7 +109,7 @@ describe("session restore after broker loss", () => {
     const runBefore = session.runId;
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
-      join(sessionsDir, `${hex(session.sessionId)}.bind`),
+      `${sessionsDir}/${hex(session.sessionId)}.bind`,
       JSON.stringify({
         source: "claude",
         recordPath: "/nowhere/abc123.jsonl",
@@ -114,9 +125,9 @@ describe("session restore after broker loss", () => {
       timeout: 30_000,
       timeoutMsg: "the session did not come back after the broker died",
     });
-    await browser.waitUntil(async () => (await terminalText()).includes("resumed-abc123"), {
+    await browser.waitUntil(async () => (await timesResumed("resumed-abc123")) === 1, {
       timeout: 30_000,
-      timeoutMsg: "the resume line from the binding was never typed",
+      timeoutMsg: "the resume command from the binding never ran in the restored shell",
     });
     const text = await terminalText();
     const marker = text.indexOf("before-restore-marker");
@@ -137,8 +148,8 @@ describe("session restore after broker loss", () => {
       timeout: 20_000,
     });
     await browser.pause(2000);
-    const typed = ((await terminalText()).match(/echo resumed-abc123/g) ?? []).length;
-    if (typed !== 1) throw new Error(`the resume line was typed ${typed} times`);
+    const ran = await timesResumed("resumed-abc123");
+    if (ran !== 1) throw new Error(`the resume command ran ${ran} times`);
 
     // Stopped on purpose: a broker loss must not bring it back.
     await (await $('[data-testid="stop-session"]')).click();

@@ -38,7 +38,8 @@ use env_vault_commands::{env_vault_delete, env_vault_import, env_vault_list, env
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
     session_discard, session_kill, session_live, session_read, session_resize,
-    session_resume_agent, session_snapshot, session_spawn, session_stored_output, session_write,
+    session_resume_agent, session_snapshot, session_spawn, session_store_dir,
+    session_stored_output, session_write,
 };
 use session_runtime::SessionRuntime;
 use session_stream::{session_attach, session_detach, SessionStreams};
@@ -148,6 +149,7 @@ pub fn run() {
             session_spawn,
             session_snapshot,
             session_stored_output,
+            session_store_dir,
             session_resume_agent,
             broker_autostart_status,
             broker_autostart_set,

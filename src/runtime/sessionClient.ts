@@ -95,6 +95,8 @@ export interface SessionClient {
     runId: number,
     recipes: readonly (readonly [string, string])[],
   ) => Promise<string | null>;
+  /** Where the broker keeps session definitions, output logs and agent bindings. */
+  storeDir: () => Promise<string | null>;
 }
 
 export type InvokeCommand = <T>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -154,6 +156,7 @@ export function createSessionClient(
       invokeCommand<string | null>("session_resume_agent", {
         request: { sessionId, runId, recipes },
       }),
+    storeDir: () => invokeCommand<string | null>("session_store_dir"),
   };
 }
 
@@ -171,6 +174,7 @@ export function createBrowserSessionClient(): SessionClient {
     kill: () => nativeSessionUnavailable(),
     discard: () => nativeSessionUnavailable(),
     resumeAgent: () => nativeSessionUnavailable(),
+    storeDir: async () => null,
   };
 }
 

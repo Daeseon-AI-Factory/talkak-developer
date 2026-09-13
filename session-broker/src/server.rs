@@ -283,6 +283,19 @@ fn should_stop_server(
     false
 }
 
+/// Bring back the sessions that were alive when this store was last written — after the endpoint
+/// is ours, never before. Two brokers race for it at every login (the app starts one on demand,
+/// the login entry starts another); the one that loses exits, and restoring first would have it
+/// spawn a shell for every stored session on its way out.
+fn restore_after_binding(runtime: &Arc<SessionRuntime>) {
+    for (session_id, result) in runtime.restore_pending(true) {
+        match result {
+            Ok(()) => crate::logging::log(&format!("restored {session_id}")),
+            Err(error) => crate::logging::log(&format!("restore {session_id} failed: {error}")),
+        }
+    }
+}
+
 #[cfg(unix)]
 pub async fn serve_unix(
     socket_path: &str,
@@ -298,6 +311,7 @@ pub async fn serve_unix(
     }
     let _ = std::fs::remove_file(socket_path);
     let listener = tokio::net::UnixListener::bind(socket_path)?;
+    restore_after_binding(&runtime);
     let (closed_clients, mut client_events) = unbounded_channel();
     let mut live_clients = 0;
     loop {
@@ -335,6 +349,7 @@ pub async fn serve_pipe(
     let mut server = ServerOptions::new()
         .first_pipe_instance(true)
         .create(pipe_name)?;
+    restore_after_binding(&runtime);
     let (closed_clients, mut client_events) = unbounded_channel();
     let mut live_clients = 0;
     loop {

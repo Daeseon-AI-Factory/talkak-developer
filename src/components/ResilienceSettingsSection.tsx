@@ -12,6 +12,7 @@ import {
   type BrokerAutostartStatus,
   brokerAutostartClient,
 } from "../runtime/brokerAutostart";
+import { sessionClient } from "../runtime/sessionClient";
 
 /**
  * Session recovery: whether the broker starts at login, and the per-agent resume command a
@@ -28,6 +29,7 @@ export function ResilienceSettingsSection({
     readResilienceSettings(browserResilienceStorage()),
   );
   const [status, setStatus] = useState<BrokerAutostartStatus | null>(null);
+  const [storeDir, setStoreDir] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -44,6 +46,20 @@ export function ResilienceSettingsSection({
       cancelled = true;
     };
   }, [client]);
+
+  useEffect(() => {
+    if (!sessionClient.available()) return;
+    let cancelled = false;
+    void sessionClient
+      .storeDir()
+      .then((dir) => {
+        if (!cancelled) setStoreDir(dir);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const persist = (next: ResilienceSettings) => {
     setSettings(next);
@@ -127,6 +143,11 @@ export function ResilienceSettingsSection({
             </label>
           ))}
         </div>
+        {storeDir ? (
+          <p className="setting-card__hint">
+            {t("settings.resilience.storeDir")}: <code>{storeDir}</code>
+          </p>
+        ) : null}
       </div>
     </section>
   );

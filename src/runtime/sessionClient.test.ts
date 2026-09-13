@@ -187,6 +187,7 @@ describe("session client", () => {
       kill: async () => uncalled("kill"),
       discard: async () => uncalled("discard"),
       resumeAgent: async () => null,
+      storeDir: async () => null,
     } satisfies SessionClient;
     const start = createSessionStarter(client);
     const request = {
@@ -232,6 +233,7 @@ describe("session client", () => {
       kill: async () => uncalled("kill"),
       discard: async () => uncalled("discard"),
       resumeAgent: async () => null,
+      storeDir: async () => null,
     } satisfies SessionClient;
     const start = createSessionStarter(client);
 
@@ -285,6 +287,7 @@ describe("session client", () => {
         operations.push("discard");
       },
       resumeAgent: async () => null,
+      storeDir: async () => null,
     } satisfies SessionClient;
 
     const start = createSessionStarter(client);
@@ -326,6 +329,7 @@ describe("session client", () => {
       kill: async () => uncalled("kill"),
       discard: async () => uncalled("discard"),
       resumeAgent: async () => null,
+      storeDir: async () => null,
     } satisfies SessionClient;
 
     const result = await createSessionStarter(client)({
@@ -379,6 +383,7 @@ describe("session client", () => {
         operations.push("discard");
       },
       resumeAgent: async () => null,
+      storeDir: async () => null,
     } satisfies SessionClient;
 
     const result = await createSessionStarter(client)(

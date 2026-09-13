@@ -55,6 +55,7 @@ export const settings = {
     "settings.resilience.recipesHint":
       "복원된 셸에 한 번 입력되는 명령. {id}는 그 세션이 보던 기록의 id. 비우면 셸만 복원됩니다.",
     "settings.resilience.recipeOff": "비움 = 이어가지 않음",
+    "settings.resilience.storeDir": "세션 기록 위치",
     "settings.resilience.failed": "등록 실패: {message}",
     "settings.update.check": "업데이트 확인",
     "settings.update.install": "{version} 설치",
@@ -147,6 +148,7 @@ export const settings = {
     "settings.resilience.recipesHint":
       "Typed once into a restored shell. {id} is the id of the record that session was showing. Leave empty to restore the shell only.",
     "settings.resilience.recipeOff": "empty = do not resume",
+    "settings.resilience.storeDir": "Session store",
     "settings.resilience.failed": "Registration failed: {message}",
     "settings.update.check": "Check for updates",
     "settings.update.install": "Install {version}",

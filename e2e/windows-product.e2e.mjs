@@ -157,7 +157,10 @@ describe("installed Windows product path", () => {
     );
     assert.ok(session?.running, "the mounted pane's session is not running");
     const runBefore = session.runId;
-    const sessionsDir = `${process.env.APPDATA}\\windows-ci\\sessions`;
+    // The store's path is the app's to know: this build has no identifier of its own, and the
+    // guessed path wrote an earlier binding where nothing would ever read it.
+    const sessionsDir = await invokeApp("session_store_dir");
+    assert.ok(sessionsDir, "the app reported no session store");
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
       `${sessionsDir}\\${Buffer.from(session.sessionId, "utf8").toString("hex")}.bind`,
@@ -176,9 +179,9 @@ describe("installed Windows product path", () => {
       timeout: 40_000,
       timeoutMsg: "the session did not come back after the broker died",
     });
-    await browser.waitUntil(async () => (await terminalText()).includes("resumed-abc123"), {
+    await browser.waitUntil(async () => (await timesResumed("resumed-abc123")) === 1, {
       timeout: 40_000,
-      timeoutMsg: "the resume line from the binding was never typed",
+      timeoutMsg: "the resume command from the binding never ran in the restored shell",
     });
     const text = await terminalText();
     const marker = text.indexOf("beforerestoremarker");
@@ -200,8 +203,11 @@ describe("installed Windows product path", () => {
       timeout: 20_000,
     });
     await browser.pause(2000);
-    const typed = ((await terminalText()).match(/write-output resumed-abc123/g) ?? []).length;
-    assert.equal(typed, 1, "the resume line must be typed exactly once");
+    assert.equal(
+      await timesResumed("resumed-abc123"),
+      1,
+      "the resume command must run exactly once",
+    );
 
     await (await $('[data-testid="stop-session"]')).click();
     const confirm = await $(".confirm-dialog__actions button:first-child");
@@ -280,6 +286,16 @@ async function exitVisibleSession() {
 async function terminalText() {
   const lines = await browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
   return lines.join("\n");
+}
+
+/**
+ * How many times the resume command actually RAN: its output, alone on a line. The typed line is
+ * echoed once by the terminal and redrawn once by the shell when it starts reading, so counting
+ * the command text counts a single resume twice.
+ */
+async function timesResumed(marker) {
+  const lines = await browser.execute(() => window.__talkakTest?.liveTerminalLines() ?? []);
+  return lines.filter((line) => line.trim() === marker).length;
 }
 
 async function terminalLogText() {

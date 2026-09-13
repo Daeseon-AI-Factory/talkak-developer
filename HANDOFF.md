@@ -427,3 +427,36 @@ the shared broker socket of the owner's app is never touched; it registers a Lau
 real launchd session (the plist lives in the isolated HOME) — `launchctl bootout
 gui/$(id -u)/dev.talkak.desktop.broker` afterwards. CI runs `e2e/macos-restore.e2e.mjs` and a
 Windows scenario in `windows-product.e2e.mjs` (broker killed with `kill -9` / `taskkill /F`).
+
+
+### 2026-09-13 — what four red CI rounds on the restore gate were actually about
+
+None of them was the restore. In order: the Windows scenario's `join()` changed an import line the
+CI contract pins; macOS-only autostart helpers failed the Windows lint as dead code; then two test
+defects and two product hardenings worth keeping:
+
+- **The tests acted on a stranger's session.** Both specs took `session_live`'s first running
+  session as their own. One broker holds the whole gate, so on macOS that was a session an earlier
+  spec had left and on Windows one the earlier scenario in the same file had left. The agent
+  binding was written for a session no pane was showing, so nothing resumed. Both specs now ask
+  which session the mounted pane is showing (`retainedTerminalSummary`, `connected`).
+- **A single resume read as two.** A line typed before the shell has drawn its prompt is echoed
+  once by the terminal and redrawn once by the shell when it starts reading, so counting the
+  command text on screen counts one resume twice. The gates now count the command's OUTPUT, alone
+  on a line, which exists only if it ran.
+- **The Windows spec guessed the store path.** `tauri.windows-ci.conf.json` sets no app
+  `identifier` — `windows-ci` there is a capability identifier — so that build's store is under
+  `dev.talkak.desktop`, not `%APPDATA%\windows-ci`. `session_store_dir` now answers with the path
+  the app actually uses, and the Session recovery settings show it.
+- **The resume waits for a prompt.** `session_resume_agent` polls the run until it has printed
+  something of its own and stayed quiet for 300ms, with a 1.5s floor for a run that prints nothing
+  and a 5s cap (`ResumeReadiness`, unit-tested). The CI terminal had the line landing before the
+  shell's banner; it survived there, but a shell that resets the terminal as it starts can drop it.
+- **The resume is reserved before it is typed.** The binding is marked under a process lock and
+  released if the write fails, so two panes asking at once cannot both type it.
+- **A losing broker restored everything on its way out.** Two brokers race for the endpoint at
+  every login: the app starts one on demand, the login entry starts another. The restore ran in
+  `main` before the endpoint was claimed, so the loser spawned a shell for every stored session
+  and rewrote their definitions under run ids nothing was using, moments before exiting. It now
+  runs inside the server once the listener is bound (`restore_after_binding`), covered by
+  `a_broker_that_loses_the_endpoint_restores_nothing`.

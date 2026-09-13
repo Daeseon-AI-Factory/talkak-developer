@@ -114,7 +114,10 @@ fn load_at(path: &Path) -> Option<AgentBinding> {
     serde_json::from_slice(&raw).ok()
 }
 
-pub(crate) fn mark_resumed(sessions_dir: Option<&Path>, session_id: &str, run_id: u64) {
+/// Reserve or release this run's resume. Reserving before the line is typed is what keeps a
+/// second caller from typing it too while the first waits for the shell; a write that then fails
+/// releases the reservation so the next attempt may try again.
+pub(crate) fn set_resumed(sessions_dir: Option<&Path>, session_id: &str, run_id: Option<u64>) {
     let Some(dir) = sessions_dir else {
         return;
     };
@@ -122,10 +125,14 @@ pub(crate) fn mark_resumed(sessions_dir: Option<&Path>, session_id: &str, run_id
     let Some(mut binding) = load_at(&path) else {
         return;
     };
-    binding.resumed_run_id = Some(run_id);
+    binding.resumed_run_id = run_id;
     if let Ok(encoded) = serde_json::to_vec_pretty(&binding) {
         let _ = std::fs::write(path, encoded);
     }
+}
+
+pub(crate) fn mark_resumed(sessions_dir: Option<&Path>, session_id: &str, run_id: u64) {
+    set_resumed(sessions_dir, session_id, Some(run_id));
 }
 
 pub(crate) fn forget(sessions_dir: Option<&Path>, session_id: &str) {
@@ -193,6 +200,10 @@ mod tests {
 
         mark_resumed(dir, "session-1", 7);
         assert_eq!(load(dir, "session-1").unwrap().resumed_run_id, Some(7));
+        // A failed write releases the reservation so the next attempt may try again.
+        set_resumed(dir, "session-1", None);
+        assert_eq!(load(dir, "session-1").unwrap().resumed_run_id, None);
+        mark_resumed(dir, "session-1", 7);
         // The same record again keeps the marker; a new record starts over.
         remember(dir, "session-1", TranscriptSource::Claude, record);
         assert_eq!(load(dir, "session-1").unwrap().resumed_run_id, Some(7));

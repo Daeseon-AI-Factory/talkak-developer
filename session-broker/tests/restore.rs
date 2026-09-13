@@ -7,6 +7,7 @@ use session_broker::runtime::{
     WriteSessionRequest, RESTORE_DIVIDER,
 };
 use session_broker::store::SessionStore;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn spawn_request(session_id: &str, restore: bool) -> SpawnSessionRequest {
@@ -210,4 +211,86 @@ fn second_definition(root: &std::path::Path, id: &str) -> session_broker::store:
     SessionStore::at(root)
         .definition(id)
         .expect("definition on disk")
+}
+
+/// Two brokers race for the endpoint at every login: the app starts one on demand and the login
+/// entry starts another. The one that loses must leave the store exactly as it found it — a
+/// restore on its way out would spawn a second shell for every session the winner is already
+/// serving, and rewrite their definitions under run ids nothing is using.
+#[test]
+fn a_broker_that_loses_the_endpoint_restores_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let store_root = temp.path().join("sessions");
+    let endpoint = if cfg!(windows) {
+        format!(r"\\.\pipe\talkak-dev-broker-loser-{}", std::process::id())
+    } else {
+        format!("/tmp/talkak-dev-broker-loser-{}.sock", std::process::id())
+    };
+
+    // A session the winner is serving, recorded as alive.
+    let winner = SessionRuntime::with_store(SessionStore::at(&store_root));
+    let alive = winner.spawn(spawn_request("held", false)).unwrap();
+    let store = SessionStore::at(&store_root);
+    assert_eq!(store.definition("held").unwrap().run_id, Some(alive.run_id));
+
+    // A broker over the same store whose endpoint is already taken by this test's own listener.
+    let _held = hold(&endpoint);
+    let status = Command::new(env!("CARGO_BIN_EXE_talkak-dev-broker"))
+        .arg(&endpoint)
+        .arg(store_root.as_os_str())
+        .status()
+        .expect("run the losing broker");
+    assert!(
+        !status.success(),
+        "the second broker must refuse the endpoint"
+    );
+
+    let after = store.definition("held").unwrap();
+    assert_eq!(
+        after.run_id,
+        Some(alive.run_id),
+        "the definition was rewritten"
+    );
+    assert_eq!(after.restored_run_id, None, "the loser restored a session");
+    assert!(after.ended_at_ms.is_none());
+
+    let _ = winner.kill(RunSessionRequest {
+        session_id: "held".into(),
+        run_id: alive.run_id,
+    });
+}
+
+/// Holds the endpoint for the length of a test. A unix socket can be held by a plain listener;
+/// a named pipe cannot, so Windows holds it with a real broker over a store of its own and stops
+/// it on drop rather than leaving it behind.
+#[cfg(unix)]
+struct HeldEndpoint(#[allow(dead_code)] std::os::unix::net::UnixListener);
+
+#[cfg(unix)]
+fn hold(endpoint: &str) -> HeldEndpoint {
+    let _ = std::fs::remove_file(endpoint);
+    HeldEndpoint(std::os::unix::net::UnixListener::bind(endpoint).expect("hold the endpoint"))
+}
+
+#[cfg(windows)]
+struct HeldEndpoint(std::process::Child);
+
+#[cfg(windows)]
+impl Drop for HeldEndpoint {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[cfg(windows)]
+fn hold(endpoint: &str) -> HeldEndpoint {
+    let store = std::env::temp_dir().join(format!("talkak-holder-{}", std::process::id()));
+    let holder = Command::new(env!("CARGO_BIN_EXE_talkak-dev-broker"))
+        .arg(endpoint)
+        .arg(store.as_os_str())
+        .spawn()
+        .expect("hold the endpoint");
+    std::thread::sleep(Duration::from_millis(750));
+    HeldEndpoint(holder)
 }
