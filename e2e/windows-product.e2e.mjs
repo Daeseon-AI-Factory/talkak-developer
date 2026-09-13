@@ -147,8 +147,15 @@ describe("installed Windows product path", () => {
       timeoutMsg: "the marker never echoed before the broker was killed",
     });
 
-    const live = await invokeApp("session_live");
-    const session = live.find((entry) => entry.running);
+    // The broker still holds the sessions the first scenario left running, so ask the app which
+    // session the mounted pane is showing rather than taking the first running one.
+    const summary = await browser.execute(() => window.__talkakTest.retainedTerminalSummary());
+    const shown = summary.find((entry) => entry.connected);
+    assert.ok(shown, "no mounted terminal to restore");
+    const session = (await invokeApp("session_live")).find(
+      (entry) => entry.sessionId === shown.sessionId,
+    );
+    assert.ok(session?.running, "the mounted pane's session is not running");
     const runBefore = session.runId;
     const sessionsDir = `${process.env.APPDATA}\\windows-ci\\sessions`;
     mkdirSync(sessionsDir, { recursive: true });
@@ -162,7 +169,7 @@ describe("installed Windows product path", () => {
       }),
     );
 
-    assert.ok(await killBroker(), "no broker process found to kill");
+    assert.ok(killBroker() >= 1, "no broker process found to kill");
     await browser.pause(2000);
     await browser.refresh();
     await (await $('[data-testid="runtime-phase"][data-phase="running"]')).waitForExist({
@@ -204,7 +211,7 @@ describe("installed Windows product path", () => {
       timeout: 20_000,
     });
     await browser.pause(2000);
-    assert.ok(await killBroker(), "no broker process found to kill (second)");
+    assert.ok(killBroker() >= 1, "no broker process found to kill (second)");
     await browser.pause(2000);
     await browser.refresh();
     await browser.pause(5000);
@@ -239,14 +246,17 @@ async function stopVisibleSessions() {
   }
 }
 
-async function killBroker() {
-  // SIGKILL's Windows cousin: no shutdown, no exit marks on the store, like a crash.
-  try {
-    execSync('taskkill /F /FI "IMAGENAME eq talkak-dev-broker*"', { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
+/**
+ * SIGKILL's Windows cousin: no shutdown, no exit marks on the store, like a crash. Returns how
+ * many brokers were killed — `taskkill` with a filter reports success when nothing matched, so a
+ * pattern that stopped matching would have read as a kill and hidden the test that follows.
+ */
+function killBroker() {
+  const killed = execSync(
+    'powershell -NoProfile -Command "$p = @(Get-Process talkak-dev-broker-* -ErrorAction SilentlyContinue); $p | Stop-Process -Force; $p.Count"',
+    { encoding: "utf8" },
+  ).trim();
+  return Number.parseInt(killed, 10) || 0;
 }
 
 async function pasteCommand(command) {

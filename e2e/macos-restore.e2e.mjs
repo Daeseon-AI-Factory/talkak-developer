@@ -83,8 +83,18 @@ describe("session restore after broker loss", () => {
       timeoutMsg: "the marker never echoed before the broker was killed",
     });
 
-    const live = await invokeApp("session_live");
-    const session = live.find((entry) => entry.running);
+    // One broker holds every session of this gate's other specs as well, and the earlier ones
+    // are still running. Ask the app which session the mounted pane is showing instead of taking
+    // the first running one — writing the binding for a stranger's session resumes nothing.
+    const summary = await browser.execute(() => window.__talkakTest.retainedTerminalSummary());
+    const shown = summary.find((entry) => entry.connected);
+    if (!shown) throw new Error("no mounted terminal to restore");
+    const session = (await invokeApp("session_live")).find(
+      (entry) => entry.sessionId === shown.sessionId,
+    );
+    if (!session?.running) {
+      throw new Error(`the mounted pane's session is not running: ${JSON.stringify(session)}`);
+    }
     const runBefore = session.runId;
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(
