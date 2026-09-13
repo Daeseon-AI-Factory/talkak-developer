@@ -183,12 +183,18 @@ describe("installed Windows product path", () => {
       timeout: 40_000,
       timeoutMsg: "the resume command from the binding never ran in the restored shell",
     });
-    const text = await terminalText();
-    const marker = text.indexOf("beforerestoremarker");
-    const divider = text.indexOf("session restored");
+    // What the pane showed before the restore lives in the record, not necessarily on screen: a
+    // PowerShell started under ConPTY clears the screen and its scrollback as it comes up, so the
+    // restored pane starts clean here where a macOS shell keeps the old lines above the divider.
+    const stored = Buffer.from(
+      await invokeApp("session_stored_output", { request: { sessionId: session.sessionId } }),
+      "base64",
+    ).toString("utf8");
+    const marker = stored.indexOf("beforerestoremarker");
+    const divider = stored.indexOf("session restored");
     assert.ok(
       marker >= 0 && divider > marker,
-      `old output and divider out of order: ${text.slice(-300)}`,
+      `the record lost what came before the restore: ${stored.slice(-300)}`,
     );
     const restored = (await invokeApp("session_live")).find(
       (entry) => entry.sessionId === session.sessionId,

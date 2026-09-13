@@ -454,6 +454,10 @@ defects and two product hardenings worth keeping:
   shell's banner; it survived there, but a shell that resets the terminal as it starts can drop it.
 - **The resume is reserved before it is typed.** The binding is marked under a process lock and
   released if the write fails, so two panes asking at once cannot both type it.
+- **Windows starts a restored pane clean.** A PowerShell coming up under ConPTY clears the screen
+  and its scrollback, so the old output and the divider the restore seeded are wiped from the live
+  pane there; macOS keeps them above the divider. The record keeps them on both, which is what the
+  Windows gate asserts (`session_stored_output`) and what the terminal log tab shows.
 - **A losing broker restored everything on its way out.** Two brokers race for the endpoint at
   every login: the app starts one on demand, the login entry starts another. The restore ran in
   `main` before the endpoint was claimed, so the loser spawned a shell for every stored session

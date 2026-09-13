@@ -135,6 +135,14 @@ describe("session restore after broker loss", () => {
     if (marker < 0 || divider < marker) {
       throw new Error(`old output and divider out of order: ${text.slice(-300)}`);
     }
+    // And the record keeps it too, which is what the restored pane is painted from.
+    const stored = Buffer.from(
+      await invokeApp("session_stored_output", { request: { sessionId: session.sessionId } }),
+      "base64",
+    ).toString("utf8");
+    if (stored.indexOf("session restored") < stored.indexOf("before-restore-marker")) {
+      throw new Error("the record lost what came before the restore");
+    }
     const restored = (await invokeApp("session_live")).find(
       (entry) => entry.sessionId === session.sessionId,
     );

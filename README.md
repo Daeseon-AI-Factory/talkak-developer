@@ -38,7 +38,8 @@ This repository contains the interactive product shell and its first native runt
 - session recovery: the broker keeps every session's definition and output on disk, stamps runs
   that end, and brings back the ones that were alive when it died — same id, same pane, old output
   above a divider, a new run id — whether the broker crashed, was replaced by an update, or the
-  machine restarted; an agent session picks its conversation up with a per-agent resume command
+  machine restarted (a restored PowerShell clears its own screen, so on Windows the old output
+  stays in the record and the terminal log rather than the live pane); an agent session picks its conversation up with a per-agent resume command
   typed once; the broker can start at login (macOS LaunchAgent, Windows Run entry)
 
 The Tauri desktop app can start the operating system's default shell in an explicit absolute working
