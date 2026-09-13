@@ -1,0 +1,55 @@
+/*
+ * Bundled typefaces. A system font stack can never look the same on macOS and Windows, and the
+ * Windows system faces carry no Hangul that pairs with their Latin, so the product ships its own.
+ * All three are SIL OFL 1.1; the licence texts sit beside the files in src/assets/fonts/.
+ *
+ * Pretendard   — UI. One family covering Latin and Hangul, so the two never resolve apart.
+ * JetBrains Mono — terminal Latin.
+ * D2Coding     — terminal Hangul, which has to occupy exactly two cells or the grid tears.
+ */
+
+@font-face {
+  font-family: "Pretendard Variable";
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: block;
+  src: url("../assets/fonts/PretendardVariable.woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  src: url("../assets/fonts/JetBrainsMono-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  src: url("../assets/fonts/JetBrainsMono-Bold.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "D2Coding";
+  font-style: normal;
+  font-weight: 400;
+  font-display: block;
+  /* Hangul, punctuation and the Latin that D2Coding shares with it. Range-limited so JetBrains
+     Mono keeps the Latin it draws better, and this face is only consulted for what it is for. */
+  unicode-range: U+1100-11FF, U+3000-303F, U+3130-318F, U+A960-A97F, U+AC00-D7A3, U+D7B0-D7FF,
+    U+FF00-FFEF;
+  src: url("../assets/fonts/D2Coding-Regular.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "D2Coding";
+  font-style: normal;
+  font-weight: 700;
+  font-display: block;
+  unicode-range: U+1100-11FF, U+3000-303F, U+3130-318F, U+A960-A97F, U+AC00-D7A3, U+D7B0-D7FF,
+    U+FF00-FFEF;
+  src: url("../assets/fonts/D2Coding-Bold.woff2") format("woff2");
+}

@@ -1,0 +1,395 @@
+/*
+ * The conversation log, shared by the inspector and the phone view: entries, rendered markdown,
+ * copy buttons, tool summaries, decisions, day separators, and the summary token-usage rows.
+ * adaptive.css re-sizes the same classes for a thumb.
+ */
+
+.conversation-list__meta {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 0.8em;
+}
+
+.conversation-entry {
+  position: relative;
+  margin-bottom: 9px;
+  padding: 11px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.conversation-entry[data-author="agent"] {
+  border-color: rgba(95, 226, 237, 0.2);
+  background: rgba(95, 226, 237, 0.045);
+}
+
+.conversation-entry[data-author="system"] {
+  border-style: dashed;
+  background: transparent;
+}
+
+.conversation-entry header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+
+.conversation-entry strong {
+  color: var(--accent);
+  font-family: var(--sans);
+  font-size: 0.92em;
+}
+
+.conversation-entry[data-author="you"] strong {
+  color: var(--text);
+}
+
+.conversation-entry[data-author="system"] strong {
+  color: var(--text-dim);
+}
+
+.conversation-entry time {
+  color: var(--text-dim);
+  /* A timestamp is data in columns: fixed-width keeps successive entries aligned. */
+  font-family: var(--mono);
+  font-size: 0.8em;
+}
+
+.conversation-entry__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Copy buttons: quiet until the entry is hovered or focused, loud about a refused copy. */
+.conversation-copy {
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: 0.74em;
+  line-height: 1.6;
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+
+.conversation-entry:hover .conversation-copy,
+.conversation-entry:focus-within .conversation-copy,
+.conversation-copy[data-status="copied"],
+.conversation-copy[data-status="failed"] {
+  opacity: 1;
+}
+
+.conversation-copy:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.conversation-copy[data-status="copied"] {
+  color: var(--success);
+}
+
+.conversation-copy[data-status="failed"] {
+  color: var(--warning);
+}
+
+/* Rendered markdown. The text is plain DOM so drag selection and the system copy keep working. */
+.conversation-entry__body {
+  color: var(--text-secondary);
+  font-size: 1em;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.conversation-entry__body > :first-child {
+  margin-top: 0;
+}
+
+.conversation-entry__body > :last-child {
+  margin-bottom: 0;
+}
+
+.conversation-entry__body p {
+  margin: 0 0 0.6em;
+}
+
+/* A prompt is typed, not authored: its line breaks stay where they were. */
+.conversation-entry[data-author="you"] .conversation-entry__body p,
+.conversation-entry[data-author="system"] .conversation-entry__body p {
+  white-space: pre-wrap;
+}
+
+.conversation-entry__body h1,
+.conversation-entry__body h2,
+.conversation-entry__body h3,
+.conversation-entry__body h4,
+.conversation-entry__body h5,
+.conversation-entry__body h6 {
+  margin: 0.9em 0 0.4em;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 1em;
+  font-weight: 700;
+}
+
+.conversation-entry__body h1 {
+  font-size: 1.15em;
+}
+
+.conversation-entry__body h2 {
+  font-size: 1.08em;
+}
+
+.conversation-entry__body ul,
+.conversation-entry__body ol {
+  margin: 0 0 0.6em;
+  padding-left: 1.4em;
+}
+
+.conversation-entry__body li + li {
+  margin-top: 0.2em;
+}
+
+.conversation-entry__body blockquote {
+  margin: 0 0 0.6em;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-dim);
+}
+
+.conversation-entry__body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.conversation-entry__body hr {
+  margin: 0.8em 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.conversation-entry__body table {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 0.6em;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  overflow-x: auto;
+}
+
+.conversation-entry__body th,
+.conversation-entry__body td {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.conversation-entry__body th {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.conversation-entry__body code {
+  font-family: var(--mono);
+  font-size: 0.9em;
+}
+
+/* One inline token copies on click; it stays selectable text for a drag across the paragraph. */
+.conversation-inline-code code {
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+  user-select: text;
+}
+
+.conversation-inline-code code:hover,
+.conversation-inline-code code:focus-visible {
+  border-color: var(--border-strong);
+}
+
+.conversation-copy__state {
+  margin-left: 5px;
+  color: var(--success);
+  font-family: var(--sans);
+  font-size: 0.74em;
+}
+
+.conversation-copy__state[data-status="failed"] {
+  color: var(--warning);
+}
+
+.conversation-code {
+  position: relative;
+  margin: 0 0 0.6em;
+}
+
+.conversation-code .conversation-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 1;
+  border-color: var(--border);
+  background: var(--surface-raised);
+}
+
+.conversation-code pre {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(2, 8, 10, 0.55);
+  font-family: var(--mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.conversation-code pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+}
+
+.conversation-entry__tools {
+  margin-top: 7px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 0.78em;
+  overflow-wrap: anywhere;
+}
+
+/* A question the agent asked: the offered options and the one that was picked. */
+.conversation-decisions {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.conversation-decision {
+  padding-left: 10px;
+  border-left: 2px solid var(--border-strong);
+}
+
+.conversation-decision strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 0.9em;
+}
+
+.conversation-decision ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conversation-decision li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 0.9em;
+}
+
+.conversation-decision li::before {
+  content: "○";
+}
+
+.conversation-decision li[data-selected="true"] {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.conversation-decision li[data-selected="true"]::before {
+  content: "✓";
+}
+
+.conversation-decision em {
+  color: var(--text-dim);
+  font-size: 0.85em;
+  font-style: normal;
+  font-weight: 400;
+}
+
+.conversation-decision small {
+  color: var(--text-dim);
+  font-size: 0.8em;
+}
+
+.conversation-day {
+  margin: 6px 0 10px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: calc(0.12em * var(--tracking));
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.usage-grid {
+  display: grid;
+  gap: 4px;
+}
+
+.usage-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  color: var(--text-secondary);
+  font-size: 0.92em;
+}
+
+.usage-row strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.usage-grid__note {
+  margin-top: 4px;
+  color: var(--text-dim);
+  font-size: 0.78em;
+  line-height: 1.4;
+}
+
+.conversation-list__older {
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-secondary);
+  cursor: pointer;
+  font: inherit;
+}
+
+.conversation-list__older:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.conversation-disclaimer {
+  margin-top: 14px;
+  padding: 11px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.8em;
+  line-height: 1.5;
+}
