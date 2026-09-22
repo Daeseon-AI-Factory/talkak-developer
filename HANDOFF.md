@@ -464,3 +464,57 @@ defects and two product hardenings worth keeping:
   and rewrote their definitions under run ids nothing was using, moments before exiting. It now
   runs inside the server once the listener is bound (`restore_after_binding`), covered by
   `a_broker_that_loses_the_endpoint_restores_nothing`.
+
+### 2026-09-21 — the 0.1.3 install on the owner's Windows machine: what an eager restore does to a real store
+
+Installing the local 0.1.3 package over the owner's 0.1.0 install started 47 brokers in sixteen
+minutes, froze the machine twice, and ended all 26 live sessions. The record with evidence is
+`docs/windows-verification-log.md` W-024; this entry is what the next session needs to know.
+
+- **What broke** — three things compounded: `restore_pending` ran in `main` before the pipe was
+  claimed; the app relaunches a broker after a 5 s wait with no memory of the one it started
+  (`establish()`, `acquire()` ×2, `request()` ×1, `subscribe()` per pane); and the restore is
+  unbounded over a store where a 0.1.0 broker had never stamped `ended_at_ms`, so all 133
+  definitions counted as alive.
+- **What 0.2.0 fixed** — `restore_after_binding` (`3c4f676`) closes the multiplication: a losing
+  broker now fails its claim before restoring anything. What it does not fix: the restore is still
+  synchronous before the accept loop and still unbounded. On Windows the app's `Hello` read has no
+  timeout, so over a large store the app blocks for the whole restore instead of relaunching, and
+  the memory cost is unchanged (~80 MB per PowerShell × every unstamped definition).
+- **Machine state** — the owner's machine runs 0.1.0 again (no updater plugin in that build, so it
+  will not fetch 0.2.0 by itself). HKCU Run `TalkakDevBroker` points at a deleted 0.1.3 broker copy
+  and does nothing. A byte-identical copy of the post-incident store is in
+  `%APPDATA%\dev.talkak.desktop\sessions-quarantine`; the live store has 86 definitions rewritten
+  with `restoredRunId` and none with `endedAtMs`. Nothing containing the eager restore goes on this
+  machine until the items below are done.
+
+Open, needing the owner:
+
+- **The public v0.2.0 release.** `latest.json` (published 2026-09-13T02:01Z) has a `windows-x86_64`
+  entry; any 0.1.2/0.1.3 install with the updater will take it and run the unbounded restore over
+  whatever store it has. Mark the release pre-release or remove `latest.json` until the restore is
+  bounded. Needs a GitHub login; the assistant's shell has none.
+- **Bound and background the restore.** Run `restore_pending` on a `std::thread` after the claim
+  (not a tokio task: `serve_connection` and `stream_output` need those pools); keep
+  `has_running_sessions()` true while it runs so `should_stop_server` cannot log `exiting: idle`
+  mid-restore; cap the eager pass (newest N by activity, measured against the store's newest write
+  rather than the wall clock) and stamp `ended_at_ms` on what it skips so the app's per-pane
+  `session_snapshot` does not resurrect them one at a time. Filters belong in `restore_pending`,
+  not `restorable()` — `max_run_id` and four store tests depend on the unfiltered list. `spawn()`
+  needs an in-flight id reservation taken before `next_run_id`/`openpty`/`record`; today a
+  duplicate loser has already rewritten the definition and published a divider.
+- **Remember the launch in the app.** Keep the `Child` from `spawn_detached` under the launch mutex
+  and do not launch again while it is alive and younger than the endpoint wait; give the Windows
+  `Hello` a read timeout.
+- **A gate for the case that hit.** An upgrade scenario in CI: seed a store with unstamped
+  definitions in the previous release's format, start the broker with autostart on, assert one
+  broker and at most the cap of restored shells. Both E2E specs disable autostart today.
+- **Keep development builds off the owner's data.** A dev-only identifier and pipe suffix
+  (`dev.talkak.desktop.dev`, `talkak-dev-broker-<user>-dev`) and a pre-install smoke script
+  (`scripts/smoke-upgrade.ps1`: copy the real store, run the new broker on a temporary pipe and
+  store, fail if brokers > 1 or shells > cap within 30 s). Until those exist: fetch before building,
+  dry-run the new broker on a copy of the store, keep the previous installer, and write the
+  rollback step down before installing.
+- **`AGENTS.md`** verification stops at `pnpm build` / `cargo check`; add the rule that a change
+  to broker startup, restore, or the store format ships with a test over a store the previous
+  release wrote.

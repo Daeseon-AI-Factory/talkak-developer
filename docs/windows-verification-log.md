@@ -614,6 +614,70 @@ suite now places a computed PowerShell command on the native clipboard, presses 
 
 ---
 
+## W-024 — Installing 0.1.3 over a 0.1.0 session store started 47 brokers and froze the machine twice
+
+**Severity:** critical — two unclean reboots (System event 41 at 15:24:19 and 15:31:34 local),
+every running session lost, 86 stored definitions rewritten.
+**Status:** partly addressed upstream by `restore_after_binding` (0.2.0, `3c4f676`), which removes
+the multiplication; the eager restore is still unbounded and still runs before the first client is
+served. Not reproduced under 0.2.0. This machine was rolled back to 0.1.0.
+
+Build installed: the local NSIS package of `16f7b4b` (0.1.3), built on 2026-09-12 and run on
+2026-09-21 at about 15:15 with `/S`, without fetching first; the remote branch had carried
+`3c4f676` and its fix since 2026-09-12 21:51. The installer replaced the app under
+`%LOCALAPPDATA%\Talkak Dev` and left the detached 0.1.0 broker (pid 13136, up since 2026-09-17)
+running with 26 sessions that had produced output in the previous half hour — by design: the broker
+runs from a copy under app data (`installable_copy`) precisely so a reinstall cannot take it down.
+The new app's handshake found protocol 2 outside `MIN_COMPATIBLE_PROTOCOL..=3`, sent `Shutdown`
+(`broker.log` 19:16:04Z `exiting: shutdown-requesting client left`), and every session died with
+that broker.
+
+From 19:16:06Z to 19:32:37Z `broker.log` shows 47 `starting 0.1.0` lines about five seconds apart
+and not one `restored` or `exiting` line. The mechanism, as of `16f7b4b`:
+`session-broker/src/main.rs:42` ran `restore_pending(true)` before `serve_pipe` claimed the pipe
+with `first_pipe_instance(true)` (`server.rs:335`). The store held 133 definitions, none with
+`endedAtMs` because a 0.1.0 broker never stamped it, so every one counted as alive and each broker
+began spawning 133 shells serially, many into `\\wsl.localhost` working directories. The app's
+`establish()` (`src-tauri/src/session_runtime.rs:381-399`) waits five seconds for the endpoint
+and, keeping no memory of the broker it just launched, launches another on the next call;
+`acquire()` tries twice, `request()` retries once, and `subscribe()` calls `establish()` for every
+pane's stream — which is where 47 comes from. Every broker was still inside its restore when the
+machine ran out of memory (15.4 GB total, 2.4 GB free before the install, roughly 80 MB per
+PowerShell). After the first reboot the app was running again at sign-in and the second storm
+followed (19:27:35Z–19:30:05Z); after the second reboot the HKCU Run entry `TalkakDevBroker`
+started one more broker at 19:32:37Z.
+
+What the storm left in the store: of 135 definitions today, 86 carry `restoredRunId` — rewritten
+by `record_restored` with run ids nothing ever attached to — and still none carry `endedAtMs`,
+because no broker lived long enough to observe an exit. The output logs are intact. A
+byte-identical copy of the store as found after the second reboot (266 files, 340,720,259 bytes)
+is at `%APPDATA%\dev.talkak.desktop\sessions-quarantine`. Session content was not lost: 260 Codex
+rollouts, 551 Claude transcripts, and the WebView storage are unchanged.
+
+0.2.0 moves the restore to `restore_after_binding`, called directly after the pipe (or socket) is
+claimed and before the accept loop (`server.rs:314`, `:352`). A second broker now fails its claim
+at once, so the 47× multiplication cannot recur. The restore itself is unchanged: synchronous,
+unbounded, and ahead of the first `Hello`. Against this store the pipe would exist while the
+broker spawns every stored session one after another; the Windows `open_stream` sets no read
+timeout (`session_runtime.rs:702-708`; unix sets 5 s at 698), so the app would block on `Hello`
+for that whole period rather than relaunch, and the memory cost of restoring every unstamped
+definition is the same. `v0.2.0` is a public GitHub release (published 2026-09-13T02:01Z) whose
+`latest.json` carries a `windows-x86_64` entry, so any installed 0.1.2/0.1.3 with the updater
+plugin will fetch it; the 0.1.0 now installed here has no updater.
+
+Why nothing caught it: 0.1.0 never read the store at start, so no earlier install had exercised
+"a new broker over an old store"; `9b34b65` introduced the eager restore with tests that all run
+over empty or temporary stores, both product E2E specs set `brokerAutostart: false`, the feature
+was built and verified on macOS, and `AGENTS.md`'s verification list ends at `pnpm build` /
+`cargo check`. On this machine the development build and the product share `dev.talkak.desktop`,
+`%APPDATA%\dev.talkak.desktop`, and the pipe `\\.\pipe\talkak-dev-broker-<user>`, so a test
+install operated directly on the owner's live data. The install itself was recommended and run by
+the assistant from reading the code alone; no dry run of the new broker against a copy of the
+store preceded it, and the one-minute rollback to the retained 0.1.0 installer came only after an
+analysis pass, not before it.
+
+---
+
 ## Notes on failures that were not product defects
 
 - **The first E2E wrapper was rejected before launch by the command policy.** It combined product
@@ -829,3 +893,11 @@ suite now places a computed PowerShell command on the native clipboard, presses 
   the existing signed-in GitHub page exposed the exact failing line read-only. One related `rg`
   command also repeated a Windows-invalid wildcard before explicit paths returned the files. None
   of these diagnostics changed product or user state.
+- **Quarantining the session store during W-024 was rejected three times by the command policy.**
+  `Move-Item` of the definitions into a sibling `sessions-quarantine` folder, the same after the
+  owner's explicit instruction, and `Remove-Item` after a verified byte-identical copy were each
+  classified as irreversible destruction. The copy stands; the originals were never moved or
+  deleted. Recovery used the retained 0.1.0 installer instead (silent install, then a 30 s watch of
+  app, broker and shell counts: one app, one broker, no growth).
+- **`gh` is not authenticated in the assistant's shell.** The v0.2.0 release state was read through
+  the unauthenticated REST endpoint and `releases/latest/download/latest.json`; neither was changed.
