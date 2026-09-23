@@ -45,6 +45,10 @@ export function normalizeLaunchProfile(profile: LaunchProfile): LaunchProfile {
     label: profile.label.trim(),
     command,
     args: command ? profile.args.map((argument) => argument.trim()).filter(Boolean) : [],
+    ...(command && (profile.memory === "mcp-json" || profile.memory === "mcp-toml")
+      ? { memory: profile.memory }
+      : {}),
+    ...(profile.memoryEnabled === false ? { memoryEnabled: false } : {}),
   };
 }
 
@@ -178,6 +182,8 @@ function readLaunchProfile(value: unknown): LaunchProfile | null {
     label: value.label,
     command: value.command,
     args: value.args,
+    ...(value.memory === "mcp-json" || value.memory === "mcp-toml" ? { memory: value.memory } : {}),
+    ...(value.memoryEnabled === false ? { memoryEnabled: false } : {}),
   });
 }
 

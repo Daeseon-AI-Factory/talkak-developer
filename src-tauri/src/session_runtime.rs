@@ -93,7 +93,13 @@ impl SessionRuntime {
     /// `sessions` store the app used when the engine was in-process, so nothing already recorded
     /// is lost across this migration.
     pub(crate) fn attach(data_dir: Option<PathBuf>) -> Self {
-        Self::at_endpoint(default_endpoint(), data_dir)
+        // A WebDriver build must exercise its own broker, not adopt an installed app's older
+        // process or share the user's active terminals. Ordinary builds keep their stable endpoint.
+        #[cfg(feature = "webdriver-ci")]
+        let endpoint = webdriver_endpoint(data_dir.as_deref());
+        #[cfg(not(feature = "webdriver-ci"))]
+        let endpoint = default_endpoint();
+        Self::at_endpoint(endpoint, data_dir)
     }
 
     /// Tests bind their own endpoint so they never adopt — or disturb — the user's real broker.
@@ -442,6 +448,42 @@ impl SessionRuntime {
         ))
     }
 
+    pub(crate) fn memory_executable(&self) -> BrokerResult<PathBuf> {
+        let source = broker_binary()?;
+        // Saved launch arguments may outlive an app update. Keep this content-addressed copy
+        // outside broker pruning so a recovered agent can still start its original MCP server.
+        let data = self
+            .data_dir
+            .as_ref()
+            .ok_or_else(|| BrokerError("App data directory is unavailable".into()))?;
+        let bytes = std::fs::read(&source).map_err(|e| BrokerError(e.to_string()))?;
+        let directory = data.join("memory-runtime");
+        std::fs::create_dir_all(&directory).map_err(|e| BrokerError(e.to_string()))?;
+        let destination = directory.join(format!(
+            "talkak-memory-{}{}",
+            digest(&bytes),
+            std::env::consts::EXE_SUFFIX
+        ));
+        if !destination.exists() {
+            // Publish only a complete executable. Other app processes can resolve the same
+            // digest while this one copies; a process-specific temporary file avoids exposing
+            // a partially written program to an agent starting at the same time.
+            static INSTALL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = INSTALL_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+            if !destination.exists() {
+                let pending = destination.with_extension(format!("pending-{}", std::process::id()));
+                std::fs::copy(source, &pending).map_err(|e| BrokerError(e.to_string()))?;
+                if let Err(error) = std::fs::rename(&pending, &destination) {
+                    if !destination.is_file() {
+                        return Err(BrokerError(error.to_string()));
+                    }
+                    let _ = std::fs::remove_file(pending);
+                }
+            }
+        }
+        Ok(destination)
+    }
+
     fn launch_broker(&self) -> BrokerResult<()> {
         let source = broker_binary()?;
         let program = self.installable_copy(&source).unwrap_or(source);
@@ -747,6 +789,7 @@ fn wait_for_endpoint_gone(endpoint: &str, timeout: Duration) {
 }
 
 /// Same per-user endpoint the broker derives for itself, kept in one place on each side.
+#[cfg(not(feature = "webdriver-ci"))]
 fn default_endpoint() -> String {
     #[cfg(unix)]
     {
@@ -762,6 +805,23 @@ fn default_endpoint() -> String {
     {
         let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
         format!(r"\\.\pipe\talkak-dev-broker-{user}")
+    }
+}
+
+#[cfg(feature = "webdriver-ci")]
+fn webdriver_endpoint(data_dir: Option<&Path>) -> String {
+    let scope = data_dir.unwrap_or_else(|| Path::new("webdriver-ci"));
+    let key = digest(scope.to_string_lossy().as_bytes());
+    #[cfg(windows)]
+    {
+        format!(r"\\.\pipe\talkak-dev-webdriver-{key}")
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::temp_dir()
+            .join(format!("tkd-{key}.sock"))
+            .to_string_lossy()
+            .into_owned()
     }
 }
 

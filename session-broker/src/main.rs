@@ -11,6 +11,15 @@ use session_broker::store::SessionStore;
 use std::sync::Arc;
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--memory-mcp") {
+        if let Err(error) =
+            session_broker::memory::mcp::run(&std::env::args().skip(2).collect::<Vec<_>>())
+        {
+            eprintln!("talkak-memory: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     let endpoint = std::env::args().nth(1).unwrap_or_else(default_endpoint);
     let store_dir = std::env::args().nth(2);
 

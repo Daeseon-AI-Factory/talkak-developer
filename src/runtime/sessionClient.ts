@@ -9,6 +9,8 @@ export interface SpawnSessionInput {
   args: string[];
   cols: number;
   rows: number;
+  memory?: "mcp-json" | "mcp-toml";
+  memoryEnabled?: boolean;
 }
 
 export interface SessionSnapshot {

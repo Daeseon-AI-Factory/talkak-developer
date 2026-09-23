@@ -8,8 +8,10 @@ mod diagnostics_commands;
 mod editor_commands;
 mod env_vault;
 mod env_vault_commands;
+mod memory_commands;
 mod project_commands;
 mod session_commands;
+mod session_policy;
 mod session_runtime;
 mod session_stream;
 mod transcript_activity;
@@ -35,6 +37,9 @@ use diagnostics_commands::broker_log_tail;
 use editor_commands::open_source_location;
 use env_vault::EnvVault;
 use env_vault_commands::{env_vault_delete, env_vault_import, env_vault_list, env_vault_set};
+use memory_commands::{
+    memory_import, memory_read, memory_save, memory_search, memory_select, ProjectMemory,
+};
 use project_commands::{project_validate_command, project_validate_path};
 use session_commands::{
     session_discard, session_kill, session_live, session_read, session_resize,
@@ -121,6 +126,7 @@ pub fn run() {
             app.manage(SessionRuntime::attach(app_data_dir.clone()));
             app.manage(SessionStreams::default());
             app.manage(EnvVault::open(app_data_dir.clone()));
+            app.manage(ProjectMemory::new(app_data_dir.clone()));
             app.manage(TranscriptService::new(
                 app_data_dir.map(|directory| directory.join("sessions")),
             ));
@@ -142,6 +148,11 @@ pub fn run() {
             clipboard_read_text,
             clipboard_write_text,
             host_info,
+            memory_search,
+            memory_read,
+            memory_save,
+            memory_select,
+            memory_import,
             open_source_location,
             project_validate_path,
             project_validate_command,

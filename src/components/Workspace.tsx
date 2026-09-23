@@ -226,6 +226,7 @@ export function Workspace({
               className="toolbar-button"
               type="button"
               aria-label={t("workspace.summary")}
+              data-testid="open-summary"
               title={`${t("workspace.summary")} · ${shortcutDisplay(platform, "summary")}`}
               data-active={inspectorMode === "summary"}
               onClick={() =>

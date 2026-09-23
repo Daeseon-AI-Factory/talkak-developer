@@ -35,6 +35,10 @@ function ProjectDialogForm({ project, onClose, onSave }: Omit<ProjectDialogProps
   const [profileLabel, setProfileLabel] = useState(project?.launchProfile.label ?? "");
   const [command, setCommand] = useState(project?.launchProfile.command ?? "");
   const [argsText, setArgsText] = useState(project?.launchProfile.args.join("\n") ?? "");
+  const [memory, setMemory] = useState(project?.launchProfile.memory ?? "");
+  const [memoryEnabled, setMemoryEnabled] = useState(
+    project?.launchProfile.memoryEnabled !== false,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const desktopAvailable = projectClient.available();
@@ -105,6 +109,10 @@ function ProjectDialogForm({ project, onClose, onSave }: Omit<ProjectDialogProps
           label: profileLabel.trim(),
           command: normalizedCommand,
           args: normalizedCommand ? parseLaunchArguments(argsText) : [],
+          ...(normalizedCommand && (memory === "mcp-json" || memory === "mcp-toml")
+            ? { memory }
+            : {}),
+          ...(!memoryEnabled ? { memoryEnabled: false } : {}),
         },
       });
     } catch (cause: unknown) {
@@ -212,6 +220,7 @@ function ProjectDialogForm({ project, onClose, onSave }: Omit<ProjectDialogProps
                 <span>{t("projectDialog.command")}</span>
                 <input
                   value={command}
+                  data-testid="project-command"
                   onChange={(event) => setCommand(event.currentTarget.value)}
                   placeholder={t("projectDialog.commandPlaceholder")}
                   disabled={busy}
@@ -231,6 +240,32 @@ function ProjectDialogForm({ project, onClose, onSave }: Omit<ProjectDialogProps
                 />
                 <small>{t("projectDialog.argumentsHint")}</small>
               </label>
+              <label>
+                <span>{t("memory.adapter")}</span>
+                <select
+                  value={memory}
+                  data-testid="project-agent-connection"
+                  disabled={busy || !command.trim()}
+                  onChange={(event) => setMemory(event.currentTarget.value)}
+                >
+                  <option value="">{t("memory.off")}</option>
+                  <option value="mcp-json">{t("memory.json")}</option>
+                  <option value="mcp-toml">{t("memory.toml")}</option>
+                </select>
+                <small>{t("memory.adapterHint")}</small>
+              </label>
+              {memory ? (
+                <label className="project-dialog__memory-toggle">
+                  <input
+                    data-testid="project-memory-enabled"
+                    type="checkbox"
+                    checked={memoryEnabled}
+                    disabled={busy || !command.trim()}
+                    onChange={(event) => setMemoryEnabled(event.currentTarget.checked)}
+                  />
+                  <span>{t("memory.enabled")}</span>
+                </label>
+              ) : null}
             </section>
 
             {error ? (

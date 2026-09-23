@@ -78,6 +78,10 @@ export interface LaunchProfile {
   label: string;
   command: string | null;
   args: string[];
+  /** Explicit compatible connection; absent means a direct launch without app instructions. */
+  memory?: "mcp-json" | "mcp-toml";
+  /** A compatible connection defaults on. An explicit false survives project reloads. */
+  memoryEnabled?: boolean;
 }
 
 export interface AttentionChoice {

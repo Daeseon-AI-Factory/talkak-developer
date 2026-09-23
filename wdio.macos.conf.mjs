@@ -17,6 +17,8 @@ export const config = {
     "./e2e/macos-product.e2e.mjs",
     "./e2e/macos-stream.e2e.mjs",
     "./e2e/macos-restore.e2e.mjs",
+    "./e2e/memory.e2e.mjs",
+    "./e2e/terminal-switch.e2e.mjs",
   ],
   maxInstances: 1,
   services: [

@@ -1,4 +1,5 @@
 use crate::env_vault::EnvVault;
+use crate::memory_commands::{connection_args, MemoryAdapter, ProjectMemory};
 use crate::session_runtime::{
     LiveSession, ReadSessionRequest, ResizeSessionRequest, RunSessionRequest, SessionIdRequest,
     SessionRead, SessionRuntime, SessionSnapshot, SpawnSessionRequest, WriteSessionRequest,
@@ -6,6 +7,40 @@ use crate::session_runtime::{
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::State;
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LaunchRequest {
+    #[serde(flatten)]
+    runtime: SpawnSessionRequest,
+    memory: Option<MemoryAdapter>,
+    #[serde(default = "memory_enabled_by_default")]
+    memory_enabled: bool,
+}
+
+fn memory_enabled_by_default() -> bool {
+    true
+}
+
+/// A broker can outlive the app and retain an older PATH. Configured commands must use the same
+/// lookup path in the startup diagnostic and the PTY, including after restoration. Explicit vault
+/// values win; default login shells keep their existing environment setup on both platforms.
+fn inherit_command_path(env: &mut Vec<(String, String)>, command: Option<&str>) {
+    if command.is_none()
+        || env.iter().any(|(name, _)| {
+            if cfg!(windows) {
+                name.eq_ignore_ascii_case("PATH")
+            } else {
+                name == "PATH"
+            }
+        })
+    {
+        return;
+    }
+    if let Ok(path) = std::env::var("PATH") {
+        env.push(("PATH".into(), path));
+    }
+}
 
 // Every command here is `async`: with a non-async body that attribute puts the call on the
 // runtime's blocking pool instead of the webview's IPC thread. Each one is a round trip to the
@@ -18,9 +53,50 @@ use tauri::State;
 pub(crate) fn session_spawn(
     runtime: State<'_, SessionRuntime>,
     vault: State<'_, EnvVault>,
-    mut request: SpawnSessionRequest,
+    memory: State<'_, ProjectMemory>,
+    request: LaunchRequest,
 ) -> Result<SessionSnapshot, String> {
+    let adapter = request.memory;
+    let memory_enabled = request.memory_enabled;
+    let mut request = request.runtime;
     request.env = vault.session_env(request.cwd.as_deref());
+    inherit_command_path(&mut request.env, request.command.as_deref());
+    if let Some(adapter) = adapter {
+        if request
+            .command
+            .as_ref()
+            .is_none_or(|command| command.trim().is_empty())
+        {
+            return Err("Choose an agent command before connecting project memory".into());
+        }
+        let project = request
+            .cwd
+            .as_deref()
+            .ok_or("Memory needs a project folder")?;
+        let store = if memory_enabled {
+            Some(session_broker::memory::MemoryStore::open(
+                memory.root()?,
+                std::path::Path::new(project),
+            )?)
+        } else {
+            None
+        };
+        let policy = session_broker::memory::mcp::session_instructions(store.as_ref());
+        let launch_args = crate::session_policy::add_policy(adapter, &request, &policy)?;
+        let binary = runtime
+            .memory_executable()
+            .map_err(|error| error.to_string())?;
+        let mut args = connection_args(
+            adapter,
+            &binary,
+            memory.root()?,
+            project,
+            &request.session_id,
+            memory_enabled,
+        )?;
+        args.extend(launch_args);
+        request.args = args;
+    }
     runtime.spawn(request).map_err(|error| error.to_string())
 }
 
@@ -57,7 +133,8 @@ pub(crate) fn session_snapshot(
     if stored.ended_at_ms.is_some() {
         return Ok(None);
     }
-    let env = vault.session_env(stored.cwd.as_deref());
+    let mut env = vault.session_env(stored.cwd.as_deref());
+    inherit_command_path(&mut env, stored.command.as_deref());
     runtime
         .spawn(SpawnSessionRequest {
             session_id,
@@ -232,6 +309,30 @@ pub(crate) fn session_store_dir(runtime: State<'_, SessionRuntime>) -> Option<St
     runtime
         .sessions_dir()
         .map(|dir| dir.to_string_lossy().into_owned())
+}
+
+#[cfg(test)]
+mod command_environment_tests {
+    use super::inherit_command_path;
+
+    #[test]
+    fn configured_commands_inherit_app_path_without_changing_user_overrides_or_login_shells() {
+        let mut env = vec![];
+        inherit_command_path(&mut env, Some("configured-agent"));
+        if let Ok(path) = std::env::var("PATH") {
+            assert_eq!(env, vec![("PATH".to_string(), path)]);
+        }
+        let key = if cfg!(windows) { "Path" } else { "PATH" };
+        let mut explicit = vec![(key.to_string(), "user-selected-path".to_string())];
+        inherit_command_path(&mut explicit, Some("configured-agent"));
+        assert_eq!(
+            explicit,
+            vec![(key.to_string(), "user-selected-path".to_string())]
+        );
+        let mut shell = vec![];
+        inherit_command_path(&mut shell, None);
+        assert!(shell.is_empty());
+    }
 }
 
 #[cfg(test)]

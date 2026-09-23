@@ -1,0 +1,108 @@
+.project-memory {
+  margin: 18px 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+.project-memory summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+.project-memory__body {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+.project-memory__hint {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+}
+.project-memory__search,
+.project-memory__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.project-memory__search input {
+  flex: 1;
+  min-width: 120px;
+}
+.project-memory input,
+.project-memory textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+}
+.project-memory textarea {
+  resize: vertical;
+  line-height: 1.6;
+}
+.project-memory label {
+  display: grid;
+  gap: 6px;
+}
+.project-memory__editor {
+  display: grid;
+  gap: 10px;
+}
+.project-memory__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.project-memory__list button {
+  text-align: left;
+  width: 100%;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: inherit;
+}
+.project-memory__list button:hover,
+.project-memory__list button[data-selected="true"] {
+  background: var(--surface);
+}
+.project-memory__list span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+.project-memory__list small,
+.project-memory__record small {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.project-memory__record {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.project-memory__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.65;
+  margin: 0;
+}
+.project-memory__error {
+  color: var(--warning);
+  overflow-wrap: anywhere;
+}
+.project-memory__import[open] {
+  display: grid;
+  gap: 10px;
+}

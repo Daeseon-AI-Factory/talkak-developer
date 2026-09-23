@@ -11,6 +11,7 @@ import { type TranscriptState, useAgentTranscript } from "../runtime/useAgentTra
 import { runtimeLabel } from "../workspaceModel";
 import { ConversationView, TranscriptNotice } from "./ConversationView";
 import { Icon } from "./Icon";
+import { ProjectMemory } from "./ProjectMemory";
 import { TerminalLogView } from "./TerminalLogView";
 
 interface InspectorProps {
@@ -122,7 +123,16 @@ export function Inspector({
       </div>
 
       {mode === "summary" ? (
-        <SummaryView session={session} state={transcriptState} preview={preview} />
+        <div className="inspector__content">
+          <SummaryView session={session} state={transcriptState} preview={preview} />
+          {!preview ? (
+            <ProjectMemory
+              session={session}
+              projectPath={projectPath}
+              transcript={transcriptState.kind === "loaded" ? transcriptState.transcript : null}
+            />
+          ) : null}
+        </div>
       ) : null}
       {mode === "terminal" ? (
         <TerminalLogView
@@ -178,7 +188,7 @@ function PreviewSummary({ session }: { session: DevSession }) {
       : text(runtimeLabel(session));
 
   return (
-    <div className="inspector__content">
+    <div className="summary-content">
       <section className="summary-hero">
         <div className="summary-hero__source">{t("inspector.previewData")}</div>
         <div className="summary-hero__status-row">
@@ -236,7 +246,7 @@ function LocalTranscriptSummary({
   const lastActivity = formatTranscriptActivity(transcript?.lastActivity ?? null);
 
   return (
-    <div className="inspector__content">
+    <div className="summary-content">
       <section className="summary-hero">
         <div className="summary-hero__source">
           {transcript

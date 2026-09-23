@@ -3,6 +3,40 @@
 A lightweight, cross-platform workspace for developers running several projects and local agent
 sessions.
 
+## Project memory and session defaults
+
+Choose the connection supported by your configured agent in project settings. A compatible
+connection enables local project memory by default and supplies brief instructions at startup.
+Memory can be turned off independently: the instructions remain available, but the agent
+cannot search, read, or save project notes through the connection. Direct launch opts out of
+both. Existing profiles without a connection stay direct; executables are not guessed by name.
+
+Startup adapters preserve existing user instructions while adding the app defaults for that
+session. The JSON adapter combines an existing `--append-system-prompt`; the TOML adapter reads
+tagged `debug prompt-input` output before merging `developer_instructions`. This diagnostic
+makes no model call and does not edit agent configuration. Unsupported diagnostics or conflicting
+launch options produce an error with the direct-launch retry available.
+
+On 2026-09-23, native macOS app tests with installed Codex 0.155.1 and Claude returned the default
+policy and a preserved user instruction in the first reply, without a memory-tool request.
+Codex passed with both its installed native executable and npm launcher. Configured commands now
+receive the app's PATH unless the user supplies an override, so the diagnostic and PTY agree.
+The final tests used an isolated broker from the current build. An earlier run against an already
+running installed broker failed to find `node`; legacy broker adoption is not covered by that pass.
+Windows execution and token/time savings remain unverified.
+The read-only `session_context` tool can retrieve the policy and selected handoff ID again if
+needed; tool descriptions do not repeat the full policy, and note bodies are read on demand.
+
+The instructions are compiled into the packaged broker. They encourage scoped changes,
+appropriate checks, reuse of relevant evidence, and concise handoffs without an extra model run.
+They are guidance, not a guarantee of model behavior or token savings. Model settings, global
+agent files, and shell profiles remain user-owned.
+
+Notes retain their source and correction links. The handoff editor starts with an excerpt of the
+last assistant reply, not an automatic summary. Selected handoffs are announced by ID and read
+on demand. After a failed launch, the terminal offers an explicit retry without the app's agent
+connection, keeping the configured command and arguments and leaving the project default intact.
+
 ## First slice
 
 This repository contains the interactive product shell and its first native runtime slice:

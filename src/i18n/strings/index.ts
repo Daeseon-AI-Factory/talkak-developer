@@ -1,6 +1,7 @@
 import { runtimeMessages } from "../../runtimeMessages";
 import { attention } from "./attention";
 import { inspector } from "./inspector";
+import { memory } from "./memory";
 import { mobile } from "./mobile";
 import { project } from "./project";
 import { settings } from "./settings";
@@ -14,6 +15,7 @@ import { workspace } from "./workspace";
  * not collide in one 800-line file.
  */
 export const ko = {
+  ...memory.ko,
   ...runtimeMessages.ko,
   ...shell.ko,
   ...project.ko,
@@ -28,6 +30,7 @@ export const ko = {
 export type MessageKey = keyof typeof ko;
 
 export const en: Record<MessageKey, string> = {
+  ...memory.en,
   ...runtimeMessages.en,
   ...shell.en,
   ...project.en,

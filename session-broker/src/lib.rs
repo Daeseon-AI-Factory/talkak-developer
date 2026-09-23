@@ -13,6 +13,7 @@ pub mod base64;
 pub mod command;
 pub mod detach;
 pub mod logging;
+pub mod memory;
 pub mod output;
 pub mod protocol;
 pub mod runtime;

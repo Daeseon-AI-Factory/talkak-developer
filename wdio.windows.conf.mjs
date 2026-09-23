@@ -13,7 +13,7 @@ const installedAppPath = resolve(installedApp);
 
 export const config = {
   runner: "local",
-  specs: ["./e2e/windows-product.e2e.mjs"],
+  specs: ["./e2e/windows-product.e2e.mjs", "./e2e/memory.e2e.mjs", "./e2e/terminal-switch.e2e.mjs"],
   maxInstances: 1,
   services: [
     [

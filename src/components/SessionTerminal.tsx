@@ -27,7 +27,8 @@ import {
   errorMessage,
   sessionClient,
 } from "../runtime/sessionClient";
-import { createSessionSpawnInput } from "../runtime/sessionLaunch";
+import { createSessionSpawnInput, hasAgentConnection } from "../runtime/sessionLaunch";
+import { serializeTerminalCommit } from "../runtime/terminalCommit";
 import type { TerminalOutputWriter } from "../runtime/terminalOutputWriter";
 import { terminalRuntimePhase, terminalStreamEnabled } from "../runtime/terminalReplay";
 import { createTerminalStreamConsumer } from "../runtime/terminalStream";
@@ -292,16 +293,24 @@ export function SessionTerminal({
     const streamIsCurrent = () => !cancelled && runtimeOperationsRef.current.epoch === streamEpoch;
 
     const consumer = createTerminalStreamConsumer({
-      commit: async ({ runId, next, bytes, suppressProtocolInput }) => {
-        if (runtimeStatusRef.current?.runId !== runId) return false;
-        // Bytes the emulator already holds are skipped, not repainted. A stream is opened at the
-        // cursor known when the effect ran, and a write submitted by the previous mount can still
-        // land after that and move the cursor past the stream's start.
-        const alreadyIn = Math.max(0, cursorRef.current - (next - bytes.length));
-        const fresh = alreadyIn >= bytes.length ? new Uint8Array(0) : bytes.subarray(alreadyIn);
-        if (fresh.length > 0 && !(await writeOutput(fresh, suppressProtocolInput))) return false;
-        return recordReadCursor(runId, Math.max(next, cursorRef.current));
-      },
+      commit: ({ runId, next, bytes, suppressProtocolInput }) =>
+        serializeTerminalCommit(session.id, async () => {
+          // A queued old mount must not enqueue output after its pending-output cleanup ran.
+          if (!streamIsCurrent() || runtimeStatusRef.current?.runId !== runId) return false;
+          const kept = retainedTerminal(session.id);
+          if (kept?.runId != null && kept.runId !== runId) return false;
+          // The previous mount may have completed its write since this stream was opened. Its
+          // cursor is shared; this mount's ref still holds the older value until refreshed here.
+          syncObservedReadCursor();
+          const alreadyIn = Math.max(0, cursorRef.current - (next - bytes.length));
+          const fresh = alreadyIn >= bytes.length ? new Uint8Array(0) : bytes.subarray(alreadyIn);
+          if (fresh.length > 0 && !(await writeOutput(fresh, suppressProtocolInput))) return false;
+          const current = retainedTerminal(session.id);
+          if (kept && current !== kept) return false;
+          if (current?.runId != null && current.runId !== runId) return false;
+          // A write already submitted still commits after unmount, before the next mount runs.
+          return recordReadCursor(runId, Math.max(next, cursorRef.current));
+        }),
       truncatedMarker: () => new TextEncoder().encode(`\r\n${t("terminal.historyTruncated")}\r\n`),
       replayThrough: (frame) =>
         frame.running ? replayThroughRef.current : Number.POSITIVE_INFINITY,
@@ -521,6 +530,21 @@ export function SessionTerminal({
     ) : null;
   }
 
+  const memoryRetry =
+    hasAgentConnection(session.launchProfile) &&
+    !commandMissing &&
+    ((phase === "error" && runtimeStatusRef.current?.fault?.operation === "start") ||
+      (phase === "exited" && restartReady && exitCode !== null && exitCode !== 0)) ? (
+      <button
+        type="button"
+        className="button"
+        data-testid="retry-without-memory"
+        onClick={() => void start({ ...session.launchProfile, memory: undefined })}
+      >
+        {t("memory.retryWithout")}
+      </button>
+    ) : null;
+
   if (!terminalAttached) {
     return (
       <>
@@ -581,6 +605,7 @@ export function SessionTerminal({
               {error}
             </p>
           ) : null}
+          {memoryRetry}
         </div>
         <footer className="terminal-pane__footer">
           <span className="preview-label">{t("terminal.preview")}</span>
@@ -621,6 +646,7 @@ export function SessionTerminal({
             {error}
           </span>
         ) : null}
+        {memoryRetry}
         <span className="terminal-pane__footer-spacer" />
         {phase === "running" && mouseOwner !== "none" ? (
           <button

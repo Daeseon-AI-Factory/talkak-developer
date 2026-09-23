@@ -35,10 +35,16 @@ export interface TalkakTestHooks {
   retainedTerminalSummary: () => Array<{
     sessionId: string;
     connected: boolean;
+    foreground: boolean;
     runId: number | null;
     cursor: number;
     lines: number;
   }>;
+  /** Hold one parsed write's completion to reproduce a page switch during an in-flight chunk. */
+  holdNextTerminalWrite: (sessionId: string) => void;
+  terminalWriteProbe: () => { held: boolean; bytesWritten: number; startCursor: number };
+  releaseHeldTerminalWrite: () => void;
+  stopTerminalWriteProbe: () => void;
 }
 
 export interface TerminalGeometry {
@@ -65,7 +71,8 @@ function mounted<T extends { terminal: Emulator }>(
 ): Emulator | null {
   for (const entry of entries.values()) {
     const element = entry.terminal.element;
-    if (element?.isConnected) return entry.terminal;
+    if (element?.isConnected && !element.closest(".background-session-runtime"))
+      return entry.terminal;
   }
   return null;
 }
@@ -92,7 +99,47 @@ export function recordRender(id: string, actualDurationMs: number): void {
 
 export function installWebdriverTestHooks(): void {
   let inputLog: { terminal: Emulator; entries: string[] } | null = null;
+  let heldWrite: (() => void) | null = null;
+  let restoreWrite: (() => void) | null = null;
+  let bytesWritten = 0;
+  let startCursor = 0;
   window.__talkakTest = {
+    holdNextTerminalWrite: (sessionId) => {
+      if (restoreWrite) throw new Error("A terminal write probe is already active");
+      const entry = retainedTerminals().get(sessionId);
+      if (!entry) throw new Error("No retained terminal for this session");
+      const terminal = entry.terminal;
+      const original = terminal.write;
+      let holdNext = true;
+      bytesWritten = 0;
+      startCursor = entry.cursor;
+      terminal.write = (data, callback) => {
+        bytesWritten +=
+          typeof data === "string" ? new TextEncoder().encode(data).length : data.length;
+        const hold = holdNext;
+        holdNext = false;
+        original.call(terminal, data, () => {
+          if (hold) heldWrite = callback ?? (() => {});
+          else callback?.();
+        });
+      };
+      restoreWrite = () => {
+        terminal.write = original;
+      };
+    },
+    terminalWriteProbe: () => ({ held: heldWrite !== null, bytesWritten, startCursor }),
+    releaseHeldTerminalWrite: () => {
+      const complete = heldWrite;
+      heldWrite = null;
+      complete?.();
+    },
+    stopTerminalWriteProbe: () => {
+      restoreWrite?.();
+      restoreWrite = null;
+      const complete = heldWrite;
+      heldWrite = null;
+      complete?.();
+    },
     renderStats: () => ({ ...renderStats, byId: { ...renderStats.byId } }),
     resetRenderStats: () => {
       renderStats.commits = 0;
@@ -132,6 +179,7 @@ export function installWebdriverTestHooks(): void {
       [...retainedTerminals().entries()].map(([sessionId, entry]) => ({
         sessionId,
         connected: entry.terminal.element?.isConnected ?? false,
+        foreground: Boolean(entry.terminal.element?.closest('[data-testid="live-terminal"]')),
         runId: entry.runId,
         cursor: entry.cursor,
         lines: entry.terminal.buffer.active.length,

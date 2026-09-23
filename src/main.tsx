@@ -9,6 +9,7 @@ import "./styles/foundation.css";
 import "./styles/workspace.css";
 import "./styles/terminal-runtime.css";
 import "./styles/inspector.css";
+import "./styles/memory.css";
 import "./styles/collections.css";
 import "./styles/responsive.css";
 import "./styles/shell-layout.css";

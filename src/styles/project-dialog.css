@@ -114,6 +114,17 @@
   gap: 12px;
 }
 
+.project-dialog .project-dialog__memory-toggle {
+  display: flex;
+  align-items: center;
+}
+
+.project-dialog .project-dialog__memory-toggle input {
+  width: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
 .project-dialog label {
   display: grid;
   min-width: 0;
@@ -124,6 +135,7 @@
 }
 
 .project-dialog input,
+.project-dialog select,
 .project-dialog textarea {
   width: 100%;
   padding: 9px 11px;
@@ -136,7 +148,8 @@
   font-size: 13px;
 }
 
-.project-dialog input {
+.project-dialog input,
+.project-dialog select {
   height: 38px;
 }
 
@@ -146,6 +159,7 @@
 }
 
 .project-dialog input:disabled,
+.project-dialog select:disabled,
 .project-dialog textarea:disabled {
   cursor: not-allowed;
   opacity: 0.52;
