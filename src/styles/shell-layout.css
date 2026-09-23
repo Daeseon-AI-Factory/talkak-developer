@@ -1,0 +1,663 @@
+.app-shell {
+  transition: grid-template-columns 180ms ease;
+}
+
+.app-shell[data-sidebar-mode="expanded"] {
+  grid-template-columns: 266px minmax(0, 1fr);
+}
+
+.app-shell[data-sidebar-mode="rail"] {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.app-shell[data-sidebar-mode="hidden"],
+.app-shell[data-focus-mode="true"] {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.sidebar {
+  transition: opacity 150ms ease, transform 180ms ease, padding 180ms ease;
+}
+
+.sidebar[data-mode="rail"] {
+  padding: 20px 10px 12px;
+}
+
+.sidebar[data-mode="rail"] .brand {
+  justify-content: center;
+  margin: 0 0 24px;
+}
+
+.sidebar[data-mode="rail"] .brand > div:last-child,
+.sidebar[data-mode="rail"] .nav-item > span:last-child,
+.sidebar[data-mode="rail"] .sidebar__section-heading,
+.sidebar[data-mode="rail"] .project-item__copy,
+.sidebar[data-mode="rail"] .project-item > svg,
+.sidebar[data-mode="rail"] .runtime-card > div,
+.sidebar[data-mode="rail"] .sidebar-action span {
+  display: none;
+}
+
+.sidebar[data-mode="rail"] .nav-item,
+.sidebar[data-mode="rail"] .project-item {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  padding: 7px;
+}
+
+.sidebar[data-mode="rail"] .nav-item::before {
+  left: -11px;
+}
+
+.sidebar[data-mode="rail"] .project-list {
+  margin-top: 22px;
+}
+
+.sidebar[data-mode="rail"] .runtime-card,
+.sidebar[data-mode="rail"] .sidebar-action {
+  justify-content: center;
+}
+
+.sidebar[data-mode="hidden"],
+.app-shell[data-focus-mode="true"] .sidebar {
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-18px);
+}
+
+.app-utilitybar__leading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.shell-control {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.shell-control:hover,
+.shell-control[data-active="true"] {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.shell-control--label {
+  display: inline-flex;
+  width: auto;
+  gap: 6px;
+  padding: 0 9px;
+  font-size: 12px;
+}
+
+.app-utilitybar__actions > .shell-control--label {
+  display: inline-flex;
+  width: auto;
+  gap: 6px;
+  padding: 0 9px;
+}
+
+.shell-control--label kbd {
+  color: var(--text-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* An icon-only control has no room for a key beside the glyph, so the key covers it on hover or
+   keyboard focus. The control never changes size. */
+.shell-control--sidebar-toggle {
+  position: relative;
+}
+
+.shell-control--sidebar-toggle kbd {
+  position: absolute;
+  display: grid;
+  border-radius: inherit;
+  background: var(--surface-raised);
+  font-family: var(--mono);
+  font-size: 10px;
+  inset: 0;
+  opacity: 0;
+  place-items: center;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.shell-control--sidebar-toggle:hover kbd,
+.shell-control--sidebar-toggle:focus-visible kbd {
+  color: var(--accent);
+  opacity: 1;
+}
+
+.workspace-toolbar--pages {
+  gap: 8px;
+  padding-left: 8px;
+}
+
+.page-tabs-shell {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-self: stretch;
+  align-items: center;
+  gap: 6px;
+}
+
+.page-tabs {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.page-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.page-tab {
+  display: flex;
+  /* Room for the activity dot and for a title set at a readable size rather than 9px. */
+  min-width: 138px;
+  max-width: 230px;
+  height: 34px;
+  flex: 0 1 auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-dim);
+}
+
+.page-tab:hover,
+.page-tab[data-active="true"] {
+  border-color: var(--border);
+  background: rgba(95, 226, 237, 0.055);
+  color: var(--text);
+}
+
+.page-tab[data-active="true"] {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.page-tab__select,
+.page-tab__close,
+.page-tabs__add {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.page-tab__select {
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  gap: 7px;
+  padding: 0 5px 0 10px;
+  text-align: left;
+}
+
+.page-tab__select span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Which page needs you, said on the tab itself. A tab carried a title and a pane count and nothing
+   else, so a session that failed or finished on another page stayed invisible until you switched
+   to it — which defeats having pages at all. */
+.page-tab__activity {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.page-tab__activity[data-activity="running"] {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(115, 223, 168, 0.16);
+}
+
+.page-tab__activity[data-activity="attention"] {
+  border: 0;
+  animation: page-tab-attention 1.8s ease-in-out infinite;
+  background: var(--warning);
+  box-shadow: 0 0 0 3px var(--warning-soft);
+}
+
+.page-tab__activity[data-activity="exited"] {
+  border: 1px solid var(--text-dim);
+  background: transparent;
+}
+
+/* The agent finished its turn inside a live shell: a reply to read, not a busy pane. */
+.page-tab__activity[data-activity="ready"] {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(95, 226, 237, 0.18);
+}
+
+@keyframes page-tab-attention {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-tab__activity[data-activity="attention"] {
+    animation: none;
+  }
+}
+
+.page-tab__select small {
+  display: grid;
+  min-width: 17px;
+  height: 17px;
+  margin-left: auto;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 10px;
+}
+
+.page-tab__close,
+.page-tabs__add {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 6px;
+}
+
+.page-tab__close:hover,
+.page-tabs__add:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.page-tabs__add {
+  display: inline-flex;
+  width: auto;
+  min-width: max-content;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px dashed var(--border);
+}
+
+.page-tabs__add span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.pane-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-family: var(--sans);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.pane-count strong {
+  color: var(--warning);
+  font-size: 10px;
+}
+
+.workspace-toolbar__actions {
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.workspace-toolbar__actions::-webkit-scrollbar {
+  display: none;
+}
+
+.workspace-shell__body {
+  position: relative;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-shell__body[data-inspector-open="true"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workspace-shell__body[data-inspector-pinned="true"] {
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 350px);
+}
+
+.pane-stage {
+  min-width: 0;
+  min-height: 0;
+  padding: 8px;
+  overflow: hidden;
+  background: linear-gradient(rgba(95, 226, 237, 0.014) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(95, 226, 237, 0.014) 1px, transparent 1px), #050c0f;
+  background-size: 24px 24px;
+}
+
+.pane-stage > .terminal-pane,
+.split-layout__first > .terminal-pane,
+.split-layout__second > .terminal-pane {
+  height: 100%;
+  /* The usable floor lives here, not on the terminal host. A split that squeezes a pane below this
+     is stopped by the layout, instead of the terminal quietly rendering rows nobody can see. */
+  min-height: 180px;
+}
+
+.split-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-layout[data-direction="horizontal"] {
+  flex-direction: row;
+}
+
+.split-layout[data-direction="vertical"] {
+  flex-direction: column;
+}
+
+.split-layout__first,
+.split-layout__second {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-layout__first {
+  flex: 0 0 calc(var(--pane-ratio) - 3px);
+}
+
+.split-layout__second {
+  flex: 1 1 0;
+}
+
+.split-layout__divider {
+  position: relative;
+  z-index: 3;
+  display: grid;
+  flex: 0 0 6px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.split-layout[data-direction="vertical"] > .split-layout__divider {
+  cursor: row-resize;
+}
+
+.split-layout__divider span {
+  width: 1px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--border-strong);
+  opacity: 0.45;
+}
+
+.split-layout[data-direction="vertical"] > .split-layout__divider span {
+  width: 34px;
+  height: 1px;
+}
+
+.split-layout__divider:hover span,
+.split-layout__divider:focus-visible span {
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(95, 226, 237, 0.42);
+  opacity: 1;
+}
+
+.terminal-pane__header[draggable="true"] {
+  cursor: grab;
+}
+
+.terminal-pane__header[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.terminal-pane__actions button:disabled {
+  cursor: default;
+  opacity: 0.25;
+}
+
+/* The summary, terminal log and conversation exist to be read: the floating form is a large
+   centred modal, not a 370px strip down the edge. Pinning docks it beside the panes for anyone
+   who wants both at once. Pure layout — identical on every platform. */
+.inspector-backdrop {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(2, 8, 10, 0.62);
+  backdrop-filter: blur(3px);
+  inset: 0;
+}
+
+.inspector[data-pinned="false"] {
+  width: min(1080px, 100%);
+  height: min(820px, calc(100vh - 72px));
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  /* The modal exists to be read; its whole em scale steps up from the docked column's base. */
+  font-size: 15px;
+}
+
+.inspector[data-pinned="false"] .inspector__content {
+  padding: 22px 28px;
+}
+
+/* Prose reads at prose width in the wide modal; the terminal log uses all of it. */
+.inspector[data-pinned="false"] .inspector__content:not(.terminal-log) > * {
+  max-width: 780px;
+  margin-inline: auto;
+}
+
+.inspector[data-pinned="true"] {
+  position: relative;
+  height: 100%;
+}
+
+.inspector__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.inspector__header button[data-active="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.empty-page {
+  display: grid;
+  width: min(560px, calc(100% - 32px));
+  margin: auto;
+  place-items: center;
+  gap: 14px;
+  padding: 28px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 14px;
+  background: rgba(8, 19, 23, 0.9);
+  text-align: center;
+  max-height: calc(100% - 32px);
+  overflow: auto;
+}
+
+.empty-page__icon {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 13px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.empty-page h2,
+.empty-page p {
+  margin: 0;
+}
+
+.empty-page h2 {
+  font-size: 18px;
+}
+
+.empty-page p {
+  margin-top: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.empty-page__sessions {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+}
+
+.empty-page__sessions button {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.empty-page__sessions button:hover {
+  border-color: var(--border-strong);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.empty-page__sessions small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+@media (max-width: 1400px) {
+  .workspace-toolbar__actions .toolbar-button span {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app-shell[data-sidebar-mode="expanded"] {
+    grid-template-columns: 226px minmax(0, 1fr);
+  }
+
+  .workspace-shell__body[data-inspector-pinned="true"] {
+    grid-template-columns: minmax(0, 1fr) 310px;
+  }
+
+  .terminal-pane__profile,
+  .runtime-chip {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .app-shell[data-sidebar-mode="expanded"] {
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+
+  /* The expanded sidebar becomes absolute in this range, so it no longer occupies grid column
+     one. Keep the main surface in the visible column instead of letting auto-placement put it in
+     the deliberate 0px sidebar track. Phone layout switches to one column below 721px. */
+  .app-shell[data-presentation="tablet"][data-sidebar-mode="expanded"] .app-main {
+    grid-column: 2;
+  }
+
+  .sidebar[data-mode="expanded"] {
+    position: absolute;
+    z-index: 20;
+    width: min(266px, calc(100vw - 52px));
+    height: 100%;
+    box-shadow: 24px 0 50px rgba(0, 0, 0, 0.42);
+  }
+
+  .app-shell[data-sidebar-mode="rail"] {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .workspace-shell__body[data-inspector-pinned="true"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inspector[data-pinned="true"] {
+    position: absolute;
+    z-index: 7;
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: min(360px, calc(100% - 32px));
+    height: auto;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
+
+  .pane-count,
+  .toolbar-divider {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .shell-control--label span,
+  .preview-mode,
+  .toolbar-button {
+    font-size: 0;
+  }
+
+  .toolbar-button {
+    width: 30px;
+    padding: 0;
+  }
+
+  .page-tab {
+    min-width: 96px;
+  }
+
+  .page-tabs__add span,
+  .shell-control--label kbd {
+    display: none;
+  }
+}

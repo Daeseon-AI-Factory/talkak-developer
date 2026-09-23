@@ -1,0 +1,290 @@
+import type { AttentionRequest, LaunchProfile, Project } from "./domain";
+
+function defaultLaunchProfile(): LaunchProfile {
+  return { label: "", command: null, args: [] };
+}
+
+export const projects: Project[] = [
+  {
+    id: "talkak-dev",
+    source: "preview",
+    name: "Talkak Dev",
+    monogram: "T",
+    color: "#5fe2ed",
+    path: "/workspace/talkak-dev",
+    branch: "main",
+    description: "Lightweight developer cockpit",
+    launchProfile: defaultLaunchProfile(),
+    sessions: [
+      {
+        id: "session-shell",
+        title: "Product shell",
+        profile: "Primary agent",
+        launchProfile: defaultLaunchProfile(),
+        state: "working",
+        runtime: {
+          kind: "native",
+          os: "macos",
+          label: "Local Mac",
+          shell: "zsh",
+        },
+        branch: "feat/workspace-shell",
+        startedAt: "14:08",
+        lastActivity: "방금 전",
+        lines: [
+          { id: "l1", tone: "muted", text: "Talkak session · local runtime preview" },
+          { id: "l2", tone: "command", text: "$ pnpm test" },
+          { id: "l3", tone: "success", text: "✓ workspace model  3 tests" },
+          { id: "l4", tone: "command", text: "$ pnpm typecheck" },
+          { id: "l5", tone: "agent", text: "Building the project workspace shell…" },
+          {
+            id: "l6",
+            tone: "muted",
+            text: "src/components/Workspace.tsx · src/styles.css",
+          },
+        ],
+        conversation: [
+          {
+            id: "c1",
+            author: "you",
+            time: "14:08",
+            text: "현재 디자인 언어를 유지하면서 개발자용 핵심 작업대를 만들어줘.",
+          },
+          {
+            id: "c2",
+            author: "agent",
+            time: "14:10",
+            text: "프로젝트 전환, 멀티페인, 세션 요약과 대화 로그를 첫 화면에 묶고 있습니다.",
+          },
+          {
+            id: "c3",
+            author: "system",
+            time: "14:12",
+            text: "2 files changed · checks pending",
+          },
+        ],
+        summary: {
+          outcome: "개발자용 작업공간의 첫 화면과 탐색 구조를 구현합니다.",
+          progress: 68,
+          changedFiles: ["src/App.tsx", "src/styles.css", "src/components/Workspace.tsx"],
+          decisions: [
+            "WSL은 별도 앱이 아니라 Windows 세션 실행 대상으로 둡니다.",
+            "에이전트 실행기는 프로필 설정으로만 연결합니다.",
+          ],
+          nextStep: "브라우저에서 레이아웃과 요약·로그 전환을 확인합니다.",
+        },
+      },
+      {
+        id: "session-contracts",
+        title: "Runtime contracts",
+        profile: "Review agent",
+        launchProfile: defaultLaunchProfile(),
+        state: "needs-input",
+        runtime: {
+          kind: "native",
+          os: "macos",
+          label: "Local Mac",
+          shell: "zsh",
+        },
+        branch: "docs/runtime-boundary",
+        startedAt: "13:42",
+        lastActivity: "8분 전",
+        lines: [
+          { id: "r1", tone: "command", text: "$ git diff --check" },
+          { id: "r2", tone: "success", text: "No whitespace errors" },
+          { id: "r3", tone: "agent", text: "Runtime target boundary is ready for review." },
+          {
+            id: "r4",
+            tone: "warning",
+            text: "Input needed: choose the first real PTY adapter milestone.",
+          },
+        ],
+        conversation: [
+          {
+            id: "rc1",
+            author: "agent",
+            time: "13:51",
+            text: "Native macOS, native Windows, and WSL can share one session contract.",
+          },
+          {
+            id: "rc2",
+            author: "system",
+            time: "13:53",
+            text: "Waiting for user input",
+          },
+        ],
+        summary: {
+          outcome: "플랫폼별 실행 차이를 하나의 세션 계약 뒤로 격리했습니다.",
+          progress: 82,
+          changedFiles: ["src/domain.ts", "docs/runtime-boundary.md"],
+          decisions: ["UI는 실행기 이름이 아니라 capability와 상태를 표시합니다."],
+          nextStep: "첫 PTY 통합 순서를 결정해야 합니다.",
+        },
+      },
+    ],
+  },
+  {
+    id: "shadow-mobile",
+    source: "preview",
+    name: "Shadow Mobile",
+    monogram: "S",
+    color: "#a78bfa",
+    path: "/home/dev/shadow-mobile",
+    branch: "feature/session-sync",
+    description: "Mobile client and local API",
+    launchProfile: defaultLaunchProfile(),
+    sessions: [
+      {
+        id: "session-wsl",
+        title: "Mobile API",
+        profile: "Configured agent",
+        launchProfile: defaultLaunchProfile(),
+        state: "needs-input",
+        runtime: {
+          kind: "wsl",
+          os: "windows",
+          label: "Ubuntu on Windows",
+          distribution: "Ubuntu",
+          shell: "bash",
+        },
+        branch: "feature/session-sync",
+        startedAt: "11:20",
+        lastActivity: "22분 전",
+        lines: [
+          { id: "w1", tone: "muted", text: "WSL · Ubuntu · runtime preview" },
+          { id: "w2", tone: "command", text: "$ go test ./..." },
+          { id: "w3", tone: "success", text: "ok   shadow/mobile/api" },
+          { id: "w4", tone: "agent", text: "Result is ready to review." },
+        ],
+        conversation: [
+          {
+            id: "wc1",
+            author: "you",
+            time: "11:20",
+            text: "세션 동기화 API 테스트를 확인해줘.",
+          },
+          {
+            id: "wc2",
+            author: "agent",
+            time: "11:31",
+            text: "API 테스트가 통과했고 변경된 계약을 요약했습니다.",
+          },
+        ],
+        summary: {
+          outcome: "세션 동기화 API의 테스트 결과를 검토할 수 있습니다.",
+          progress: 100,
+          changedFiles: ["api/session.go", "api/session_test.go"],
+          decisions: ["동기화 충돌은 서버 시간이 아니라 revision으로 판정합니다."],
+          nextStep: "결과를 검토하고 변경을 커밋합니다.",
+        },
+      },
+    ],
+  },
+  {
+    id: "ops-dashboard",
+    source: "preview",
+    name: "Ops Dashboard",
+    monogram: "O",
+    color: "#fb923c",
+    path: "C:\\dev\\ops-dashboard",
+    branch: "main",
+    description: "Internal operations dashboard",
+    launchProfile: defaultLaunchProfile(),
+    sessions: [
+      {
+        id: "session-windows",
+        title: "Dashboard checks",
+        profile: "Shell",
+        launchProfile: defaultLaunchProfile(),
+        state: "idle",
+        runtime: {
+          kind: "native",
+          os: "windows",
+          label: "Windows local",
+          shell: "PowerShell",
+        },
+        branch: "main",
+        startedAt: "09:14",
+        lastActivity: "1시간 전",
+        lines: [
+          { id: "p1", tone: "muted", text: "Windows · PowerShell · runtime preview" },
+          { id: "p2", tone: "command", text: "> pnpm build" },
+          { id: "p3", tone: "success", text: "Build completed" },
+        ],
+        conversation: [
+          {
+            id: "pc1",
+            author: "system",
+            time: "09:21",
+            text: "Session is idle",
+          },
+        ],
+        summary: {
+          outcome: "대시보드 빌드 결과를 보관했습니다.",
+          progress: 100,
+          changedFiles: [],
+          decisions: [],
+          nextStep: "필요할 때 세션을 다시 시작합니다.",
+        },
+      },
+    ],
+  },
+];
+
+export const attentionRequests: AttentionRequest[] = [
+  {
+    id: "attention-runtime-milestone",
+    projectId: "talkak-dev",
+    sessionId: "session-contracts",
+    kind: "question",
+    risk: "low",
+    title: "첫 PTY 통합 순서 선택",
+    description: "공통 세션 계약 다음에 연결할 첫 번째 실제 런타임 경로를 선택해야 합니다.",
+    choices: [
+      {
+        id: "macos-first",
+        label: "macOS부터",
+        description: "현재 개발 환경에서 네이티브 PTY 흐름을 먼저 검증합니다.",
+      },
+      {
+        id: "windows-first",
+        label: "Windows부터",
+        description: "Windows 네이티브와 WSL 실행 경계를 먼저 검증합니다.",
+      },
+    ],
+    createdAt: "2026-08-08T13:53:00-04:00",
+    status: "open",
+    revision: 3,
+    resolution: null,
+  },
+  {
+    id: "attention-session-sync-review",
+    projectId: "shadow-mobile",
+    sessionId: "session-wsl",
+    kind: "approval",
+    risk: "medium",
+    title: "세션 동기화 변경 검토",
+    description: "테스트를 통과한 API 계약 변경을 다음 단계로 넘길지 결정해야 합니다.",
+    choices: [
+      {
+        id: "review-diff",
+        label: "변경 먼저 보기",
+        description: "결정 전에 변경 파일과 계약 차이를 엽니다.",
+      },
+      {
+        id: "approve-next-step",
+        label: "다음 단계 승인",
+        description: "현재 결과를 승인하고 후속 작업으로 진행합니다.",
+      },
+      {
+        id: "hold",
+        label: "보류",
+        description: "세션은 유지하고 요청을 현재 상태로 남깁니다.",
+      },
+    ],
+    createdAt: "2026-08-08T11:31:00-04:00",
+    status: "open",
+    revision: 5,
+    resolution: null,
+  },
+];

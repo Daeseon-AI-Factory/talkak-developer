@@ -1,0 +1,111 @@
+export const memory = {
+  ko: {
+    "memory.title": "프로젝트 기억",
+    "memory.description":
+      "짧은 인수인계와 결정을 이 기기에 저장합니다. 과거 기록은 현재 사실인지 다시 확인하세요.",
+    "memory.unavailable": "기억 저장·검색은 데스크톱 앱에서 사용할 수 있습니다.",
+    "memory.disabled":
+      "이 실행 프로필은 기억 도구가 꺼져 있습니다. 작업 지침은 제공되며, 기록은 여기서 직접 열람·복사할 수 있습니다.",
+    "memory.connected":
+      "기억 연결을 사용하도록 설정돼 있습니다. 연결 없이 재시도한 실행에는 적용되지 않습니다. 실제 연결은 에이전트의 도구 목록에서 확인하세요.",
+    "memory.connectionHint":
+      "AI가 기억을 검색하게 하려면 프로젝트 설정에서 실행 명령과 기억 연결 방식을 선택한 뒤 새 세션을 여세요. 직접 복사해서 사용할 수도 있습니다.",
+    "memory.search": "검색",
+    "memory.searchPlaceholder": "이전 결정이나 남은 문제 검색",
+    "memory.draft": "인수인계 작성",
+    "memory.defaultTitle": "세션 인수인계",
+    "memory.review":
+      "최근 답변을 초안으로 가져옵니다. 결정·남은 문제·다음 할 일을 짧게 정리하고 비밀값을 제외한 뒤 저장하세요. 별도 AI 요약 호출은 없습니다.",
+    "memory.noteTitle": "제목",
+    "memory.noteBody": "기억할 내용",
+    "memory.save": "기억 저장",
+    "memory.saved": "이 기기에 기억을 저장했습니다.",
+    "memory.cancel": "취소",
+    "memory.empty": "검색 범위에 저장된 기억이 없습니다.",
+    "memory.more": "일부 결과만 표시했습니다. 검색어를 구체적으로 입력하세요.",
+    "memory.skipped": "읽지 못한 기록 {count}개가 있습니다.",
+    "memory.user": "사용자 검토 기록",
+    "memory.agent": "AI 작성 · 미검증",
+    "memory.imported": "가져온 과거 기록 · 재확인 필요",
+    "memory.source": "출처",
+    "memory.copy": "출처와 함께 복사",
+    "memory.copied": "선택한 기억을 복사했습니다.",
+    "memory.useNext": "다음 세션 인수인계로 선택",
+    "memory.selected": "인수인계 선택됨",
+    "memory.selectionHint":
+      "기억 연결을 켠 새 세션에 이 기록의 ID를 전달합니다. 본문은 에이전트가 조회할 때만 전달됩니다.",
+    "memory.clearSelection": "인수인계 선택 해제",
+    "memory.correct": "정정 기록 작성",
+    "memory.import": "딸깍 기억 가져오기",
+    "memory.importHint":
+      "선택한 프로젝트의 JSONL 기록에서 결정·문제 등을 가져옵니다. 원본 옆 edges 폴더의 정정 정보도 확인합니다. 원본은 유지하며 과거 기록은 재확인이 필요합니다.",
+    "memory.importNoCorrections": "정정 연결 파일이 없어 과거 정정 이력을 확인하지 못했습니다.",
+    "memory.startupId": "원본 프로젝트 ID",
+    "memory.chooseImport": "기록 파일 선택 후 가져오기",
+    "memory.importResult": "{imported}개 가져옴 · {skipped}개 제외 또는 중복",
+    "memory.working": "처리 중…",
+    "memory.adapter": "에이전트 연결 방식",
+    "memory.off": "직접 실행 · 앱 연결 없음",
+    "memory.json": "Claude 호환 연결",
+    "memory.toml": "Codex 호환 연결",
+    "memory.enabled": "프로젝트 기억 사용 · 새 세션에 적용",
+    "memory.retryWithout": "앱의 에이전트 연결 없이 다시 실행",
+    "memory.adapterHint":
+      "기억은 기본으로 켜지며 따로 끌 수 있습니다. 새 세션에 짧은 작업 지침을 전달하며 기존 사용자 지침과 모델 선택을 유지합니다. 연결 실패 시 직접 실행으로 재시도할 수 있습니다.",
+  },
+  en: {
+    "memory.title": "Project memory",
+    "memory.description":
+      "Keep short handoffs and decisions on this device. Recheck historical notes against current facts.",
+    "memory.unavailable": "Memory storage and search are available in the desktop app.",
+    "memory.disabled":
+      "Memory tools are off for this launch profile. Working instructions remain available, and you can still read and copy notes here.",
+    "memory.connected":
+      "Memory is enabled in the launch settings. A retry without memory skips this connection. Check the agent's tool list to confirm the connection.",
+    "memory.connectionHint":
+      "To let your agent search memory, choose its command and memory connection in project settings, then open a new session. You can also copy notes directly.",
+    "memory.search": "Search",
+    "memory.searchPlaceholder": "Find earlier decisions or unfinished work",
+    "memory.draft": "Write a handoff",
+    "memory.defaultTitle": "Session handoff",
+    "memory.review":
+      "Start from the latest reply. Keep decisions, open issues and next steps brief, and remove secrets before saving. No separate AI summary call is made.",
+    "memory.noteTitle": "Title",
+    "memory.noteBody": "What to remember",
+    "memory.save": "Save note",
+    "memory.saved": "Saved the note on this device.",
+    "memory.cancel": "Cancel",
+    "memory.empty": "No saved notes match this search.",
+    "memory.more": "Showing part of the results. Narrow your search to find more.",
+    "memory.skipped": "Could not read {count} records.",
+    "memory.user": "User-reviewed note",
+    "memory.agent": "Agent-authored · unverified",
+    "memory.imported": "Imported history · needs rechecking",
+    "memory.source": "Source",
+    "memory.copy": "Copy with source",
+    "memory.copied": "Copied the selected note.",
+    "memory.useNext": "Select for next session",
+    "memory.selected": "Selected handoff",
+    "memory.selectionHint":
+      "New sessions with memory connected receive this note's ID. Its body is sent only when the agent reads it.",
+    "memory.clearSelection": "Clear handoff selection",
+    "memory.correct": "Write a correction",
+    "memory.import": "Import Dalkkak memory",
+    "memory.importHint":
+      "Import decisions and issues from the selected project's JSONL file, checking corrections in the adjacent edges folder. Originals stay intact; imported history needs rechecking.",
+    "memory.importNoCorrections":
+      "No correction edge file was found; past corrections could not be checked.",
+    "memory.startupId": "Source project ID",
+    "memory.chooseImport": "Choose and import records",
+    "memory.importResult": "Imported {imported} · skipped or duplicate {skipped}",
+    "memory.working": "Working…",
+    "memory.adapter": "Agent connection",
+    "memory.off": "Direct launch · no app connection",
+    "memory.json": "Claude-compatible connection",
+    "memory.toml": "Codex-compatible connection",
+    "memory.enabled": "Use project memory · applies to new sessions",
+    "memory.retryWithout": "Retry without the app's agent connection",
+    "memory.adapterHint":
+      "Memory defaults on and can be turned off separately. New sessions receive brief working instructions while preserving user instructions and model choices. If the connection fails, retry with direct launch.",
+  },
+};
